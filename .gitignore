@@ -192,3 +192,22 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# ---------------------------
+# Project-specific ignores
+# ---------------------------
+
+# Data files
+data/
+__MACOSX/
+
+# Logs
+logs/
+output*.txt
+errors*.txt
+
+# Model weights
+flan-t5-xl/
+
+# Slurm instruction
+*.sh
