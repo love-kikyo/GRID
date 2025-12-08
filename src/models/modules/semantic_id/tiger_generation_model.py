@@ -477,6 +477,13 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         should_add_sep_token: bool = True,
         prediction_key_name: str = "user_id",
         prediction_value_name: str = "semantic_ids",
+        reason_step: int = None,
+        temperature: float = 0.07,
+        pl_weight: float = 1.0,
+        temp_scale: float = 5.0,
+        noise_factor: float = 0.0,
+        cl_weight: float = 1.0,
+        warmup_steps: int = 1000,
         **kwargs,
     ) -> None:
         """
@@ -525,6 +532,15 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             torch.randn(1, self.embedding_dim), requires_grad=True
         )
 
+        self.reason_step = 0 if reason_step is None else reason_step
+        self.reason_step = max(0, self.reason_step)
+        self.temperature = temperature
+        self.pl_weight = pl_weight
+        self.temp_scale = temp_scale
+        self.noise_factor = noise_factor
+        self.cl_weight = cl_weight
+        self.warmup_steps = warmup_steps
+
         self.decoder = SemanticIDDecoderModule(
             decoder=self.decoder,
             bos_token=bos_token,
@@ -538,6 +554,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                     for _ in range(self.num_hierarchies)
                 ]
             ),
+            reason_step = self.reason_step
         )
 
         if mlp_layers is not None:
@@ -666,6 +683,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         future_ids: Optional[torch.Tensor] = None,
         encoder_output: Optional[torch.Tensor] = None,
         attention_mask_for_encoder: Optional[torch.Tensor] = None,
+        enable_latent_reasoning: bool = True, 
+        noise_factor: float = 0.0,
         use_cache: bool = False,
         past_key_values: Optional[DynamicCache] = None,
     ) -> torch.Tensor:
@@ -731,6 +750,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             encoder_output=encoder_output,
             use_cache=use_cache,
             past_key_values=past_key_values,
+            noise_factor = noise_factor,
+            enable_latent_reasoning=enable_latent_reasoning, 
         )
 
         return decoder_output
@@ -801,6 +822,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 attention_mask_for_encoder=repeated_encoder_attention_mask,
                 use_cache=True,
                 past_key_values=past_key_values,
+                enable_latent_reasoning=(generated_ids is None), 
             )
 
             # decoder_output[:, -1, :] is the embedding for the next token
@@ -851,10 +873,15 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             user_id=user_id,
         )
 
+        noise_factor = self.noise_factor
+        if self.global_step < self.warmup_steps:
+            noise_factor = 0
+
         decoder_output = self.decoder_forward_pass(
             future_ids=future_ids,
             attention_mask=attention_mask_decoder,
             encoder_output=encoder_output,
+            noise_factor = noise_factor,
             attention_mask_for_encoder=attention_mask_for_encoder,
             use_cache=False,  # we are not using cache for training
         )
@@ -924,10 +951,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         fut_ids = None
         for label in label_data.labels:
-            curr_label = label_data.labels[label]
-            fut_ids = curr_label.reshape(model_input.mask.size(0), -1)
+            fut_ids = label_data.labels[label].reshape(model_input.mask.size(0), -1)
         # here we pass labels in to the forward function
         # because the decoder is causal and we are doing shifted prediction
+
         model_output = self.forward(
             attention_mask_encoder=model_input.mask,
             future_ids=fut_ids,
@@ -937,45 +964,79 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             },
         )
 
+        bsz = model_input.mask.size(0)
         # we prepended a bos token to the decoder input
         # so we need to remove the last token in the output
         model_output = model_output[:, :-1]
-
+        reason_output = model_output[:bsz, :self.reason_step]
+        sid_output = model_output[:bsz, self.reason_step:]   # (B, num_hierarchies, D)
         # the label locations is shared for all semantic id hierarchies
-        loss = 0
-        for hierarchy in range(self.num_hierarchies):
 
-            input = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
-            loss += self.loss_function(
-                input=input,
-                target=fut_ids[:, hierarchy].long(),
+        # ============================================================
+        # 1.  Normal cross entropy loss for reasoning + prediction
+        # ============================================================
+        
+        ce_loss = 0
+        # ---------- latent reasoning steps CE ----------
+        for i in range(self.reason_step):
+            inp = self.decoder.decoder_mlp[0](reason_output[:, i])   # predict sid1
+            ce_loss += self.loss_function(inp, fut_ids[:, 0].long())
+        # ---------- sid steps CE ----------
+        for h in range(self.num_hierarchies):
+            inp = self.decoder.decoder_mlp[h](sid_output[:, h])
+            ce_loss += self.loss_function(inp, fut_ids[:, h].long())
+
+        # ============================================================
+        # 2. Progressive Learning Loss (PL) for reasoning steps
+        # ============================================================
+
+        T = self.reason_step
+        sid_embs = self.get_embedding_table("decoder").weight
+        all_logits = torch.einsum("btd,nd->btn", reason_output, sid_embs)
+        temp_scales = self.temperature * (
+            self.temp_scale ** torch.arange(T, 0, -1).to(self.device)
+        )
+        scaled_logits = all_logits / temp_scales.view(1, T, 1)
+        pl_loss = self.loss_function(
+            scaled_logits.reshape(-1, sid_embs.size(0)),
+            fut_ids[:, 0].repeat_interleave(T),
+        )
+
+        # ============================================================
+        # 3. Contrastive Learning Loss (CL) for reasoning steps
+        # ============================================================
+
+        cl_loss = 0
+        repeat_times = model_output.shape[0] // bsz
+        if repeat_times > 1 and self.cl_weight > 0:
+            view1 = reason_output[:bsz]
+            view2 = reason_output[bsz:]
+
+            sim = torch.einsum("btd,ktd->btk", view2, view1) / self.temperature
+            labels = torch.arange(sim.size(0)).to(self.device)
+            cl_loss = self.loss_function(
+                sim.permute(0, 2, 1),
+                labels.unsqueeze(1).expand(-1, T)
             )
-        return model_output, loss
+
+        loss = ce_loss + self.pl_weight * pl_loss + self.cl_weight * cl_loss
+        return model_output[:bsz], loss
 
 
 class SemanticIDDecoderModule(torch.nn.Module):
     """
-    This is an in-house replication of the decoder module proposed in TIGER paper,
-    See Figure 2.b in https://arxiv.org/pdf/2305.05065.
+    Decoder wrapper that supports iterative latent reasoning steps.
+    Wraps a T5Stack-like decoder (self.decoder) and optionally returns
+    a sequence of step-wise last_hidden states for reasoning.
     """
 
     def __init__(
         self,
         decoder: transformers.PreTrainedModel,
+        reason_step: int,
         decoder_mlp: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
     ) -> None:
-        """
-        Initialize the SemanticIDDecoderModule.
-
-        Parameters:
-        decoder (transformers.PreTrainedModel): the encoder model (e.g., transformers.T5EncoderModel).
-        decoder_mlp (torch.nn.Module): the mlp layers used to project the decoder output to the embedding table.
-        bos_token (Optional[torch.nn.Parameter]):
-            the bos token used to prompt the decoder.
-            if None, then this means the decoder is used standalone without an encoder.
-        """
-
         super().__init__()
         # some sanity checks
         if bos_token is not None:
@@ -993,40 +1054,183 @@ class SemanticIDDecoderModule(torch.nn.Module):
         delete_module(self.decoder, "shared")
         reset_parameters(self.decoder)
 
+        # configuration for iterative reasoning
+        d_model = getattr(self.decoder.config, "d_model", None)
+        # positional embeddings for reasoning steps (small embedding table)
+        self.reason_step = reason_step
+        if self.reason_step > 0:
+            self.reason_pos_emb = nn.Embedding(self.reason_step + 1, d_model)
+
     def forward(
         self,
         attention_mask: torch.Tensor,
-        sequence_embedding: torch.Tensor,
-        encoder_output: torch.Tensor,
+        sequence_embedding: torch.Tensor,        # (bs, cur_len=BOS+future_len, d)
+        encoder_output: torch.Tensor,            # (bs, src_len, d)
         encoder_attention_mask: torch.Tensor,
+        enable_latent_reasoning: bool = True,
         use_cache: bool = False,
-        past_key_values: DynamicCache = DynamicCache(),
-    ) -> torch.Tensor:
+        past_key_values: DynamicCache = None,
+        noise_factor: float = 0.0,
+    ):
         """
-        Forward pass for the decoder module.
-        Parameters:
-            attention_mask (torch.Tensor): The attention mask for the decoder.
-            sequence_embedding (torch.Tensor): The input sequence embedding for the decoder.
-            encoder_output (torch.Tensor): The output from the encoder.
-            encoder_attention_mask (torch.Tensor): The attention mask for the encoder.
-            use_cache (bool): Whether to use cache for past key values.
-            past_key_values (DynamicCache): The cache for past key values.
+        forward: reasoning happens immediately after BOS, then we decode future tokens.
+        Returns:
+        if use_cache: (embeddings, past) else embeddings
+        embeddings shape: (bs*repeat, 1 + reason_len + future_len, d)
+            (1 corresponds to BOS)
         """
 
-        decoder_outputs: Seq2SeqModelOutput = self.decoder(
-            attention_mask=attention_mask,
-            inputs_embeds=sequence_embedding,
-            encoder_hidden_states=encoder_output,
-            encoder_attention_mask=encoder_attention_mask,
-            use_cache=use_cache,
-            past_key_values=past_key_values,
-        )
+        device = sequence_embedding.device
+        bs, total_len, d = sequence_embedding.size()
 
-        embeddings = decoder_outputs.last_hidden_state
+        # if no reasoning requested -> simple behavior:
+        if self.reason_step == 0 or enable_latent_reasoning == False:
+            decoder_outputs = self.decoder(
+                inputs_embeds=sequence_embedding,
+                attention_mask=attention_mask,
+                encoder_hidden_states=encoder_output,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                past_key_values=past_key_values,
+            )
+            embeddings = decoder_outputs.last_hidden_state
+            if use_cache:
+                return embeddings, decoder_outputs.past_key_values
+            return embeddings
+
+        # --- iterative reasoning flow ---
+        prefix_embs = sequence_embedding[:, :1, :]
+        suffix_embs = sequence_embedding[:, 1:, :]
+        prefix_mask = None
+        suffix_mask = None
+        if attention_mask is not None:
+            prefix_mask = attention_mask[:, :1]
+            suffix_mask = attention_mask[:, 1:]
+
+        # repeat factor for noise clones (0 -> 1 ; >0 -> 2)
+        repeat_factor = 1 + (1 if noise_factor > 0.0 else 0)
+        # prepare initial input_embs:
+        # expected shape (bs, seq_len, d)
+
+        prefix_embs = prefix_embs.repeat(repeat_factor, 1, 1)
+        suffix_embs = suffix_embs.repeat(repeat_factor, 1, 1)
+        if prefix_mask is not None:
+            prefix_mask = prefix_mask.repeat(repeat_factor, 1)
+        if suffix_mask is not None:
+            suffix_mask = suffix_mask.repeat(repeat_factor, 1)
+
+        encoder_output = encoder_output.repeat(repeat_factor, 1, 1)
+        encoder_attention_mask = encoder_attention_mask.repeat(repeat_factor, 1)
+
+        past = past_key_values
+        embedding_list = []
+
+        for step in range(self.reason_step + 1):
+            dec_out = self.decoder(
+                inputs_embeds=prefix_embs,
+                attention_mask=prefix_mask,
+                encoder_hidden_states=encoder_output,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=True,
+                past_key_values=past,
+            )
+
+            last_hidden = dec_out.last_hidden_state   # (total_bs, cur_seq_len, d)
+            past = dec_out.past_key_values
+            # always take last token output as the token representing this step (for step0 it's BOS output)
+            embedding_list.append(last_hidden[:, -1:, :])   # append shape (total_bs,1,d)
+
+            if step == self.reason_step:
+                break
+
+            # prepare next_input based on clean batch only (bs)
+            clean_last = last_hidden[:bs, -1:, :]   # (bs,1,d)
+
+            # add step positional embedding
+            pos = self.reason_pos_emb(torch.tensor(step, device=device))  # (d,)
+            pos = pos.view(1, 1, -1).expand(bs, 1, -1)                   # (bs,1,d)
+            next_input = clean_last + pos                                 # (bs,1,d)
+
+            if noise_factor > 0.0:
+                noise = torch.randn_like(next_input) * noise_factor
+                noisy = next_input + noise
+                prefix_embs = torch.cat([next_input, noisy], dim=0)       # (2*bs,1,d)
+            else:
+                prefix_embs = next_input                                   # (bs,1,d)
+
+            # update cur_attn to match new seq_len (always 1 here for iterative single-step)
+            prefix_mask = torch.ones(prefix_embs.size(0), prefix_embs.size(1), dtype=torch.long, device=device)
+
+        # === decode future tokens using cached past ===
+        if total_len >= 2:
+            dec_out = self.decoder(
+                inputs_embeds=suffix_embs,            # (total_bs, future_len, d)
+                attention_mask=suffix_mask,
+                encoder_hidden_states=encoder_output,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=True,
+                past_key_values=past,
+            )
+            last_hidden = dec_out.last_hidden_state   # (total_bs, future_len, d)
+            past = dec_out.past_key_values
+
+            embedding_list.append(last_hidden)
+        
+        embeddings = torch.cat(embedding_list, dim=1)  # (total_bs, 1+reason_step + future_len, d)
 
         if use_cache:
-            return embeddings, decoder_outputs.past_key_values
+            past = self.truncate_kvcache(past)
+            return embeddings, past
+
         return embeddings
+
+
+    def truncate_kvcache(self, kvcache):
+        # --- split self/cross cache ---
+        if isinstance(kvcache, DynamicCache):
+            self_cache = kvcache
+            cross_cache = None
+        else:
+            self_cache = kvcache.self_attention_cache
+            cross_cache = kvcache.cross_attention_cache
+
+        # create new DynamicCache and pre-allocate layers
+        num_layers = len(self_cache)
+        new_self = DynamicCache()
+
+        for layer_idx in range(num_layers):
+
+            full_layer   = self_cache[layer_idx]
+
+            # unpack possible 2/3/4 element cache tuples
+            full_k,   full_v   = full_layer[:2]
+            others             = full_layer[2:]
+
+            new_k = full_k[:, :, self.reason_step:, :]
+            new_v = full_v[:, :, self.reason_step:, :]
+
+            # use DynamicCache.update to write k/v
+            new_self.update(
+                key_states=new_k,
+                value_states=new_v,
+                layer_idx=layer_idx
+            )
+
+            # reattach "others" if exists
+            if others:
+                # Directly replace stored tuple inside DynamicCache
+                stored = new_self[layer_idx]
+                # rebuild tuple: (k, v, *others)
+                new_tuple = (stored[0], stored[1], *others)
+                new_self.cache[layer_idx] = new_tuple
+
+        if isinstance(kvcache, DynamicCache):
+            return new_self
+
+        return EncoderDecoderCache(
+            self_attention_cache=new_self,
+            cross_attention_cache=cross_cache
+        )
 
 
 class SemanticIDEncoderModule(torch.nn.Module):

@@ -3,6 +3,7 @@ data_dir: ???
 semantic_id_path: ???
 num_hierarchies: ???
 sequence_length: 120
+reason_step: 2
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -216,6 +217,7 @@ model:
   optimizer: ${optim.optimizer}
   scheduler: ${optim.scheduler}
   evaluator: ${eval.evaluator}
+  reason_step: ${reason_step}
   weight_tying: true
   compile: false
   decoder:
