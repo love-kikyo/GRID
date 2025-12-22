@@ -1,6 +1,9 @@
 import os
 from typing import Any, Dict, Optional, Tuple
 
+import fitlog
+fitlog.set_log_dir("./fitlogs")
+
 import hydra
 import rootutils
 import torch

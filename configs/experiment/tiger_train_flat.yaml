@@ -1,6 +1,7 @@
 # @package _global_
 data_dir: ???
 semantic_id_path: ???
+sid2item_container_path: ???
 num_hierarchies: ???
 sequence_length: 120
 
@@ -90,13 +91,10 @@ data_loading:
       drop_last: true
       persistent_workers: true
       collate_fn:
-        _target_: src.data.loading.components.collate_functions.collate_with_sid_causal_duplicate
+        _target_: src.data.loading.components.collate_functions.collate_fn_train
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
-        sequence_field_name: sequence_data
-        sid_hierarchy: ${model.num_hierarchies}
-        max_batch_size: 512
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig
         user_id_field: user_id
@@ -219,26 +217,37 @@ model:
   weight_tying: true
   compile: false
   decoder:
-    _target_: transformers.models.t5.modeling_t5.T5Stack
+    _target_: transformers.models.bart.modeling_bart.BartDecoder
     config:
-      _target_: transformers.models.t5.configuration_t5.T5Config
-      vocab_size: ${model.huggingface_model.config.vocab_size}
-      d_model: ${model.huggingface_model.config.d_model}
-      num_heads: ${model.huggingface_model.config.num_heads}
-      dropout_rate: 0.15
-      d_ff: ${model.huggingface_model.config.d_ff}
-      d_kv: ${model.huggingface_model.config.d_kv}
-      num_layers: 4
-      is_decoder: true
-      is_encoder_decoder: false
-    embed_tokens:
-      _target_: torch.nn.Embedding
-      num_embeddings: ${model.huggingface_model.config.vocab_size}
-      embedding_dim: ${model.huggingface_model.config.d_model}
+      _target_: transformers.models.bart.configuration_bart.BartConfig
+      vocab_size: 256
+      d_model: 128
+      decoder_layers: 4
+      decoder_attention_heads: 8
+      decoder_ffn_dim: 1024
+      dropout: 0.15
+      attention_dropout: 0.15
+      activation_dropout: 0.0
+      max_position_embeddings: 512
+      scale_embedding: false
   num_hierarchies: ${num_hierarchies}
   num_user_bins: null
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
+  item_feat_tensor: 
+    _target_: torch.load
+    _args_:
+    - _target_: src.utils.file_utils.open_local_or_remote
+      file_path: ${data_dir}/item_embedding_table.pt
+      mode: rb
+  sid2item_container:
+    _target_: torch.load
+    _args_:
+    - _target_: src.utils.file_utils.open_local_or_remote
+      file_path: ${sid2item_container_path}
+      mode: rb
   mlp_layers: 2
+  padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
+  replace_prob: 0.5
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -273,6 +282,8 @@ callbacks:
   restart_job:
     _target_: src.utils.restart_job.RestartAndLoadCheckpointCallback
     metadata_dir: ${paths.metadata_dir}
+  retrieval_eval:
+    _target_: src.utils.fitlog_callback.FitlogCallback
 logger:
   csv:
     _target_: lightning.pytorch.loggers.csv_logs.CSVLogger
@@ -295,7 +306,7 @@ trainer:
   accumulate_grad_batches: 16
   profiler:
     _target_: lightning.pytorch.profilers.PassThroughProfiler
-  strategy: ddp
+  strategy: ddp_find_unused_parameters_true
   sync_batchnorm: true
   num_sanity_val_steps: 0
   min_epochs: 0
@@ -326,6 +337,7 @@ eval:
   evaluator:
     _target_: src.components.eval_metrics.SIDRetrievalEvaluator
     top_k_list:
+    - 1
     - 5
     - 10
     metrics:

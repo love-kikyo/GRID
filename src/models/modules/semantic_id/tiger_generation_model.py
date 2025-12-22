@@ -4,6 +4,7 @@ from typing import Any, Optional, Tuple, Union
 import torch
 import transformers
 from torch import nn
+import torch.nn.functional as F
 from torchmetrics.aggregation import BaseAggregator
 from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 from transformers.modeling_outputs import Seq2SeqModelOutput
@@ -15,7 +16,7 @@ from src.data.loading.components.interfaces import (
 )
 from src.models.components.interfaces import OneKeyPerPredictionOutput
 from src.models.components.network_blocks.mlp import MLP
-from src.models.modules.huggingface.transformer_base_module import TransformerBaseModule
+from src.models.modules.huggingface.transformer_base_module import TransformerBaseModule, ModelMode
 from src.utils.utils import (
     delete_module,
     find_module_shape,
@@ -36,10 +37,12 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self,
         codebooks: torch.Tensor,
         num_hierarchies: int,
+        num_items: int,
         num_embeddings_per_hierarchy: int,
         embedding_dim: int,
         should_check_prefix: bool,
         top_k_for_generation: int,
+        padding_token: int,
         **kwargs,
     ) -> None:
         """
@@ -56,8 +59,12 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         """
         super().__init__(**kwargs)
 
-        self.num_embeddings_per_hierarchy = num_embeddings_per_hierarchy
+        self.num_embeddings_per_hierarchy = int(num_embeddings_per_hierarchy)
+        self.padding_token = padding_token
         self.embedding_dim = embedding_dim
+        self.num_items = num_items
+        self.ce_loss = nn.CrossEntropyLoss(reduction="none", ignore_index=padding_token)
+        self.bce_loss = nn.BCEWithLogitsLoss(reduction="none")
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
         if codebooks != None:
@@ -254,8 +261,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self,
         candidate_logits: torch.Tensor,
         generated_ids: Union[torch.Tensor, None],
+        attention_mask: torch.Tensor, 
         marginal_log_prob: Union[torch.Tensor, None],
-        past_key_values: Union[EncoderDecoderCache, None],
         hierarchy: int,
         batch_size: int,
     ):
@@ -265,8 +272,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         Args:
             candidate_logits: The logits for the next token.
             generated_ids: The generated IDs so far.
-            marginal_log_prob: The marginal log probabilities.
-            past_key_values: The cache for past key values.
+            marginal_log_prob: The marginal log probabilities.  (B, top_k)
+            attention_mask: The attention mask for input.
             hierarchy: The current hierarchy level.
             batch_size: The size of the batch.
 
@@ -274,132 +281,131 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             The updated generated IDs and the marginal probabilities.
         """
 
-        # pruning the beams that cannot be mapped to a valid item
-        if self.should_check_prefix:
-            if generated_ids is None:
-                valid_prefix_mask = self._check_valid_prefix(
-                    torch.arange(
-                        self.num_embeddings_per_hierarchy,
-                        device=candidate_logits.device,
-                    ).unsqueeze(1)
-                )
-                candidate_logits[:, ~valid_prefix_mask] = float("-inf")
-            else:
-                # we prune all beams with prefixes that cannot be mapped to a valid item
-                valid_prefix_mask = self._check_valid_prefix(
-                    torch.cat(
-                        [
-                            generated_ids.reshape(-1, hierarchy).repeat_interleave(
-                                self.num_embeddings_per_hierarchy, dim=0
-                            ),
-                            torch.arange(
-                                self.num_embeddings_per_hierarchy,
-                                device=candidate_logits.device,
-                            )
-                            .repeat(self.top_k_for_generation * batch_size)
-                            .unsqueeze(1),
-                        ],
-                        dim=1,
-                    )
-                ).reshape(-1, self.num_embeddings_per_hierarchy)
-            candidate_logits[~valid_prefix_mask] = float("-inf")
-
-        candidate_logits = torch.nn.functional.softmax(candidate_logits, dim=-1)
+        candidate_logits = torch.nn.functional.log_softmax(candidate_logits, dim=-1)
         proba, indices = torch.sort(candidate_logits, descending=True)
 
-        if generated_ids is None:
+        if hierarchy == 0:
             proba_topk, indices_topk = (
                 proba[:, : self.top_k_for_generation],
                 indices[:, : self.top_k_for_generation],
-            )
-            generated_ids = indices_topk.unsqueeze(-1)
-            # we need to overwrite the cache because we expanded the beam width from bsz to bsz * beam_width
-            # real KV cache starts from the first hierarchy rather than 0-th
-            # this is because in 0th hierarchy, self-attention doesn't have cache.
-            # and kv cache in huggingface has poor support for this corner case
-            past_key_values = EncoderDecoderCache(
-                self_attention_cache=DynamicCache(),
-                cross_attention_cache=DynamicCache(),
-            )
-            replace_indices = None
+            )  # (B, top_k)
+
+            generated_ids = generated_ids.unsqueeze(1).repeat(1, self.top_k_for_generation, 1)  # (B, top_k, S)
+            attention_mask = attention_mask.unsqueeze(1).repeat(1, self.top_k_for_generation, 1) # (B, top_k, S)
+
+            next_tok = indices_topk.unsqueeze(-1)  # (B, top_k, 1)
+            next_mask = torch.ones(batch_size, self.top_k_for_generation, 1, device=attention_mask.device, dtype=attention_mask.dtype)  # (B, top_k, 1)
+            
+            generated_ids = torch.cat([generated_ids, next_tok], dim=-1).view(batch_size * self.top_k_for_generation, -1)  # (B * top_k, S + 1)
+            attention_mask = torch.cat([attention_mask, next_mask], dim=-1).view(batch_size * self.top_k_for_generation, -1)  # (B * top_k, S + 1)
         else:
-            # we have beams, generating more beams from the existing beams
-            proba, indices = (
-                proba[:, : self.num_embeddings_per_hierarchy],
-                indices[:, : self.num_embeddings_per_hierarchy],
-            )
-            proba, indices = proba.reshape(
-                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
-            ), indices.reshape(
-                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
-            )
+            num_candidates = self.num_embeddings_per_hierarchy if hierarchy < self.num_hierarchies else self.num_items
+            proba, indices = proba.view(
+                -1, self.top_k_for_generation * num_candidates
+            ), indices.view(
+                -1, self.top_k_for_generation * num_candidates
+            )  # (B, top_k * num_candidates)
             # calculating the marginal probability
-            proba = torch.mul(
-                marginal_log_prob.repeat_interleave(
-                    self.num_embeddings_per_hierarchy, dim=-1
-                ),
-                proba,
-            )
-            topk_results = torch.topk(
-                torch.nan_to_num(proba, nan=-1), k=self.top_k_for_generation, dim=-1
-            )
-            proba_topk, indices_topk = topk_results.values, topk_results.indices
+            proba =  marginal_log_prob.repeat_interleave(num_candidates, dim=-1) + proba  # (B, top_k * num_candidates)
+            topk_results = torch.topk(proba, k=self.top_k_for_generation, dim=-1)  # (B, top_k)
+            proba_topk, indices_topk = topk_results.values, topk_results.indices  # (B, top_k)
             # getting indices of winning beams in the original beams
             replace_indices = (
-                (indices_topk // self.num_embeddings_per_hierarchy)
+                (indices_topk // num_candidates)
                 + torch.arange(indices_topk.size(0), device=proba.device).unsqueeze(1)
                 * self.top_k_for_generation
-            ).flatten()
-            # accordingly update kv cache given the winning beams
-            if past_key_values != None:
-                past_key_values.reorder_cache(replace_indices)
+            ).flatten()  # (B * top_k)
 
-            indices_topk = torch.gather(indices, 1, indices_topk)
-
-        if replace_indices != None:
+            indices_topk = torch.gather(indices, 1, indices_topk)  # (B, top_k)
             generated_ids = torch.cat(
                 [
-                    generated_ids.reshape(-1, hierarchy)[replace_indices].reshape(
-                        -1, self.top_k_for_generation, hierarchy
-                    ),
-                    indices_topk.unsqueeze(-1),
+                    generated_ids[replace_indices],  # (B * top_k, S)
+                    indices_topk.reshape(-1).unsqueeze(-1),  # (B * top_k, 1)
                 ],
                 dim=-1,
-            )
-        else:
-            generated_ids = indices_topk.unsqueeze(-1)
+            )  # (B * top_k, S + 1)
 
-        return generated_ids, proba_topk, past_key_values
+            next_mask = torch.ones(replace_indices.size(0), 1, device=attention_mask.device, dtype=attention_mask.dtype)  # (B * top_k, 1)
+            attention_mask = torch.cat(
+                [
+                    attention_mask[replace_indices],  # (B * top_k, S)
+                    next_mask  # (B * top_k, 1)
+                ],
+                dim=-1
+            )  # (B * top_k, S + 1)
+
+        return generated_ids, proba_topk, attention_mask
 
     def eval_step(
         self,
-        batch: Tuple[SequentialModelInputData, SequentialModuleLabelData],
+        batch: SequentialModelInputData,
         loss_to_aggregate: BaseAggregator,
     ):
-        """Perform a single evaluation step on a batch of data from the validation or test set.
-        The method will update the metrics and the loss that is passed.
-        """
-        # Batch is a tuple of model inputs and labels.
-        model_input: SequentialModelInputData = batch[0]
-        label_data: SequentialModuleLabelData = batch[1]
-        _, loss = self.model_step(model_input=model_input, label_data=label_data)
-
-        generated_ids, marginal_probs = self.generate(
-            attention_mask=model_input.mask,
-            **{
-                self.feature_to_model_input_map.get(k, k): v
-                for k, v in model_input.transformed_sequences.items()
+        model_input = SequentialModelInputData(
+            transformed_sequences={
+                k: v.clone() for k, v in batch.transformed_sequences.items()
             },
+            mask=batch.mask.clone(),
+        )
+        _, loss = self.model_step(model_input=model_input, mode=ModelMode.TRAIN)
+
+        sid = model_input.transformed_sequences["sequence_data"].long()  # (B, S)
+        item_id = model_input.transformed_sequences["sequence_data_item_id"].long()  # (B, S)
+        attention_mask = model_input.mask  # (B, S)
+
+        lengths = attention_mask.sum(dim=1)  # (B)
+        B, S = sid.shape
+        device = sid.device
+
+        assert torch.all(lengths >= self.num_hierarchies), (
+            f"Found sequence length < num_hierarchies={self.num_hierarchies}: {lengths}"
+        )
+        assert torch.all(lengths % self.num_hierarchies == 0), (
+            f"Input lengths must be multiples of block={self.num_hierarchies}, got {lengths}"
         )
 
+        # ===== Construct label ===== 
+        idx = lengths[:, None] - self.num_hierarchies + torch.arange(self.num_hierarchies, device=device)  # (B, num_hierarchies)
+        labels_sid = sid.gather(1, idx)  # (B, num_hierarchies)
+        labels_item = item_id.gather(1, idx)  # (B, num_hierarchies)
+        label = torch.cat([labels_sid, labels_item[:, -1:]], dim=1)  # (B, num_hierarchies + 1)
+        
+        # ===== Left padding =====
+        hist_lengths = lengths - self.num_hierarchies  # (B,)
+        max_hist_len = hist_lengths.max().item()
+
+        hist_sid = torch.full(
+            (B, max_hist_len),
+            self.padding_token,
+            device=device,
+            dtype=sid.dtype,
+        )  # (B, max_hist_len)
+        hist_item = torch.full_like(hist_sid, self.padding_token)  # (B, max_hist_len)
+        
+        pos = torch.arange(max_hist_len, device=device)  # (max_hist_len,)
+        start = max_hist_len - hist_lengths[:, None]  # (B, max_hist_len)
+
+        hist_mask = pos >= start    # (B, max_hist_len)
+        hist_mask = hist_mask.to(attention_mask.dtype)
+
+        src_idx = pos - start  # (B, max_hist_len)
+        safe_src_idx = src_idx.clamp(min=0)
+
+        hist_sid[hist_mask.bool()] = sid.gather(1, safe_src_idx)[hist_mask.bool()]
+        hist_item[hist_mask.bool()] = item_id.gather(1, safe_src_idx)[hist_mask.bool()]
+
+        model_input.transformed_sequences["sequence_data"] = hist_sid
+        model_input.transformed_sequences["sequence_data_item_id"] = hist_item
+        model_input.mask = hist_mask
+
+        generated_ids, marginal_probs = self.model_step(model_input=model_input, mode=ModelMode.INFER)
         self.evaluator(
             marginal_probs=marginal_probs,
             generated_ids=generated_ids,
-            # TODO: (lneves) hardcoded for now, will need to change for multiple features
-            labels=list(label_data.labels.values())[0].to(marginal_probs.device),
+            labels=label.to(marginal_probs.device),
         )
 
-        loss_to_aggregate(loss)
+        loss_to_aggregate(loss["total"])
 
     def _make_deterministic(self, is_training: bool):
         """
@@ -468,6 +474,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         top_k_for_generation: int = 10,
         codebooks: torch.Tensor = None,
+        item_feat_tensor: torch.Tensor = None,
+        sid2item_container: torch.Tensor = None,
+        replace_prob: float = 0.1,
         embedding_dim: int = None,
         num_hierarchies: int = None,
         num_embeddings_per_hierarchy: int = None,
@@ -509,6 +518,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         super().__init__(
             codebooks=codebooks,
             num_hierarchies=num_hierarchies,
+            num_items=item_feat_tensor.size(0),
             num_embeddings_per_hierarchy=num_embeddings_per_hierarchy,
             embedding_dim=embedding_dim,
             top_k_for_generation=top_k_for_generation,
@@ -522,13 +532,13 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # bos_token used to prompt the decoder to generate the first token
         bos_token = torch.nn.Parameter(
-            torch.randn(1, self.embedding_dim), requires_grad=True
+            torch.randn(self.embedding_dim), requires_grad=True
         )
 
         self.decoder = SemanticIDDecoderModule(
             decoder=self.decoder,
             bos_token=bos_token,
-            decoder_mlp=torch.nn.ModuleList(
+            sid_head=torch.nn.ModuleList(
                 [
                     torch.nn.Linear(
                         self.embedding_dim,
@@ -538,6 +548,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                     for _ in range(self.num_hierarchies)
                 ]
             ),
+            item_head=torch.nn.Linear(self.embedding_dim, item_feat_tensor.size(0)),
+            binary_head=torch.nn.Linear(self.embedding_dim, 1)
         )
 
         if mlp_layers is not None:
@@ -560,6 +572,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies,
             embedding_dim=self.embedding_dim,
         )
+        self.item_feature_table = nn.Embedding.from_pretrained(
+            item_feat_tensor,
+            freeze=True,
+        )
+        self.feat_proj = nn.Linear(item_feat_tensor.size(1), self.embedding_dim)
+
+        self.register_buffer("sid_code", sid2item_container["sid_code"])
+        self.register_buffer("offsets",  sid2item_container["offsets"])
+        self.register_buffer("items",    sid2item_container["items"])
+
+        self.replace_prob = replace_prob
 
         # generating user embedding table
         self.user_embedding: torch.nn.Embedding = (
@@ -664,71 +687,96 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             torch.Tensor
         ] = None,  # TODO (clark): in the future we should support variable length semantic id
         future_ids: Optional[torch.Tensor] = None,
-        encoder_output: Optional[torch.Tensor] = None,
-        attention_mask_for_encoder: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         past_key_values: Optional[DynamicCache] = None,
+        add_bos_token: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass for the decoder module.
         Parameters:
             attention_mask (torch.Tensor): The attention mask for the decoder.
             future_ids (Optional[torch.Tensor]): The future IDs for the decoder.
-            encoder_output (Optional[torch.Tensor]): The output from the encoder.
-            attention_mask_for_encoder (Optional[torch.Tensor]): The attention mask for the encoder.
             use_cache (bool): Whether to use cache for past key values.
             past_key_values (Optional[DynamicCache]): The cache for past key values.
         """
 
-        # we generated something before and we need to shift the future_ids
-        if future_ids is not None:
-            shifted_future_sids = self._add_repeating_offset_to_rows(
-                input_sids=future_ids,
-                codebook_size=self.num_embeddings_per_hierarchy,
-                num_hierarchies=self.num_hierarchies,
-                attention_mask=torch.ones_like(future_ids, device=future_ids.device)
-                if attention_mask is None
-                else attention_mask,
-            )
-            inputs_embeds_for_decoder = self.get_embedding_table(table_name="decoder")(
-                shifted_future_sids
-            )
+        # ===== Convert to embedding =====
+        B, S = future_ids.shape
+        assert attention_mask.shape == future_ids.shape
+        sid_table = self.get_embedding_table(table_name="decoder")
+        feat_table = self.get_embedding_table(table_name="item_feature")
 
-            # we do not have valid kv cache
-            # we need to prepend bos token to the decoder input
-            if not self._is_kv_cache_valid(kv_cache=past_key_values):
-                inputs_embeds_for_decoder = torch.cat(
-                    [
-                        self.decoder.bos_token.unsqueeze(0).expand(
-                            future_ids.size(0), 1, -1
-                        ),
-                        inputs_embeds_for_decoder,
-                    ],
-                    dim=1,
-                )
-                if attention_mask is not None:
-                    attention_mask = torch.cat(
-                        [
-                            torch.ones(future_ids.size(0), 1, device=future_ids.device),
-                            attention_mask,
-                        ],
-                        dim=1,
-                    )
-            else:
-                # we have valid kv cache
-                # we only need the last token in the decoder input
-                inputs_embeds_for_decoder = inputs_embeds_for_decoder[:, -1:, :]
-        # this is the beginning of generation, we start from bos token
-        else:
-            inputs_embeds_for_decoder = self.decoder.bos_token.unsqueeze(0).expand(
-                encoder_output.size(0), 1, -1
-            )
+        in_block_len = self.num_hierarchies + 1
+        out_block_len = self.num_hierarchies + 2
+
+        pad_len = (-S) % in_block_len
+        future_ids_pad = nn.functional.pad(future_ids, (0, pad_len), value=0)  # (B, S + pad_len)
+        attention_mask_pad = F.pad(attention_mask, (0, pad_len), value=0)  # (B, S + pad_len)
+
+        future_ids_blk = future_ids_pad.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
+        mask_blk = attention_mask_pad.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
+
+        block_pad = mask_blk.sum(dim=-1) == 0   # (B, num_block)
+        fake_pos = (mask_blk[..., -1] == 0) & (~block_pad)  # (B, num_block)
+
+        sid_ids = future_ids_blk[..., :-1].masked_fill(block_pad.unsqueeze(-1), 0)  # (B, num_block, hirerachies)
+        offsets = (
+            torch.arange(self.num_hierarchies, device=sid_ids.device)
+            * self.num_embeddings_per_hierarchy
+        )
+        sid_ids = sid_ids + offsets
+        sid_embeds = sid_table(sid_ids)  # (B, num_block, hirerachies, D)
+        sid_embeds = sid_embeds.masked_fill(block_pad[..., None, None], 0.0)
+
+        item_ids = future_ids_blk[..., -1].masked_fill(block_pad, 0)  # (B, num_block)
+        item_embeds = self.feat_proj(feat_table(item_ids))  # (B, num_block, D)
+        item_embeds = item_embeds.masked_fill(block_pad[..., None], 0.0)
+
+        bos = self.decoder.bos_token
+        bos = bos.view(1, 1, 1, -1).expand(B, sid_embeds.size(1), 1, -1)  # (B, num_block, 1, D)
+
+        out_blk = torch.cat([bos, sid_embeds, item_embeds.unsqueeze(-2)], dim=-2)  # (B, num_block, out_block_len, D)
+        out_mask = torch.ones(B, out_blk.size(1), out_block_len, device=future_ids.device, dtype=attention_mask.dtype)  # (B, num_block, out_block_len)
+        out_mask[block_pad] = 0
+
+        fake_pos_lists = [
+            (torch.nonzero(fake_pos[b]).squeeze(-1) * out_block_len + (out_block_len - 1)).tolist()
+            for b in range(B)
+        ]
+
+        inputs_embeds = out_blk.view(B, -1, out_blk.size(-1))  # (B, S + pad_len + num_block, D)
+        padding_mask = out_mask.view(B, -1)  # (B, S + pad + num_block)
+
+        if pad_len > 0:
+            inputs_embeds = inputs_embeds[:, :-pad_len]
+            padding_mask = padding_mask[:, :-pad_len]
+
+        if add_bos_token:
+            bos = self.decoder.bos_token.view(1, 1, -1).expand(B, 1, -1)  # (B, 1, D)
+            inputs_embeds = torch.cat([inputs_embeds, bos], dim=1)  # (B, S + num_block + 1, D)
+
+            bos_mask = torch.ones(B, 1, device=padding_mask.device)  
+            padding_mask = torch.cat([padding_mask, bos_mask], dim=1)
+
+        # ===== Construct mask matrix =====
+        B, L, _ = inputs_embeds.shape
+        device = inputs_embeds.device
+        causal_mask = torch.tril(torch.ones(L, L, device=device)) # (L, L)
+        final_mask = causal_mask.unsqueeze(0).repeat(B, 1, 1) # (B, L, L)
+        final_mask = final_mask * padding_mask.unsqueeze(1) * padding_mask.unsqueeze(2)
+
+        for b in range(B):
+            for fp in fake_pos_lists[b]:
+                if fp < L:
+                    final_mask[b, fp+1:, fp] = 0
+
+        # BART expects (B, 1, L, L)
+        attn_mask_4d = final_mask.unsqueeze(1)
+        attn_mask_4d = (1.0 - attn_mask_4d) * -1e4
 
         decoder_output = self.decoder(
-            sequence_embedding=inputs_embeds_for_decoder,
-            attention_mask=attention_mask,
-            encoder_attention_mask=attention_mask_for_encoder,
-            encoder_output=encoder_output,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attn_mask_4d,
             use_cache=use_cache,
             past_key_values=past_key_values,
         )
@@ -737,128 +785,79 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
     def generate(
         self,
-        attention_mask: torch.Tensor,
-        input_ids: torch.Tensor,
-        user_id: torch.Tensor = None,
+        attention_mask: torch.Tensor = None,
+        input_ids: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Generate the semantic id given the current model in the sequence using beam search.
         Parameters:
-            attention_mask (torch.Tensor): The attention mask for the encoder.
-            input_ids (torch.Tensor): The input IDs for the encoder.
-            user_id (torch.Tensor): The user IDs for the encoder.
+            attention_mask (torch.Tensor): The attention mask for the decoder.
+            input_ids (torch.Tensor): The input IDs for the decoder.
         """
-
-        # getting encoder output
-        # we only need to do this once because we have decoder
-        # to do auto-regressive generation
-        encoder_output, encoder_attention_mask = self.encoder_forward_pass(
-            attention_mask=attention_mask,
-            input_ids=input_ids,
-            user_id=user_id,
-        )
-
         # initilize cached generated ids to None
-        generated_ids = None
+        generated_ids = input_ids
+        decoder_attention_mask = attention_mask
         marginal_log_prob = None
 
-        # initialize kv cache
-        past_key_values = EncoderDecoderCache(
-            self_attention_cache=DynamicCache(), cross_attention_cache=DynamicCache()
-        )
-
-        for hierarchy in range(self.num_hierarchies):
-            if generated_ids is not None:
-                # we generated something before
-                # we need to reshape the generated ids so that
-                # the number of beams equals to batch size * top_k
-                squeezed_generated_ids = generated_ids.reshape(-1, hierarchy).to(
-                    encoder_output.device
-                )  # shape: (batch_size * top_k, hierarchy)
-
-                repeated_encoder_output = encoder_output.repeat_interleave(
-                    self.top_k_for_generation, dim=0
-                )
-                # shape: (batch_size * top_k, seq_len+1, hidden_dim)
-                # +1 because we have user_id token
-
-                repeated_encoder_attention_mask = (
-                    encoder_attention_mask.repeat_interleave(
-                        self.top_k_for_generation, dim=0
-                    )
-                )  # shape: (batch_size * top_k, seq_len+1)
-            else:
-                # we haven't generated anything yet!
-                # the number of beams currently equals to batch size
-                squeezed_generated_ids = None
-                repeated_encoder_output = encoder_output
-                repeated_encoder_attention_mask = encoder_attention_mask
-
+        for hierarchy in range(self.num_hierarchies + 1):
             # feeding the decoder with the generated ids
-            decoder_output, past_key_values = self.decoder_forward_pass(
-                future_ids=squeezed_generated_ids,
-                encoder_output=repeated_encoder_output,
-                attention_mask_for_encoder=repeated_encoder_attention_mask,
-                use_cache=True,
-                past_key_values=past_key_values,
-            )
+            add_bos_token = hierarchy == 0
+            decoder_output = self.decoder_forward_pass(
+                future_ids=generated_ids,
+                attention_mask=decoder_attention_mask,
+                use_cache=False,
+                add_bos_token=add_bos_token
+            )  # (B, T, D) if hierarchy == 0 else (B * top_k, T, D)
 
             # decoder_output[:, -1, :] is the embedding for the next token
-            latest_output_representation = decoder_output[:, -1, :]
+            latest_output_representation = decoder_output[:, -1, :]  # (B, D) if hierarchy == 0 else (B * top_k, D)
 
-            # # calculating the logits for the next token
-            candidate_logits = self.decoder.decoder_mlp[hierarchy](
-                latest_output_representation
-            )  # shape: (batch_size * top_k, num_embeddings in the hierarchy)
+            # calculating the logits for the next token
+            if hierarchy < self.num_hierarchies:
+                candidate_logits = self.decoder.sid_head[hierarchy](
+                    latest_output_representation
+                )  # (B, num_candidates) if hierarchy == 0 else (B * top_k, num_candidates)
+            else:
+                candidate_logits = self.decoder.item_head(
+                    latest_output_representation
+                )  # (B, num_candidates) if hierarchy == 0 else (B * top_k, num_candidates)
 
             (
-                generated_ids,
-                marginal_log_prob,
-                past_key_values,
+                generated_ids,  # (B * top_k, S)
+                marginal_log_prob,  # (B, top_k)
+                decoder_attention_mask,  # (B * top_k, S)
             ) = self._beam_search_one_step(
                 candidate_logits=candidate_logits,
                 generated_ids=generated_ids,
+                attention_mask=decoder_attention_mask,
                 marginal_log_prob=marginal_log_prob,
-                past_key_values=past_key_values,
                 hierarchy=hierarchy,
                 batch_size=input_ids.size(0),
             )
 
+        if self.replace_prob > 0.0:
+            decoder_output = self.decoder_forward_pass(
+                future_ids=generated_ids,
+                attention_mask=decoder_attention_mask,
+                use_cache=False,
+                add_bos_token=False
+            )  # (B * top_k, T, D)
+            logits = self.decoder.binary_head(decoder_output[:, -1, :])  # (B * top_k, 1)
+            log_prob = F.logsigmoid(logits)  # (B * top_k, 1)
+            marginal_log_prob = marginal_log_prob + log_prob.view(input_ids.size(0), self.top_k_for_generation)  # (B, top_k)
+            marginal_log_prob, sorted_idx = torch.sort(marginal_log_prob, dim=1, descending=True)  # (B, top_k)
+
+            generated_ids = generated_ids.view(input_ids.size(0), self.top_k_for_generation, -1)  # (B, top_k, S)
+            generated_ids = torch.gather(
+                generated_ids,  # (B, top_k, S)
+                dim=1,
+                index=sorted_idx.unsqueeze(-1).expand(-1, -1, generated_ids.size(-1))  # (B, top_k, S)
+            )
+        else:
+            generated_ids = generated_ids.view(input_ids.size(0), self.top_k_for_generation, -1)  # (B, top_k, S)
+    
+        generated_ids = generated_ids[:, :, -(self.num_hierarchies + 1):]  # (B, top_k, self.num_hierarchies + 1)
         return generated_ids, marginal_log_prob
-
-    def forward(
-        self,
-        attention_mask_encoder: torch.Tensor,
-        input_ids: torch.Tensor,
-        user_id: Optional[torch.Tensor] = None,
-        future_ids: Optional[torch.Tensor] = None,
-        attention_mask_decoder: Optional[torch.Tensor] = None,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        """
-        Forward pass for the encoder-decoder model.
-        Parameters:
-            attention_mask_encoder (torch.Tensor): The attention mask for the encoder.
-            input_ids (torch.Tensor): The input IDs for the encoder.
-            user_id (torch.Tensor): The user IDs for the encoder.
-            future_ids (Optional[torch.Tensor]): The future IDs for the decoder.
-            attention_mask_decoder (Optional[torch.Tensor]): The attention mask for the decoder.
-        """
-
-        encoder_output, attention_mask_for_encoder = self.encoder_forward_pass(
-            attention_mask=attention_mask_encoder,
-            input_ids=input_ids,
-            user_id=user_id,
-        )
-
-        decoder_output = self.decoder_forward_pass(
-            future_ids=future_ids,
-            attention_mask=attention_mask_decoder,
-            encoder_output=encoder_output,
-            attention_mask_for_encoder=attention_mask_for_encoder,
-            use_cache=False,  # we are not using cache for training
-        )
-        return decoder_output
 
     def get_embedding_table(self, table_name: str, hierarchy: Optional[int] = None):
         """
@@ -873,6 +872,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             embedding_table = self.item_sid_embedding_table_encoder
         elif table_name == "decoder":
             embedding_table = self.item_sid_embedding_table_encoder
+        elif table_name == "item_feature":
+            embedding_table = self.item_feature_table
 
         if hierarchy is not None:
             return embedding_table(
@@ -884,7 +885,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         return embedding_table
 
     def predict_step(self, batch: SequentialModelInputData):
-        generated_sids, _ = self.model_step(batch)
+        generated_sids, _ = self.model_step(batch, mode=ModelMode.INFER)
         ids = [
             id.item() if isinstance(id, torch.Tensor) else id
             for id in batch.user_id_list
@@ -900,57 +901,192 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     def model_step(
         self,
         model_input: SequentialModelInputData,
-        label_data: Optional[SequentialModuleLabelData] = None,
+        mode: ModelMode,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Perform a forward pass of the model and calculate the loss if label_data is provided.
+        Perform a forward pass of the model and calculate the loss if mode is INFER.
 
         Args:
             model_input: The input data to the model.
-            label_data: The label data to the model. Its optional as it is not required for inference.
         """
 
-        # if label_data is None, we are in inference mode and doing free-form generation
-        if label_data is None:
-            # this is inference stage
-            generated_ids, marginal_probs = self.generate(
-                attention_mask=model_input.mask,
-                **{
-                    self.feature_to_model_input_map.get(k, k): v
-                    for k, v in model_input.transformed_sequences.items()
-                },
-            )
-            return generated_ids, 0  # returning 0 here because we don't have a loss
+        # ===== Splicing the sid and item_id together =====
+        sid = model_input.transformed_sequences["sequence_data"].long()
+        item_id = model_input.transformed_sequences["sequence_data_item_id"].long()
 
-        fut_ids = None
-        for label in label_data.labels:
-            curr_label = label_data.labels[label]
-            fut_ids = curr_label.reshape(model_input.mask.size(0), -1)
-        # here we pass labels in to the forward function
-        # because the decoder is causal and we are doing shifted prediction
-        model_output = self.forward(
-            attention_mask_encoder=model_input.mask,
-            future_ids=fut_ids,
-            **{
-                self.feature_to_model_input_map.get(k, k): v
-                for k, v in model_input.transformed_sequences.items()
-            },
+        B, S = sid.shape
+        assert S % self.num_hierarchies == 0, (
+            f"S={S} not divisible by num_hierarchies={self.num_hierarchies}"
+        )
+        sid = sid.reshape(B, S // self.num_hierarchies, self.num_hierarchies)
+        item_id = item_id[:, ::self.num_hierarchies].unsqueeze(2)
+        fut_ids = torch.cat([sid, item_id], dim=2)
+        fut_ids = fut_ids.reshape(B, -1)
+
+        mask = model_input.mask
+        mask_sid = mask.reshape(B, S // self.num_hierarchies, self.num_hierarchies)
+        item_mask = mask_sid[..., -1:]
+        fut_mask = torch.cat([mask_sid, item_mask], dim=2)
+        fut_mask = fut_mask.reshape(B, -1)
+
+        if mode is ModelMode.INFER:
+            generated_ids, marginal_probs = self.generate(
+                attention_mask=fut_mask,
+                input_ids=fut_ids
+            )
+            return generated_ids, marginal_probs
+        
+        # ===== Build labels and sample items =====
+        in_block_len = self.num_hierarchies + 1          
+        # sid1 + ... + sidn + item
+        out_block_len = self.num_hierarchies + 2         
+        # bos + sid1 + ... + sidn + item -> sid1 + ... sidn + item + flag
+        B, T = fut_ids.shape
+        num_block = T // in_block_len
+
+        fut_ids_blk  = fut_ids.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
+        fut_mask_blk = fut_mask.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
+        block_valid = fut_mask_blk[..., 0].bool()   # (B, num_block)
+
+        label_blk = torch.zeros(
+            B, num_block, out_block_len,
+            device=fut_ids.device,
+            dtype=fut_ids.dtype,
+        )  # (B, num_block, out_len)
+        label_blk[..., :in_block_len] = fut_ids_blk
+
+        item_tokens = fut_ids_blk[..., -1]  # (B, num_block)
+        replace_items = item_tokens.clone()
+        replace_items.fill_(-1)  # (B, num_block)
+
+        if block_valid.any():
+            replace_items[block_valid] = self.sample_same_sid(item_tokens[block_valid])
+
+        replace_mask = ( (torch.rand(B, num_block, device=fut_ids.device) < self.replace_prob) & block_valid )  # (B, num_block)
+        can_replace = replace_items >= 0  # (B, num_block)
+        replace_mask = replace_mask & can_replace  # (B, num_block)
+
+        flag = torch.ones(B, num_block, device=fut_ids.device, dtype=fut_ids.dtype)
+        flag = flag * (~replace_mask)
+        label_blk[..., -1] = flag
+
+        fut_ids_blk[..., -1] = torch.where(
+            replace_mask,
+            replace_items,
+            fut_ids_blk[..., -1]
+        )
+        fut_mask_blk[..., -1] = fut_mask_blk[..., -1] * (~replace_mask)
+
+        fut_ids  = fut_ids_blk.view(B, T)
+        fut_mask = fut_mask_blk.view(B, T)
+        label    = label_blk.view(B, num_block * out_block_len)
+
+        # ===== Forward =====
+        model_output = self.decoder_forward_pass(
+            attention_mask=fut_mask,
+            future_ids=fut_ids
         )
 
-        # we prepended a bos token to the decoder input
-        # so we need to remove the last token in the output
-        model_output = model_output[:, :-1]
+        # ===== Calculate loss =====
+        B, T, D = model_output.shape
+        model_output = model_output.view(B, -1, out_block_len, D)  # (B, num_block, out_block_len, D)
+        label = label.view(B, -1, out_block_len)  # (B, num_block, out_block_len)
 
-        # the label locations is shared for all semantic id hierarchies
-        loss = 0
-        for hierarchy in range(self.num_hierarchies):
+        fut_mask_block = fut_mask.view(B, -1, in_block_len)   # (B, num_block, in_block_len)
+        block_valid = fut_mask_block[:, :, 0]   # (B, num_block)
 
-            input = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
-            loss += self.loss_function(
-                input=input,
-                target=fut_ids[:, hierarchy].long(),
+        sid_losses = []
+        for cur in range(self.num_hierarchies):
+            logits = self.decoder.sid_head[cur](
+                model_output[..., cur, :]
+            )  # (B, num_block, num_candidates)
+            loss = self.ce_loss(
+                logits.reshape(-1, logits.size(-1)),  # (B * num_block, num_candidates)
+                label[..., cur].reshape(-1).long(), # (B * num_block)
+            )  # (B * num_block)
+            sid_losses.append(loss.view(B, -1))  # [(B, num_block)]
+        sid_loss = (torch.stack(sid_losses, dim=-1) * block_valid.unsqueeze(-1)).sum()
+
+        item_pos = self.num_hierarchies
+        item_logits = self.decoder.item_head(
+            model_output[..., item_pos, :]
+        )  # (B, num_block, num_candidates)
+        item_loss = self.ce_loss(
+            item_logits.reshape(-1, item_logits.size(-1)),  # (B * num_block, num_candidates)
+            label[..., item_pos].reshape(-1).long(),  # (B * num_block, num_candidates)
+        ).view(B, -1)  # (B, num_block)
+        item_loss = (item_loss * block_valid).sum()
+
+        flag_pos = self.num_hierarchies + 1
+        flag_logits = self.decoder.binary_head(
+            model_output[..., flag_pos, :]
+        ).squeeze(-1)  # (B, num_block)
+        flag_loss = self.bce_loss(
+            flag_logits.reshape(-1), # (B * num_block)
+            label[..., flag_pos].float().reshape(-1),  # (B * num_block)
+        ).view(B, -1)  # (B, num_block)
+        flag_loss = (flag_loss * block_valid).sum()
+
+        block_cnt = block_valid.sum().clamp_min(1)
+        loss = (sid_loss + item_loss + flag_loss) / block_cnt
+        return model_output, {
+            "total": loss,
+            "sid_loss": sid_loss / block_cnt,
+            "item_loss": item_loss / block_cnt,
+            "flag_loss": flag_loss / block_cnt,
+        }
+
+    def sample_same_sid(self, item_ids: torch.Tensor) -> torch.Tensor:
+        """
+        item_ids: (N,)
+        return:   (N,), invalid -> -1
+        """
+        # sid code
+        codes = self.sid_code[item_ids]      # (N,)
+
+        # offsets
+        l = self.offsets[codes, 0] # (N,)
+        r = self.offsets[codes, 1] # (N,)
+        length = r - l                       # (N,)
+
+        # valid candidates excluding self
+        valid_len = length - 1
+        no_candidate = valid_len <= 0
+
+        # output init
+        out = torch.full_like(item_ids, -1)
+
+        # sample for valid positions only
+        valid = ~no_candidate
+        if valid.any():
+            l_v = l[valid]
+            valid_len_v = valid_len[valid]
+            flat_v = item_ids[valid]
+
+            # global max (Tensor, no .item())
+            max_len = valid_len_v.max()
+
+            # sample [0, max_len)
+            rand = torch.randint(
+                0,
+                max_len,
+                (valid_len_v.size(0),),
+                device=item_ids.device,
             )
-        return model_output, loss
+
+            # map to [0, valid_len)
+            rand = rand % valid_len_v
+
+            sampled_idx = l_v + rand
+            sampled_item = self.items[sampled_idx]
+
+            # skip self safely
+            hit_self = sampled_item == flat_v
+            sampled_idx = sampled_idx + hit_self.long()
+
+            out[valid] = self.items[sampled_idx]
+
+        return out
 
 
 class SemanticIDDecoderModule(torch.nn.Module):
@@ -962,7 +1098,9 @@ class SemanticIDDecoderModule(torch.nn.Module):
     def __init__(
         self,
         decoder: transformers.PreTrainedModel,
-        decoder_mlp: Optional[torch.nn.Module] = None,
+        sid_head: Optional[torch.nn.Module] = None,
+        item_head: Optional[torch.nn.Module] = None,
+        binary_head: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
     ) -> None:
         """
@@ -970,35 +1108,25 @@ class SemanticIDDecoderModule(torch.nn.Module):
 
         Parameters:
         decoder (transformers.PreTrainedModel): the encoder model (e.g., transformers.T5EncoderModel).
-        decoder_mlp (torch.nn.Module): the mlp layers used to project the decoder output to the embedding table.
+        sid_head (torch.nn.Module): the mlp layers used to project the decoder output to the embedding table.
         bos_token (Optional[torch.nn.Parameter]):
             the bos token used to prompt the decoder.
             if None, then this means the decoder is used standalone without an encoder.
         """
 
         super().__init__()
-        # some sanity checks
-        if bos_token is not None:
-            assert decoder.config.is_decoder == True, "Decoder must be a decoder model"
-            assert (
-                decoder.config.is_encoder_decoder == False
-            ), "Decoder must be a standalone decoder model"
 
         self.decoder = decoder
         # this bos token is prompt for the decoder
         self.bos_token = bos_token
-        self.decoder_mlp = decoder_mlp
-        # deleting embedding table in the decoder to save space
-        delete_module(self.decoder, "embed_tokens")
-        delete_module(self.decoder, "shared")
-        reset_parameters(self.decoder)
+        self.sid_head = sid_head
+        self.item_head = item_head
+        self.binary_head = binary_head
 
     def forward(
         self,
         attention_mask: torch.Tensor,
-        sequence_embedding: torch.Tensor,
-        encoder_output: torch.Tensor,
-        encoder_attention_mask: torch.Tensor,
+        inputs_embeds: torch.Tensor,
         use_cache: bool = False,
         past_key_values: DynamicCache = DynamicCache(),
     ) -> torch.Tensor:
@@ -1015,9 +1143,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
 
         decoder_outputs: Seq2SeqModelOutput = self.decoder(
             attention_mask=attention_mask,
-            inputs_embeds=sequence_embedding,
-            encoder_hidden_states=encoder_output,
-            encoder_attention_mask=encoder_attention_mask,
+            inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             past_key_values=past_key_values,
         )

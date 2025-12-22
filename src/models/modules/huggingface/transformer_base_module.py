@@ -14,6 +14,12 @@ from src.models.components.network_blocks.embedding_aggregator import (
     EmbeddingAggregator,
 )
 from src.models.modules.base_module import BaseModule
+from enum import Enum, auto
+
+
+class ModelMode(Enum):
+    TRAIN = auto()
+    INFER = auto()
 
 
 class TransformerBaseModule(BaseModule):
@@ -71,7 +77,7 @@ class TransformerBaseModule(BaseModule):
 
     def training_step(
         self,
-        batch: Tuple[Tuple[SequentialModelInputData, SequentialModuleLabelData]],
+        batch: Tuple[SequentialModelInputData],
         batch_idx: int,
     ) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set.
@@ -82,19 +88,15 @@ class TransformerBaseModule(BaseModule):
         :param batch_idx: The index of the current batch.
         :return: A tensor of losses between model predictions and targets.
         """
-        # Lightning wraps it in a tuple for training, we get the batch from position 0.
-        # this behavior only happens for training_step.
         batch = batch[0]
-        # Batch is a tuple of model inputs and labels.
-        model_input: SequentialModelInputData = batch[0]
-        label_data: SequentialModuleLabelData = batch[1]
+        model_input: SequentialModelInputData = batch
         # Batch will be a tuple of model inputs and labels. We use the index here to access them.
-        model_output, loss = self.model_step(
-            model_input=model_input, label_data=label_data
+        model_output, loss_dict = self.model_step(
+            model_input=model_input, mode=ModelMode.TRAIN
         )
 
         # update and log metrics. Will only be logged at the interval specified in the logger config
-        self.train_loss(loss)
+        self.train_loss(loss_dict["total"])
         # checks logging interval and logs the loss
         self.log(
             "train/loss",
@@ -106,12 +108,23 @@ class TransformerBaseModule(BaseModule):
             sync_dist=True,
         )
 
+        for name in ["sid_loss", "item_loss", "flag_loss"]:
+            self.log(
+                f"train/{name}",
+                loss_dict[name],
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+
         # If a training loop function is passed, we call it with the module and the loss.
         # otherwise we use the automatic optimization provided by lightning
         if self.training_loop_function is not None:
-            self.training_loop_function(self, loss)
+            self.training_loop_function(self, loss_dict["total"])
 
-        return loss
+        return loss_dict["total"]
 
     def eval_step(
         self,

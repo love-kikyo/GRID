@@ -198,13 +198,14 @@ cython_debug/
 # ---------------------------
 
 # Data files
-data/
+/data/
 __MACOSX/
 
 # Logs
 logs/
 output*.txt
 errors*.txt
+fitlogs/
 
 # Model weights
 flan-t5-xl/
