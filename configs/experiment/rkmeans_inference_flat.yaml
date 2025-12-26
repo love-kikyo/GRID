@@ -54,10 +54,10 @@ callbacks:
     prediction_key_name: item_id
     prediction_name: cluster_ids
     post_processing_functions:
-    # - function:
-    #     _target_: src.utils.tensor_utils.deduplicate_rows_in_tensor
-    #     _partial_: true
-    #   main_only: true
+    - function:
+        _target_: src.utils.tensor_utils.deduplicate_rows_in_tensor
+        _partial_: true
+      main_only: true
     - function:
         _target_: src.utils.tensor_utils.transpose_tensor_from_file
         _partial_: true
