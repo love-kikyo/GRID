@@ -101,8 +101,9 @@ def collate_with_sid_causal_duplicate(
                     new_batch[sequence_field_name].append(
                         sequence[start_index:end_index]
                     )
+                    new_batch["sequence_data_item_id"].append(batch["sequence_data_item_id"][row_index][start_index:end_index])
                     for field_name in new_batch:
-                        if field_name != sequence_field_name:
+                        if field_name != sequence_field_name and field_name != "sequence_data_item_id":
                             new_batch[field_name].append(batch[field_name][row_index])
                 current_idx += 1
 

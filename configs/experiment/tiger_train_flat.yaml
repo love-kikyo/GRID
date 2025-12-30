@@ -91,10 +91,13 @@ data_loading:
       drop_last: true
       persistent_workers: true
       collate_fn:
-        _target_: src.data.loading.components.collate_functions.collate_fn_train
+        _target_: src.data.loading.components.collate_functions.collate_with_sid_causal_duplicate
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
+        sequence_field_name: sequence_data
+        sid_hierarchy: ${model.num_hierarchies}
+        max_batch_size: 512
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig
         user_id_field: user_id
@@ -198,7 +201,7 @@ model:
     config:
       _target_: transformers.T5Config
       vocab_size: 256
-      d_model: 128
+      d_model: 192
       num_heads: 6
       dropout_rate: 0.15
       d_ff: 1024
@@ -221,8 +224,8 @@ model:
     config:
       _target_: transformers.models.bart.configuration_bart.BartConfig
       vocab_size: 256
-      d_model: 128
-      decoder_layers: 9
+      d_model: 192
+      decoder_layers: 7
       decoder_attention_heads: 8
       decoder_ffn_dim: 1024
       dropout: 0.15
@@ -247,7 +250,7 @@ model:
       mode: rb
   mlp_layers: 2
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
-  replace_prob: 0.2
+  replace_prob: 0.0
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint

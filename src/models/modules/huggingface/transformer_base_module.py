@@ -108,8 +108,7 @@ class TransformerBaseModule(BaseModule):
             sync_dist=True,
         )
 
-        # for name in ["sid_loss", "item_loss", "flag_loss"]:
-        for name in ["sid_loss", "flag_loss"]:
+        for name in ["sid_loss", "pairwise_loss", "auc", "margin", "hard_ratio"]:
             self.log(
                 f"train/{name}",
                 loss_dict[name],

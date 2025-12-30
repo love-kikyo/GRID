@@ -21,7 +21,10 @@ class FitlogCallback(Callback):
             "train/loss",
             "train/sid_loss",
             "train/item_loss",
-            "train/flag_loss",
+            "train/pairwise_loss",
+            "train/auc", 
+            "train/margin", 
+            "train/hard_ratio"
         ]:
             if key in metrics:
                 fitlog.add_loss(
