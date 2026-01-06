@@ -15,7 +15,6 @@ command_line_logger = RankedLogger(__name__, rank_zero_only=True)
 class BaseModule(LightningModule):
     def __init__(
         self,
-        model: Union[torch.nn.Module, transformers.PreTrainedModel],
         optimizer: torch.optim.Optimizer,
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
         loss_function: torch.nn.Module,
@@ -33,7 +32,6 @@ class BaseModule(LightningModule):
         """
         super().__init__()
 
-        self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_function = loss_function

@@ -408,19 +408,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             generated_ids=generated_ids,
             labels=label.to(marginal_probs.device),
         )
-        
-        K = 5
-        pred_items = generated_ids[..., -1]   # (B, top_k)
-        gt_items   = label[..., -1]          # (B,)
-
-        for b in range(pred_items.size(0)):
-            gt = gt_items[b].item()
-            topk = pred_items[b, :K]
-
-            if gt not in topk.tolist():
-                for item in topk.tolist():
-                    self.hard_item_counter[item] += 1
-
         loss_to_aggregate(loss["total"])
 
     def _make_deterministic(self, is_training: bool):
@@ -438,16 +425,10 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             if self.decoder != None:
                 self.decoder.decoder.is_training = True
                 self.decoder.decoder.train()
-            if self.encoder != None:
-                self.encoder.encoder.is_training = True
-                self.encoder.encoder.train()
         else:
             if self.decoder != None:
                 self.decoder.decoder.is_training = False
                 self.decoder.decoder.eval()
-            if self.encoder != None:
-                self.encoder.encoder.is_training = False
-                self.encoder.encoder.eval()
 
     def on_predict_start(self):
         super().on_predict_start()
@@ -460,27 +441,10 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
     def on_validation_start(self):
         super().on_validation_start()
         self._make_deterministic(is_training=False)
-        self.hard_item_counter.clear()
 
     def on_validation_end(self):
         super().on_validation_end()
         self._make_deterministic(is_training=True)
-        hard_items = sorted(
-            self.hard_item_counter.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-
-        M = 5000
-        self.hard_item_pool = torch.tensor(
-            [item for item, _ in hard_items[:M]],
-            device=self.device
-        )
-
-        print(
-            f"[HardPool] size={len(self.hard_item_pool)} | "
-            f"top1 freq={hard_items[0][1] if hard_items else 0}"
-        )
 
     def on_test_start(self):
         super().on_test_start()
@@ -510,7 +474,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         item_feat_tensor: torch.Tensor = None,
         sid2item_container: torch.Tensor = None,
         replace_prob: float = 0.0,
-        lambda_pw: float = 0.0,
+        lambda_pw: float = 0.1,
         embedding_dim: int = None,
         num_hierarchies: int = None,
         num_embeddings_per_hierarchy: int = None,
@@ -542,12 +506,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 codebooks.max().item() + 1,
             )
         if embedding_dim is None:
-            embedding_dim = (
-                kwargs["huggingface_model"]
-                .encoder.block[0]
-                .layer[0]
-                .SelfAttention.q.in_features
-            )
+            embedding_dim = kwargs["decoder"].config.d_model
 
         super().__init__(
             codebooks=codebooks,
@@ -558,10 +517,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             top_k_for_generation=top_k_for_generation,
             should_check_prefix=should_check_prefix,
             **kwargs,
-        )
-
-        self.encoder = SemanticIDEncoderModule(
-            encoder=self.encoder,
         )
 
         # bos_token used to prompt the decoder to generate the first token
@@ -585,20 +540,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             item_head=torch.nn.Linear(self.embedding_dim, item_feat_tensor.size(0)),
             score_head=torch.nn.Linear(self.embedding_dim, 1)
         )
-
-        if mlp_layers is not None:
-            # bloating the mlp layers in both encoder and decoder
-            # TODO (clark): this currently only works for T5
-            for name, module in self.named_modules():
-                if isinstance(module, transformers.models.t5.modeling_t5.T5LayerFF):
-                    parent_module, attr_name = get_parent_module_and_attr(self, name)
-                    setattr(
-                        parent_module,
-                        attr_name,
-                        T5MultiLayerFF(
-                            config=self.encoder.encoder.config, num_layers=mlp_layers
-                        ),
-                    )
 
         # generate embedding tables for each hierarchy
         # here we assume each hierarchy has the same amount of embeddings
@@ -654,92 +595,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             else None
         )
 
-        # separation token for the encoder to differentiate between items
-        self.sep_token = (
-            torch.nn.Parameter(torch.randn(1, self.embedding_dim), requires_grad=True)
-            if should_add_sep_token
-            else None
-        )
         # the key value names for the prediction output
         self.prediction_key_name = prediction_key_name
         self.prediction_value_name = prediction_value_name
-
-    def encoder_forward_pass(
-        self,
-        attention_mask: torch.Tensor,
-        input_ids: torch.Tensor,
-        user_id: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Forward pass for the encoder module.
-
-        Parameters:
-            attention_mask (torch.Tensor): The attention mask for the encoder.
-            input_ids (torch.Tensor): The input IDs for the encoder.
-            user_id (torch.Tensor): The user IDs for the encoder.
-        """
-
-        # we shift the IDs here to match the hierarchy structure
-        # so that we can use a single embedding table to store the embeddigns for all hierarchies
-        shifted_sids = self._add_repeating_offset_to_rows(
-            input_sids=input_ids,
-            codebook_size=self.num_embeddings_per_hierarchy,
-            num_hierarchies=self.num_hierarchies,
-            attention_mask=attention_mask,
-        )
-        inputs_embeds_for_encoder = self.get_embedding_table(table_name="encoder")(
-            shifted_sids
-        )
-
-        if self.sep_token is not None:
-            (
-                inputs_embeds_for_encoder,
-                attention_mask,
-            ) = self._inject_sep_token_between_sids(
-                id_embeddings=inputs_embeds_for_encoder,
-                attention_mask=attention_mask,
-                sep_token=self.sep_token,
-                num_hierarchies=self.num_hierarchies,
-            )
-
-        # we enter this loop if we want to use user_id
-        if user_id is not None and self.user_embedding is not None:
-            # preprocessing function pad user_id with zeros
-            # so we only need to take the first column
-            user_id = user_id[:, 0]
-
-            # TODO (clark): here we assume remainder hashing, which is different from LSH hashing used in TIGER.
-            user_embeds = self.user_embedding(
-                torch.remainder(user_id, self.user_embedding.num_embeddings)
-            )
-
-            # prepending the user_id embedding to the input senquence
-            inputs_embeds_for_encoder = torch.cat(
-                [
-                    user_embeds.unsqueeze(1),
-                    inputs_embeds_for_encoder,
-                ],
-                dim=1,
-            )
-            # prepending 1 to attention mask as we introduce user embedding in the first column
-            user_attention_mask = torch.ones(
-                attention_mask.size(0), 1, device=attention_mask.device
-            )
-            attention_mask_for_encoder = torch.cat(
-                [
-                    user_attention_mask,
-                    attention_mask,
-                ],
-                dim=1,
-            )
-        else:
-            attention_mask_for_encoder = attention_mask
-
-        encoder_output = self.encoder(
-            sequence_embedding=inputs_embeds_for_encoder,
-            attention_mask=attention_mask_for_encoder,
-        )
-        return encoder_output, attention_mask_for_encoder
 
     def decoder_forward_pass(
         self,
@@ -970,9 +828,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             NEG_INF
         )
 
-        valid_ratio = item_valid.float().mean()
-        print("valid_ratio:", valid_ratio)
-
         marginal_log_prob, sorted_idx = torch.sort(marginal_log_prob, dim=1, descending=True)  # (B, top_k)
         generated_ids = generated_ids.view(input_ids.size(0), self.top_k_for_generation, -1)  # (B, top_k, S)
         generated_ids = torch.gather(
@@ -980,10 +835,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             dim=1,
             index=sorted_idx.unsqueeze(-1).expand(-1, -1, generated_ids.size(-1))  # (B, top_k, S)
         )
-
-        with torch.no_grad():
-            print("score mean:", score.mean().item())
-            print("score std :", score.std().item())
 
         generated_ids = generated_ids[:, :, -(self.num_hierarchies + 1):]  # (B, top_k, self.num_hierarchies + 1)
         return generated_ids, marginal_log_prob
@@ -1046,10 +897,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         item_id = model_input.transformed_sequences["sequence_data_item_id"].long()
 
         B, S = sid.shape
-        num_block = S // self.num_hierarchies
         assert S % self.num_hierarchies == 0, (
             f"S={S} not divisible by num_hierarchies={self.num_hierarchies}"
         )
+        num_block = S // self.num_hierarchies
         sid = sid.view(B, num_block, self.num_hierarchies)
         item_id = item_id[:, ::self.num_hierarchies].unsqueeze(2)  # (B, num_block, 1)
         fut_ids = torch.cat([sid, item_id], dim=2)  # (B, num_block, self.num_hierarchies + 1)
@@ -1077,75 +928,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         fut_mask_blk = fut_mask.view(B, num_block, in_block_len)  # (B, num_block, in_block_len)
         block_valid = fut_mask_blk[..., 0].bool()   # (B, num_block)
 
-        item_tokens = fut_ids_blk[..., -1]  # (B, num_block)
-        replace_items = item_tokens.clone()
-        replace_items.fill_(-1)  # (B, num_block)
-        if block_valid.any():
-            replace_items[block_valid] = self.sample_mixed_negative(item_tokens[block_valid])
-        can_replace = (replace_items >= 0) & (torch.rand_like(block_valid.float()) < self.replace_prob)   # (B, num_block)
-
-        fut_ids_v0 = fut_ids.clone()
-        fut_ids_v1 = fut_ids.clone()
-        fut_mask_v0 = fut_mask.clone()
-        fut_mask_v1 = fut_mask.clone()
-
-        assign_v0 = can_replace & (torch.rand_like(can_replace.float()) < 0.5)
-        assign_v1 = can_replace & (~assign_v0)
-
-        # (num_block,)
-        blk_item_pos = torch.arange(num_block, device=fut_ids.device) * in_block_len + (in_block_len - 1)
-        # (B, num_block)
-        blk_item_pos = blk_item_pos.unsqueeze(0).expand(B, -1)
-        # view0
-        b0, blk0 = assign_v0.nonzero(as_tuple=True)
-        pos_idx = blk_item_pos[b0, blk0]
-        fut_ids_v0[b0, pos_idx] = replace_items[b0, blk0]
-        fut_mask_v0[b0, pos_idx] = 0
-        # view1
-        b1, blk1 = assign_v1.nonzero(as_tuple=True)
-        pos_idx = blk_item_pos[b1, blk1]
-        fut_ids_v1[b1, pos_idx] = replace_items[b1, blk1]
-        fut_mask_v1[b1, pos_idx] = 0
-
-        fut_ids_2v = torch.cat([fut_ids_v0, fut_ids_v1], dim=0)     # (2B, T)
-        fut_mask_2v = torch.cat([fut_mask_v0, fut_mask_v1], dim=0) # (2B, T)
-
-        model_output_2v = self.decoder_forward_pass(
-            attention_mask=fut_mask_2v,
-            future_ids=fut_ids_2v
-        )  # (2B, T, D)
-        model_output_2v = model_output_2v.view(
-            2, B, num_block, out_block_len, -1
-        )
-
-        flag_pos = self.num_hierarchies + 1
-        pos_h0 = model_output_2v[1, b0, blk0, flag_pos]  # (N0, D)
-        neg_h0 = model_output_2v[0, b0, blk0, flag_pos]  # (N0, D)
-        pos_h1 = model_output_2v[0, b1, blk1, flag_pos]  # (N1, D)
-        neg_h1 = model_output_2v[1, b1, blk1, flag_pos]  # (N1, D)
-
-        pos_h = torch.cat([pos_h0, pos_h1], dim=0)
-        neg_h = torch.cat([neg_h0, neg_h1], dim=0)
-
-        if len(pos_h) == 0:
-            pairwise_loss = torch.tensor(0.0, device=fut_ids.device)
-            auc = 0
-            margin = 0
-            hard_ratio = 0
-        else:
-            score_pos = self.decoder.score_head(pos_h).squeeze(-1)
-            score_neg = self.decoder.score_head(neg_h).squeeze(-1)
-            pairwise_loss = -F.logsigmoid(score_pos - score_neg).mean()
-            with torch.no_grad():
-                auc = (score_pos > score_neg).float().mean()
-                margin = (score_pos - score_neg).mean()
-                hard_ratio = ((score_pos - score_neg) < 0).float().mean()
+        model_output = self.decoder_forward_pass(
+            attention_mask=fut_mask,
+            future_ids=fut_ids
+        )  # (B, T, D)
+        model_output_blk = model_output.view(B, num_block, out_block_len, -1)
 
         block_cnt = block_valid.sum().clamp_min(1)
         sid_losses = []
         for cur in range(self.num_hierarchies):
             logits = self.decoder.sid_head[cur](
-                model_output_2v[0, ..., cur, :]
+                model_output_blk[..., cur, :]
             )  # (B, num_block, num_candidates)
             loss = self.ce_loss(
                 logits.view(B * num_block, logits.size(-1)),  # (B * num_block, num_candidates)
@@ -1154,8 +947,60 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             sid_losses.append(loss.view(B, num_block))  # [(B, num_block)]
         sid_loss = (torch.stack(sid_losses, dim=-1) * block_valid.unsqueeze(-1)).sum() / block_cnt
 
+        item_tokens = fut_ids_blk[..., -1]  # (B, num_block)
+        replace_items = item_tokens.clone()
+        replace_items.fill_(-1)  # (B, num_block)
+        if block_valid.any():
+            replace_items[block_valid] = self.sample_not_self(item_tokens[block_valid])
+        can_replace = (replace_items >= 0)  # (B, num_block)
+
+        flag_pos = self.num_hierarchies + 1
+        pos_all = model_output_blk[:, :, flag_pos]  # (B, num_block, D)
+        # ===== pairwise sampling =====
+        has_replace = can_replace.any(dim=1)
+        b_idx = torch.nonzero(has_replace, as_tuple=True)[0]
+
+        if b_idx.numel() == 0:
+            pairwise_loss = torch.tensor(0.0, device=fut_ids.device)
+            auc = margin = hard_ratio = torch.tensor(0.0, device=fut_ids.device)
+        else:
+            rand = torch.rand_like(can_replace.float())
+            rand[~can_replace] = -1
+            blk_idx = rand.argmax(dim=1)[b_idx]
+
+            blk_item_pos = (
+                torch.arange(num_block, device=fut_ids.device) * in_block_len
+                + (in_block_len - 1)
+            )
+            pos_idx = blk_item_pos[blk_idx]
+
+            fut_ids_neg = fut_ids[b_idx].clone()
+            fut_mask_neg = fut_mask[b_idx].clone()
+            fut_ids_neg[torch.arange(len(b_idx)), pos_idx] = replace_items[b_idx, blk_idx]
+            fut_mask_neg[torch.arange(len(b_idx)), pos_idx] = 0
+
+            model_output_neg = self.decoder_forward_pass(
+                attention_mask=fut_mask_neg,
+                future_ids=fut_ids_neg
+            )
+            model_output_neg = model_output_neg.view(
+                len(b_idx), num_block, out_block_len, -1
+            )
+
+            neg_h = model_output_neg[:, blk_idx, flag_pos]
+            pos_h = pos_all[b_idx, blk_idx]
+
+            score_pos = self.decoder.score_head(pos_h).squeeze(-1)
+            score_neg = self.decoder.score_head(neg_h).squeeze(-1)
+
+            pairwise_loss = -F.logsigmoid(score_pos - score_neg).mean()
+            with torch.no_grad():
+                auc = (score_pos > score_neg).float().mean()
+                margin = (score_pos - score_neg).mean()
+                hard_ratio = ((score_pos - score_neg) < 0).float().mean()
+
         loss = sid_loss + self.lambda_pw * pairwise_loss
-        return model_output_2v[0], {
+        return model_output, {
             "total": loss,
             "sid_loss": sid_loss,
             "pairwise_loss": pairwise_loss,
@@ -1163,29 +1008,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             "margin": margin,
             "hard_ratio": hard_ratio,
         }
-    
-    def sample_mixed_negative(self, gt_items):
-        neg = torch.empty_like(gt_items)
-        use_hard = (
-            self.hard_item_pool is not None
-            and self.hard_item_pool.numel() > 0
-        )
-        r = torch.rand_like(gt_items.float())
-
-        # ===== 50% same-sid negative =====
-        mask_sid = r < 0.3
-        if mask_sid.any():
-            neg[mask_sid] = self.sample_not_self(gt_items[mask_sid], 1)
-
-        # ===== 50% hard negative =====
-        mask_hard = ~mask_sid
-        if mask_hard.any():
-            if use_hard:
-                neg[mask_hard] = self.sample_from_hard_pool(gt_items[mask_hard])
-            else:
-                neg[mask_hard] = self.sample_not_self(gt_items[mask_hard], 1)
-
-        return neg
 
     def sample_not_self(
         self,
@@ -1248,33 +1070,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         out[valid] = items[sampled_idx]
         return out
-
-    def sample_from_hard_pool(self, gt_items):
-        """
-        gt_items: (N,)
-        return:   (N,)  sampled hard negatives
-        """
-        pool = self.hard_item_pool  # (M,)
-
-        N = gt_items.size(0)
-        M = pool.size(0)
-
-        idx = torch.randint(
-            0, M, (N,),
-            device=gt_items.device
-        )
-        neg = pool[idx]
-
-        same = neg == gt_items
-        if same.any():
-            idx2 = torch.randint(
-                0, M, (same.sum(),),
-                device=gt_items.device
-            )
-            neg[same] = pool[idx2]
-
-        return neg
-
 
 class SemanticIDDecoderModule(torch.nn.Module):
     """

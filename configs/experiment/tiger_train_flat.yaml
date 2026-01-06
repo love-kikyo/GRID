@@ -196,17 +196,6 @@ data_loading:
     val_dataloader_config: ${..val_dataloader_config.dataloader}
     test_dataloader_config: ${..test_dataloader_config.dataloader}
 model:
-  huggingface_model:
-    _target_: transformers.T5EncoderModel
-    config:
-      _target_: transformers.T5Config
-      vocab_size: 256
-      d_model: 192
-      num_heads: 6
-      dropout_rate: 0.15
-      d_ff: 1024
-      d_kv: 64
-      num_layers: 4
   _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -250,7 +239,7 @@ model:
       mode: rb
   mlp_layers: 2
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
-  replace_prob: 0.0
+  replace_prob: 0.2
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint

@@ -25,7 +25,6 @@ class ModelMode(Enum):
 class TransformerBaseModule(BaseModule):
     def __init__(
         self,
-        huggingface_model: transformers.PreTrainedModel,
         postprocessor: torch.nn.Module,
         aggregator: EmbeddingAggregator,
         optimizer: torch.optim.Optimizer,
@@ -40,7 +39,6 @@ class TransformerBaseModule(BaseModule):
     ) -> None:
 
         super().__init__(
-            model=huggingface_model,
             optimizer=optimizer,
             scheduler=scheduler,
             loss_function=loss_function,
@@ -63,7 +61,6 @@ class TransformerBaseModule(BaseModule):
             ],
         )
 
-        self.encoder = huggingface_model
         self.embedding_post_processor = postprocessor
         self.decoder = decoder
         self.aggregator = aggregator
