@@ -508,12 +508,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 codebooks.max().item() + 1,
             )
         if embedding_dim is None:
-            embedding_dim = (
-                kwargs["huggingface_model"]
-                .encoder.block[0]
-                .layer[0]
-                .SelfAttention.q.in_features
-            )
+            decoder = kwargs["decoder"]
+            embedding_dim = decoder.config.d_model
 
         super().__init__(
             codebooks=codebooks,
@@ -526,9 +522,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             **kwargs,
         )
 
-        self.encoder = SemanticIDEncoderModule(
-            encoder=self.encoder,
-        )
+        if self.encoder != None:
+            self.encoder = SemanticIDEncoderModule(
+                encoder=self.encoder,
+            )
 
         # bos_token used to prompt the decoder to generate the first token
         bos_token = torch.nn.Parameter(

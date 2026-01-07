@@ -193,17 +193,7 @@ data_loading:
     val_dataloader_config: ${..val_dataloader_config.dataloader}
     test_dataloader_config: ${..test_dataloader_config.dataloader}
 model:
-  huggingface_model:
-    _target_: transformers.T5EncoderModel
-    config:
-      _target_: transformers.T5Config
-      vocab_size: 256
-      d_model: 128
-      num_heads: 6
-      dropout_rate: 0.15
-      d_ff: 1024
-      d_kv: 64
-      num_layers: 4
+  huggingface_model: null
   _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -222,7 +212,7 @@ model:
       _target_: transformers.models.bart.configuration_bart.BartConfig
       vocab_size: 256
       d_model: 128
-      decoder_layers: 4
+      decoder_layers: 7
       decoder_attention_heads: 8
       decoder_ffn_dim: 1024
       dropout: 0.15
