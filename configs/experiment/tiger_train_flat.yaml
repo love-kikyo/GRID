@@ -85,9 +85,9 @@ data_loading:
       timeout: 60
       assign_files_by_size: false
       oov_token: null
-      masking_token: -1
+      masking_token: 0
       sequence_length: ${sequence_length}
-      padding_token: -1
+      padding_token: 0
       drop_last: true
       persistent_workers: true
       collate_fn:
@@ -235,9 +235,8 @@ model:
     - _target_: src.utils.file_utils.open_local_or_remote
       file_path: ${sid2item_container_path}
       mode: rb
-  mlp_layers: 2
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
-  replace_prob: 0.5
+  replace_prob: 0.0
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint

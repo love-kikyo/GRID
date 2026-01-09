@@ -20,8 +20,8 @@ class FitlogCallback(Callback):
         for key in [
             "train/loss",
             "train/sid_loss",
-            "train/item_loss",
-            "train/flag_loss",
+            "train/latent_loss",
+            # "train/flag_loss",
         ]:
             if key in metrics:
                 fitlog.add_loss(

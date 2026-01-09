@@ -63,7 +63,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.padding_token = padding_token
         self.embedding_dim = embedding_dim
         self.num_items = num_items
-        self.ce_loss = nn.CrossEntropyLoss(reduction="none", ignore_index=padding_token)
+        self.ce_loss = nn.CrossEntropyLoss(reduction="none", ignore_index=padding_token - 1)
         self.bce_loss = nn.BCEWithLogitsLoss(reduction="none")
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
@@ -152,6 +152,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         table = torch.nn.Embedding(
             num_embeddings=num_embeddings,  # type: ignore
             embedding_dim=embedding_dim,  # type: ignore
+            padding_idx=self.padding_token
         )
         return table
 
@@ -260,9 +261,10 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
     def _beam_search_one_step(
         self,
         candidate_logits: torch.Tensor,
-        generated_ids: Union[torch.Tensor, None],
+        sid: Union[torch.Tensor, None],
+        item_id: Union[torch.Tensor, None],
         attention_mask: torch.Tensor, 
-        marginal_log_prob: Union[torch.Tensor, None],
+        beam_log_prob: Union[torch.Tensor, None],
         hierarchy: int,
         batch_size: int,
     ):
@@ -272,7 +274,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         Args:
             candidate_logits: The logits for the next token.
             generated_ids: The generated IDs so far.
-            marginal_log_prob: The marginal log probabilities.  (B, top_k)
+            beam_log_prob: Accumulated (joint) log probabilities of current beams.  (B, top_k)
             attention_mask: The attention mask for input.
             hierarchy: The current hierarchy level.
             batch_size: The size of the batch.
@@ -290,51 +292,57 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
                 indices[:, : self.top_k_for_generation],
             )  # (B, top_k)
 
-            generated_ids = generated_ids.unsqueeze(1).repeat(1, self.top_k_for_generation, 1)  # (B, top_k, S)
+            sid = sid.unsqueeze(1).repeat(1, self.top_k_for_generation, 1)  # (B, top_k, S)
+            item_id = item_id.unsqueeze(1).repeat(1, self.top_k_for_generation, 1)
             attention_mask = attention_mask.unsqueeze(1).repeat(1, self.top_k_for_generation, 1) # (B, top_k, S)
 
-            next_tok = indices_topk.unsqueeze(-1)  # (B, top_k, 1)
+            next_sid = indices_topk.unsqueeze(-1) + 1  # (B, top_k, 1)
+            next_item = torch.full(
+                (batch_size, self.top_k_for_generation, 1),
+                fill_value=self.padding_token,
+                device=item_id.device,
+                dtype=item_id.dtype,
+            )
             next_mask = torch.ones(batch_size, self.top_k_for_generation, 1, device=attention_mask.device, dtype=attention_mask.dtype)  # (B, top_k, 1)
             
-            generated_ids = torch.cat([generated_ids, next_tok], dim=-1).view(batch_size * self.top_k_for_generation, -1)  # (B * top_k, S + 1)
+            sid = torch.cat([sid, next_sid], dim=-1).view(batch_size * self.top_k_for_generation, -1)  # (B * top_k, S + 1)
+            item_id = torch.cat([item_id, next_item], dim=-1).view(batch_size * self.top_k_for_generation, -1)
             attention_mask = torch.cat([attention_mask, next_mask], dim=-1).view(batch_size * self.top_k_for_generation, -1)  # (B * top_k, S + 1)
         else:
-            num_candidates = self.num_embeddings_per_hierarchy if hierarchy < self.num_hierarchies else self.num_items
             proba, indices = proba.view(
-                -1, self.top_k_for_generation * num_candidates
+                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
             ), indices.view(
-                -1, self.top_k_for_generation * num_candidates
+                -1, self.top_k_for_generation * self.num_embeddings_per_hierarchy
             )  # (B, top_k * num_candidates)
             # calculating the marginal probability
-            proba =  marginal_log_prob.repeat_interleave(num_candidates, dim=-1) + proba  # (B, top_k * num_candidates)
+            proba =  beam_log_prob.repeat_interleave(self.num_embeddings_per_hierarchy, dim=-1) + proba  # (B, top_k * num_candidates)
             topk_results = torch.topk(proba, k=self.top_k_for_generation, dim=-1)  # (B, top_k)
             proba_topk, indices_topk = topk_results.values, topk_results.indices  # (B, top_k)
             # getting indices of winning beams in the original beams
             replace_indices = (
-                (indices_topk // num_candidates)
+                (indices_topk // self.num_embeddings_per_hierarchy)
                 + torch.arange(indices_topk.size(0), device=proba.device).unsqueeze(1)
                 * self.top_k_for_generation
             ).flatten()  # (B * top_k)
 
-            indices_topk = torch.gather(indices, 1, indices_topk)  # (B, top_k)
-            generated_ids = torch.cat(
-                [
-                    generated_ids[replace_indices],  # (B * top_k, S)
-                    indices_topk.reshape(-1).unsqueeze(-1),  # (B * top_k, 1)
-                ],
-                dim=-1,
-            )  # (B * top_k, S + 1)
+            sid = sid[replace_indices]  # (B * top_k, S)
+            item_id = item_id[replace_indices]
+            attention_mask = attention_mask[replace_indices] # (B * top_k, S)
 
+            next_sid = torch.gather(indices, 1, indices_topk).reshape(-1).unsqueeze(-1) + 1  # (B * top_k, 1)
+            next_item = torch.full(
+                (replace_indices.size(0), 1),
+                fill_value=self.padding_token,
+                device=item_id.device,
+                dtype=item_id.dtype,
+            )
             next_mask = torch.ones(replace_indices.size(0), 1, device=attention_mask.device, dtype=attention_mask.dtype)  # (B * top_k, 1)
-            attention_mask = torch.cat(
-                [
-                    attention_mask[replace_indices],  # (B * top_k, S)
-                    next_mask  # (B * top_k, 1)
-                ],
-                dim=-1
-            )  # (B * top_k, S + 1)
 
-        return generated_ids, proba_topk, attention_mask
+            sid = torch.cat([sid, next_sid], dim=-1)  # (B * top_k, S + 1)
+            item_id = torch.cat([item_id, next_item], dim=-1)
+            attention_mask = torch.cat([attention_mask, next_mask], dim=-1)  # (B * top_k, S + 1)
+
+        return sid, item_id, proba_topk, attention_mask
 
     def eval_step(
         self,
@@ -366,9 +374,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         # ===== Construct label ===== 
         idx = lengths[:, None] - self.num_hierarchies + torch.arange(self.num_hierarchies, device=device)  # (B, num_hierarchies)
-        labels_sid = sid.gather(1, idx)  # (B, num_hierarchies)
-        labels_item = item_id.gather(1, idx)  # (B, num_hierarchies)
-        label = torch.cat([labels_sid, labels_item[:, -1:]], dim=1)  # (B, num_hierarchies + 1)
+        labels = sid.gather(1, idx)  # (B, num_hierarchies)
         
         # ===== Left padding =====
         hist_lengths = lengths - self.num_hierarchies  # (B,)
@@ -402,10 +408,10 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.evaluator(
             marginal_probs=marginal_probs,
             generated_ids=generated_ids,
-            labels=label.to(marginal_probs.device),
+            labels=labels.to(marginal_probs.device),
         )
 
-        loss_to_aggregate(loss["total"])
+        loss_to_aggregate(loss["total_loss"])
 
     def _make_deterministic(self, is_training: bool):
         """
@@ -481,7 +487,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         num_hierarchies: int = None,
         num_embeddings_per_hierarchy: int = None,
         num_user_bins: Optional[int] = None,
-        mlp_layers: Optional[int] = None,
         should_check_prefix: bool = False,
         should_add_sep_token: bool = True,
         prediction_key_name: str = "user_id",
@@ -545,39 +550,48 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                     for _ in range(self.num_hierarchies)
                 ]
             ),
-            item_head=torch.nn.Linear(self.embedding_dim, item_feat_tensor.size(0)),
-            binary_head=torch.nn.Linear(self.embedding_dim, 1)
+            score_head=torch.nn.Linear(self.embedding_dim, 1)
         )
-
-        if mlp_layers is not None:
-            # bloating the mlp layers in both encoder and decoder
-            # TODO (clark): this currently only works for T5
-            for name, module in self.named_modules():
-                if isinstance(module, transformers.models.t5.modeling_t5.T5LayerFF):
-                    parent_module, attr_name = get_parent_module_and_attr(self, name)
-                    setattr(
-                        parent_module,
-                        attr_name,
-                        T5MultiLayerFF(
-                            config=self.encoder.encoder.config, num_layers=mlp_layers
-                        ),
-                    )
 
         # generate embedding tables for each hierarchy
         # here we assume each hierarchy has the same amount of embeddings
         self.item_sid_embedding_table_encoder = self._spawn_embedding_tables(
-            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies,
+            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies + 1,
             embedding_dim=self.embedding_dim,
         )
-        self.item_feature_table = nn.Embedding.from_pretrained(
+        padding_row = torch.zeros(1, item_feat_tensor.size(1), dtype=item_feat_tensor.dtype)
+        item_feat_tensor = torch.cat([padding_row, item_feat_tensor], dim=0)
+        self.feature_embedding_table = nn.Embedding.from_pretrained(
             item_feat_tensor,
             freeze=True,
+            padding_idx=self.padding_token
         )
-        self.feat_proj = nn.Linear(item_feat_tensor.size(1), self.embedding_dim)
+        self.feat_norm = nn.LayerNorm(768)
+        self.sid_feat_mlp = nn.Sequential(
+            nn.Linear(768 + self.embedding_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, self.embedding_dim),
+        )
+        self.feature_proj = nn.Linear(768, self.embedding_dim, bias=False)
 
         self.register_buffer("sid_code", sid2item_container["sid_code"])
         self.register_buffer("offsets",  sid2item_container["offsets"])
         self.register_buffer("items",    sid2item_container["items"])
+        self.register_buffer("idx2code", torch.as_tensor(sid2item_container["idx2code"], dtype=torch.long))
+        self.code2idx = sid2item_container["code2idx"]
+        self.sid_base = sid2item_container["base"]
+
+        self.prefix_sid_code = {}
+        self.prefix_offsets = {}
+        self.prefix_items = {}
+        prefix_dict = sid2item_container.get("prefix", {})
+        for k, p in prefix_dict.items():
+            self.register_buffer(f"prefix_sid_code_{k}", p["sid_code"])
+            self.register_buffer(f"prefix_offsets_{k}",  p["offsets"])
+            self.register_buffer(f"prefix_items_{k}",    p["items"])
+            self.prefix_sid_code[k] = f"prefix_sid_code_{k}"
+            self.prefix_offsets[k]  = f"prefix_offsets_{k}"
+            self.prefix_items[k]    = f"prefix_items_{k}"
 
         self.replace_prob = replace_prob
 
@@ -683,7 +697,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         attention_mask: Optional[
             torch.Tensor
         ] = None,  # TODO (clark): in the future we should support variable length semantic id
-        future_ids: Optional[torch.Tensor] = None,
+        sid: Optional[torch.Tensor] = None,
+        item_id: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         past_key_values: Optional[DynamicCache] = None,
         add_bos_token: bool = False,
@@ -698,74 +713,75 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
 
         # ===== Convert to embedding =====
-        B, S = future_ids.shape
-        assert attention_mask.shape == future_ids.shape
+        B, S = sid.shape
+        assert attention_mask.shape == sid.shape
         sid_table = self.get_embedding_table(table_name="decoder")
-        feat_table = self.get_embedding_table(table_name="item_feature")
+        feat_table = self.get_embedding_table(table_name="feature")
 
-        in_block_len = self.num_hierarchies + 1
-        out_block_len = self.num_hierarchies + 2
-
-        pad_len = (-S) % in_block_len
-        future_ids_pad = nn.functional.pad(future_ids, (0, pad_len), value=0)  # (B, S + pad_len)
+        pad_len = (-S) % self.num_hierarchies
+        sid_pad = nn.functional.pad(sid, (0, pad_len), value=self.padding_token)  # (B, S + pad_len)
+        item_id_pad = nn.functional.pad(item_id, (0, pad_len), value=self.padding_token)
         attention_mask_pad = F.pad(attention_mask, (0, pad_len), value=0)  # (B, S + pad_len)
 
-        future_ids_blk = future_ids_pad.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
-        mask_blk = attention_mask_pad.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
+        sid_blk = sid_pad.view(B, -1, self.num_hierarchies)  # (B, num_block, in_block_len)
+        item_id_blk = item_id_pad.view(B, -1, self.num_hierarchies)  # (B, num_block, in_block_len)
+        attention_mask_blk = attention_mask_pad.view(B, -1, self.num_hierarchies)  # (B, num_block, in_block_len)
 
-        block_pad = mask_blk.sum(dim=-1) == 0   # (B, num_block)
-        fake_pos = (mask_blk[..., -1] == 0) & (~block_pad)  # (B, num_block)
-
-        sid_ids = future_ids_blk[..., :-1].masked_fill(block_pad.unsqueeze(-1), 0)  # (B, num_block, hirerachies)
         offsets = (
-            torch.arange(self.num_hierarchies, device=sid_ids.device)
+            torch.arange(self.num_hierarchies, device=sid_blk.device)
             * self.num_embeddings_per_hierarchy
         )
-        sid_ids = sid_ids + offsets
-        sid_embeds = sid_table(sid_ids)  # (B, num_block, hirerachies, D)
-        sid_embeds = sid_embeds.masked_fill(block_pad[..., None, None], 0.0)
+        sid_blk_raw = sid_blk
+        sid_blk = sid_blk + offsets
+        sid_blk = torch.where(
+            sid_blk_raw == self.padding_token,
+            sid_blk_raw,
+            sid_blk
+        )
+        sid_embeds = sid_table(sid_blk)  # (B, num_block, hirerachies, D)
+        feat_embeds = feat_table(item_id_blk)  # (B, num_block, hirerachies, D)
 
-        item_ids = future_ids_blk[..., -1].masked_fill(block_pad, 0)  # (B, num_block)
-        item_embeds = self.feat_proj(feat_table(item_ids))  # (B, num_block, D)
-        item_embeds = item_embeds.masked_fill(block_pad[..., None], 0.0)
+        sid_last = sid_embeds[:, :, -1, :]
+        item_feat = feat_embeds[:, :, -1, :]
+        item_feat = self.feat_norm(item_feat)
+        sid_feat = torch.cat([sid_last, item_feat], dim=-1)
+        sid_feat = sid_last + self.sid_feat_mlp(sid_feat)
+
+        inputs_embeds = torch.cat(
+            [
+                sid_embeds[..., :self.num_hierarchies - 1, :],
+                sid_feat.unsqueeze(2)  # (B, num_block, 1, D)
+            ],
+            dim=2
+        )
 
         bos = self.decoder.bos_token
         bos = bos.view(1, 1, 1, -1).expand(B, sid_embeds.size(1), 1, -1)  # (B, num_block, 1, D)
+        mask = torch.ones(B, sid_embeds.size(1), 1, device=sid.device)  # (B, num_block, 1)
 
-        out_blk = torch.cat([bos, sid_embeds, item_embeds.unsqueeze(-2)], dim=-2)  # (B, num_block, out_block_len, D)
-        out_mask = torch.ones(B, out_blk.size(1), out_block_len, device=future_ids.device, dtype=attention_mask.dtype)  # (B, num_block, out_block_len)
-        out_mask[block_pad] = 0
+        inputs_embeds = torch.cat([bos, inputs_embeds], dim=-2)  # (B, num_block, out_block_len, D)
+        mask = torch.cat([mask, attention_mask_blk], dim=-1)  # (B, num_block, out_block_len)
 
-        fake_pos_lists = [
-            (torch.nonzero(fake_pos[b]).squeeze(-1) * out_block_len + (out_block_len - 1)).tolist()
-            for b in range(B)
-        ]
-
-        inputs_embeds = out_blk.view(B, -1, out_blk.size(-1))  # (B, S + pad_len + num_block, D)
-        padding_mask = out_mask.view(B, -1)  # (B, S + pad + num_block)
+        inputs_embeds = inputs_embeds.view(B, -1, self.embedding_dim)  # (B, S + pad_len + num_block, D)
+        mask = mask.view(B, -1)  # (B, S + pad + num_block)
 
         if pad_len > 0:
             inputs_embeds = inputs_embeds[:, :-pad_len]
-            padding_mask = padding_mask[:, :-pad_len]
+            mask = mask[:, :-pad_len]
 
         if add_bos_token:
             bos = self.decoder.bos_token.view(1, 1, -1).expand(B, 1, -1)  # (B, 1, D)
             inputs_embeds = torch.cat([inputs_embeds, bos], dim=1)  # (B, S + num_block + 1, D)
 
-            bos_mask = torch.ones(B, 1, device=padding_mask.device)  
-            padding_mask = torch.cat([padding_mask, bos_mask], dim=1)
+            bos_mask = torch.ones(B, 1, device=mask.device)  
+            mask = torch.cat([mask, bos_mask], dim=1)
 
         # ===== Construct mask matrix =====
         B, L, _ = inputs_embeds.shape
         device = inputs_embeds.device
         causal_mask = torch.tril(torch.ones(L, L, device=device)) # (L, L)
         final_mask = causal_mask.unsqueeze(0).repeat(B, 1, 1) # (B, L, L)
-        final_mask = final_mask * padding_mask.unsqueeze(1) * padding_mask.unsqueeze(2)
-
-        for b in range(B):
-            for fp in fake_pos_lists[b]:
-                if fp < L:
-                    final_mask[b, fp+1:, fp] = 0
+        final_mask = final_mask * mask.unsqueeze(1) * mask.unsqueeze(2)
 
         # BART expects (B, 1, L, L)
         attn_mask_4d = final_mask.unsqueeze(1)
@@ -783,25 +799,25 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     def generate(
         self,
         attention_mask: torch.Tensor = None,
-        input_ids: torch.Tensor = None,
+        sid: torch.Tensor = None,
+        item_id: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Generate the semantic id given the current model in the sequence using beam search.
         Parameters:
             attention_mask (torch.Tensor): The attention mask for the decoder.
-            input_ids (torch.Tensor): The input IDs for the decoder.
         """
         # initilize cached generated ids to None
-        generated_ids = input_ids
-        decoder_attention_mask = attention_mask
-        marginal_log_prob = None
+        B, S = sid.shape
+        beam_log_prob = None
 
-        for hierarchy in range(self.num_hierarchies + 1):
+        for hierarchy in range(self.num_hierarchies):
             # feeding the decoder with the generated ids
             add_bos_token = hierarchy == 0
             decoder_output = self.decoder_forward_pass(
-                future_ids=generated_ids,
-                attention_mask=decoder_attention_mask,
+                sid=sid,
+                item_id=item_id,
+                attention_mask=attention_mask,
                 use_cache=False,
                 add_bos_token=add_bos_token
             )  # (B, T, D) if hierarchy == 0 else (B * top_k, T, D)
@@ -810,51 +826,74 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             latest_output_representation = decoder_output[:, -1, :]  # (B, D) if hierarchy == 0 else (B * top_k, D)
 
             # calculating the logits for the next token
-            if hierarchy < self.num_hierarchies:
-                candidate_logits = self.decoder.sid_head[hierarchy](
-                    latest_output_representation
-                )  # (B, num_candidates) if hierarchy == 0 else (B * top_k, num_candidates)
-            else:
-                candidate_logits = self.decoder.item_head(
-                    latest_output_representation
-                )  # (B, num_candidates) if hierarchy == 0 else (B * top_k, num_candidates)
+            candidate_logits = self.decoder.sid_head[hierarchy](
+                latest_output_representation
+            )  # (B, num_candidates) if hierarchy == 0 else (B * top_k, num_candidates)
 
             (
-                generated_ids,  # (B * top_k, S)
-                marginal_log_prob,  # (B, top_k)
-                decoder_attention_mask,  # (B * top_k, S)
+                sid,  # (B * top_k, S)
+                item_id,
+                beam_log_prob,  # (B, top_k)
+                attention_mask,  # (B * top_k, S)
             ) = self._beam_search_one_step(
                 candidate_logits=candidate_logits,
-                generated_ids=generated_ids,
-                attention_mask=decoder_attention_mask,
-                marginal_log_prob=marginal_log_prob,
+                sid=sid,
+                item_id=item_id,
+                attention_mask=attention_mask,
+                beam_log_prob=beam_log_prob,
                 hierarchy=hierarchy,
-                batch_size=input_ids.size(0),
+                batch_size=B,
             )
+
+        sid_tokens = sid[:, -self.num_hierarchies:] - 1  # (B*top_k, H)
+        powers = (self.sid_base ** torch.arange(
+            self.num_hierarchies,
+            device=sid_tokens.device,
+            dtype=sid_tokens.dtype,
+        ))  # (H,)
+        raw_sid = (sid_tokens * powers).sum(dim=-1)  # (B*top_k,)
+        raw_sid_cpu = raw_sid.tolist()
+
+        final_item_ids = [self.padding_token] * raw_sid.size(0)
+        for i, rs in enumerate(raw_sid_cpu):
+            dense_sid = self.code2idx.get(rs, None)
+            if dense_sid is not None:
+                l, r = self.offsets[dense_sid].tolist()
+                final_item_ids[i] = self.items[l].item() + 1  # or sampling
+        final_item_ids = torch.tensor(
+            final_item_ids,
+            device=item_id.device,
+            dtype=item_id.dtype,
+        )  # (N,)
+        final_item_ids = final_item_ids.unsqueeze(1).repeat(
+            1, self.num_hierarchies
+        )  # (N, H)
+        item_id[:, -self.num_hierarchies:] = final_item_ids
 
         if self.replace_prob > 0.0:
             decoder_output = self.decoder_forward_pass(
-                future_ids=generated_ids,
-                attention_mask=decoder_attention_mask,
+                sid=sid,
+                item_id=item_id,
+                attention_mask=attention_mask,
                 use_cache=False,
                 add_bos_token=False
             )  # (B * top_k, T, D)
-            logits = self.decoder.binary_head(decoder_output[:, -1, :])  # (B * top_k, 1)
+            logits = self.decoder.score_head(decoder_output[:, -1, :])  # (B * top_k, 1)
             log_prob = F.logsigmoid(logits)  # (B * top_k, 1)
-            marginal_log_prob = marginal_log_prob + log_prob.view(input_ids.size(0), self.top_k_for_generation)  # (B, top_k)
-            marginal_log_prob, sorted_idx = torch.sort(marginal_log_prob, dim=1, descending=True)  # (B, top_k)
+            beam_log_prob = beam_log_prob + log_prob.view(B, self.top_k_for_generation)  # (B, top_k)
+            beam_log_prob, sorted_idx = torch.sort(beam_log_prob, dim=1, descending=True)  # (B, top_k)
 
-            generated_ids = generated_ids.view(input_ids.size(0), self.top_k_for_generation, -1)  # (B, top_k, S)
-            generated_ids = torch.gather(
-                generated_ids,  # (B, top_k, S)
+            sid = sid.view(B, self.top_k_for_generation, -1)  # (B, top_k, S)
+            sid = torch.gather(
+                sid,  # (B, top_k, S)
                 dim=1,
-                index=sorted_idx.unsqueeze(-1).expand(-1, -1, generated_ids.size(-1))  # (B, top_k, S)
+                index=sorted_idx.unsqueeze(-1).expand(-1, -1, sid.size(-1))  # (B, top_k, S)
             )
         else:
-            generated_ids = generated_ids.view(input_ids.size(0), self.top_k_for_generation, -1)  # (B, top_k, S)
+            sid = sid.view(B, self.top_k_for_generation, -1)  # (B, top_k, S)
     
-        generated_ids = generated_ids[:, :, -(self.num_hierarchies + 1):]  # (B, top_k, self.num_hierarchies + 1)
-        return generated_ids, marginal_log_prob
+        sid = sid[:, :, -self.num_hierarchies:]  # (B, top_k, self.num_hierarchies)
+        return sid, beam_log_prob
 
     def get_embedding_table(self, table_name: str, hierarchy: Optional[int] = None):
         """
@@ -869,8 +908,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             embedding_table = self.item_sid_embedding_table_encoder
         elif table_name == "decoder":
             embedding_table = self.item_sid_embedding_table_encoder
-        elif table_name == "item_feature":
-            embedding_table = self.item_feature_table
+        elif table_name == "feature":
+            embedding_table = self.feature_embedding_table
 
         if hierarchy is not None:
             return embedding_table(
@@ -910,127 +949,72 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         # ===== Splicing the sid and item_id together =====
         sid = model_input.transformed_sequences["sequence_data"].long()
         item_id = model_input.transformed_sequences["sequence_data_item_id"].long()
+        mask = model_input.mask
 
         B, S = sid.shape
         assert S % self.num_hierarchies == 0, (
             f"S={S} not divisible by num_hierarchies={self.num_hierarchies}"
         )
-        sid = sid.reshape(B, S // self.num_hierarchies, self.num_hierarchies)
-        item_id = item_id[:, ::self.num_hierarchies].unsqueeze(2)
-        fut_ids = torch.cat([sid, item_id], dim=2)
-        fut_ids = fut_ids.reshape(B, -1)
-
-        mask = model_input.mask
-        mask_sid = mask.reshape(B, S // self.num_hierarchies, self.num_hierarchies)
-        item_mask = mask_sid[..., -1:]
-        fut_mask = torch.cat([mask_sid, item_mask], dim=2)
-        fut_mask = fut_mask.reshape(B, -1)
 
         if mode is ModelMode.INFER:
             generated_ids, marginal_probs = self.generate(
-                attention_mask=fut_mask,
-                input_ids=fut_ids
+                attention_mask=mask,
+                sid=sid,
+                item_id=item_id
             )
             return generated_ids, marginal_probs
         
-        # ===== Build labels and sample items =====
-        in_block_len = self.num_hierarchies + 1          
-        # sid1 + ... + sidn + item
-        out_block_len = self.num_hierarchies + 2         
-        # bos + sid1 + ... + sidn + item -> sid1 + ... sidn + item + flag
-        B, T = fut_ids.shape
-        num_block = T // in_block_len
-
-        fut_ids_blk  = fut_ids.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
-        fut_mask_blk = fut_mask.view(B, -1, in_block_len)  # (B, num_block, in_block_len)
-        block_valid = fut_mask_blk[..., 0].bool()   # (B, num_block)
-
-        label_blk = torch.zeros(
-            B, num_block, out_block_len,
-            device=fut_ids.device,
-            dtype=fut_ids.dtype,
-        )  # (B, num_block, out_len)
-        label_blk[..., :in_block_len] = fut_ids_blk
-
-        item_tokens = fut_ids_blk[..., -1]  # (B, num_block)
-        replace_items = item_tokens.clone()
-        replace_items.fill_(-1)  # (B, num_block)
-
-        if block_valid.any():
-            replace_items[block_valid] = self.sample_same_sid(item_tokens[block_valid])
-
-        replace_mask = ( (torch.rand(B, num_block, device=fut_ids.device) < self.replace_prob) & block_valid )  # (B, num_block)
-        can_replace = replace_items >= 0  # (B, num_block)
-        replace_mask = replace_mask & can_replace  # (B, num_block)
-
-        flag = torch.ones(B, num_block, device=fut_ids.device, dtype=fut_ids.dtype)
-        flag = flag * (~replace_mask)
-        label_blk[..., -1] = flag
-
-        fut_ids_blk[..., -1] = torch.where(
-            replace_mask,
-            replace_items,
-            fut_ids_blk[..., -1]
-        )
-        fut_mask_blk[..., -1] = fut_mask_blk[..., -1] * (~replace_mask)
-
-        fut_ids  = fut_ids_blk.view(B, T)
-        fut_mask = fut_mask_blk.view(B, T)
-        label    = label_blk.view(B, num_block * out_block_len)
-
         # ===== Forward =====
         model_output = self.decoder_forward_pass(
-            attention_mask=fut_mask,
-            future_ids=fut_ids
+            attention_mask=mask,
+            sid=sid,
+            item_id=item_id
         )
 
         # ===== Calculate loss =====
-        B, T, D = model_output.shape
-        model_output = model_output.view(B, -1, out_block_len, D)  # (B, num_block, out_block_len, D)
-        label = label.view(B, -1, out_block_len)  # (B, num_block, out_block_len)
-
-        fut_mask_block = fut_mask.view(B, -1, in_block_len)   # (B, num_block, in_block_len)
-        block_valid = fut_mask_block[:, :, 0]   # (B, num_block)
+        num_block = S // self.num_hierarchies
+        sid = sid.view(B, num_block, -1)
+        model_output_blk = model_output.view(B, num_block, -1, self.embedding_dim)
+        token_cnt = mask.sum().clamp_min(1)
 
         sid_losses = []
         for cur in range(self.num_hierarchies):
             logits = self.decoder.sid_head[cur](
-                model_output[..., cur, :]
+                model_output_blk[..., cur, :]
             )  # (B, num_block, num_candidates)
             loss = self.ce_loss(
                 logits.reshape(-1, logits.size(-1)),  # (B * num_block, num_candidates)
-                label[..., cur].reshape(-1).long(), # (B * num_block)
+                sid[..., cur].reshape(-1).long() - 1, # (B * num_block)
             )  # (B * num_block)
             sid_losses.append(loss.view(B, -1))  # [(B, num_block)]
-        sid_loss = (torch.stack(sid_losses, dim=-1) * block_valid.unsqueeze(-1)).sum()
+        sid_loss = (torch.stack(sid_losses, dim=-1) * mask.view(B, num_block, -1)).sum() / token_cnt
 
-        item_pos = self.num_hierarchies
-        item_logits = self.decoder.item_head(
-            model_output[..., item_pos, :]
-        )  # (B, num_block, num_candidates)
-        item_loss = self.ce_loss(
-            item_logits.reshape(-1, item_logits.size(-1)),  # (B * num_block, num_candidates)
-            label[..., item_pos].reshape(-1).long(),  # (B * num_block, num_candidates)
-        ).view(B, -1)  # (B, num_block)
-        item_loss = (item_loss * block_valid).sum()
+        last_sid_hidden = model_output_blk[..., self.num_hierarchies, :]  # (B, num_block, D)
+        last_sid_hidden = last_sid_hidden[:, :-1, :]  # (B, num_block - 1, D)
+        future_item_id = item_id.view(B, num_block, self.num_hierarchies)[:, 1:, -1]  # (B, num_block - 1)
 
-        flag_pos = self.num_hierarchies + 1
-        flag_logits = self.decoder.binary_head(
-            model_output[..., flag_pos, :]
-        ).squeeze(-1)  # (B, num_block)
-        flag_loss = self.bce_loss(
-            flag_logits.reshape(-1), # (B * num_block)
-            label[..., flag_pos].float().reshape(-1),  # (B * num_block)
-        ).view(B, -1)  # (B, num_block)
-        flag_loss = (flag_loss * block_valid).sum()
+        cur_valid = mask.view(B, num_block, self.num_hierarchies)[..., -1]
+        next_valid = cur_valid[:, 1:]
+        cur_valid = cur_valid[:, :-1]
+        latent_mask = cur_valid & next_valid
+    
+        z = last_sid_hidden[latent_mask]
+        with torch.no_grad():
+            feat_table = self.get_embedding_table("feature")
+            y = feat_table(future_item_id)[latent_mask]  # (N, D)
 
-        block_cnt = block_valid.sum().clamp_min(1)
-        loss = (sid_loss + item_loss + flag_loss) / block_cnt
+        y = self.feature_proj(y)  # (N, 128)
+        z = F.normalize(z, dim=-1)
+        y = F.normalize(y, dim=-1)
+
+        latent_loss = 1.0 - (z * y).sum(dim=-1)
+        latent_loss = latent_loss.mean()
+
+        loss = sid_loss + latent_loss
         return model_output, {
-            "total": loss,
-            "sid_loss": sid_loss / block_cnt,
-            "item_loss": item_loss / block_cnt,
-            "flag_loss": flag_loss / block_cnt,
+            "total_loss": loss,
+            "sid_loss": sid_loss,
+            "latent_loss": latent_loss,
         }
 
     def sample_same_sid(self, item_ids: torch.Tensor) -> torch.Tensor:
@@ -1096,8 +1080,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
         self,
         decoder: transformers.PreTrainedModel,
         sid_head: Optional[torch.nn.Module] = None,
-        item_head: Optional[torch.nn.Module] = None,
-        binary_head: Optional[torch.nn.Module] = None,
+        score_head: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
     ) -> None:
         """
@@ -1117,8 +1100,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
         # this bos token is prompt for the decoder
         self.bos_token = bos_token
         self.sid_head = sid_head
-        self.item_head = item_head
-        self.binary_head = binary_head
+        self.score_head = score_head
 
     def forward(
         self,

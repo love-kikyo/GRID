@@ -138,8 +138,8 @@ def map_sparse_id_to_semantic_id(
             if id_map is not None:
                 # flatten the semantic id sequence
                 assert num_hierarchies <= id_map.size(0), "num_hierarchies must be less than or equal to the number of hierarchies in the semantic id map."
-                row[k] = id_map[:num_hierarchies].t()[v].view(-1)
-                row[k + "_item_id"] = v.repeat_interleave(num_hierarchies)
+                row[k] = id_map[:num_hierarchies].t()[v].view(-1) + 1
+                row[k + "_item_id"] = v.repeat_interleave(num_hierarchies) + 1
             else:
                 raise ValueError(f"Semantic id map not found for feature {k}")
     return row

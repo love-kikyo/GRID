@@ -96,7 +96,7 @@ class TransformerBaseModule(BaseModule):
         )
 
         # update and log metrics. Will only be logged at the interval specified in the logger config
-        self.train_loss(loss_dict["total"])
+        self.train_loss(loss_dict["total_loss"])
         # checks logging interval and logs the loss
         self.log(
             "train/loss",
@@ -108,7 +108,11 @@ class TransformerBaseModule(BaseModule):
             sync_dist=True,
         )
 
-        for name in ["sid_loss", "item_loss", "flag_loss"]:
+        for name in [
+            "sid_loss", 
+            "latent_loss",
+            # "flag_loss"
+        ]:
             self.log(
                 f"train/{name}",
                 loss_dict[name],
@@ -122,9 +126,9 @@ class TransformerBaseModule(BaseModule):
         # If a training loop function is passed, we call it with the module and the loss.
         # otherwise we use the automatic optimization provided by lightning
         if self.training_loop_function is not None:
-            self.training_loop_function(self, loss_dict["total"])
+            self.training_loop_function(self, loss_dict["total_loss"])
 
-        return loss_dict["total"]
+        return loss_dict["total_loss"]
 
     def eval_step(
         self,
