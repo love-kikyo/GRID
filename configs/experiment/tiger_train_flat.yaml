@@ -84,9 +84,9 @@ data_loading:
       timeout: 60
       assign_files_by_size: false
       oov_token: null
-      masking_token: -1
+      masking_token: 0
       sequence_length: ${sequence_length}
-      padding_token: -1
+      padding_token: 0
       drop_last: true
       persistent_workers: true
       collate_fn:
@@ -210,6 +210,7 @@ model:
   feature_to_model_input_map:
     sequence_data: input_ids
     user_id: user_id
+    sequence_data_item_id: item_ids
   postprocessor: null
   aggregator: null
   loss_function: ${loss.loss_function}
@@ -239,6 +240,13 @@ model:
   num_user_bins: null
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
   mlp_layers: 2
+  padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
+  item_feat_tensor: 
+    _target_: torch.load
+    _args_:
+    - _target_: src.utils.file_utils.open_local_or_remote
+      file_path: ${data_dir}/item_embedding_table.pt
+      mode: rb
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -315,6 +323,7 @@ extras:
 loss:
   loss_function:
     _target_: torch.nn.CrossEntropyLoss
+    ignore_index: ${sub:${data_loading.train_dataloader_config.dataloader.padding_token},1}
 optim:
   optimizer:
     _target_: torch.optim.Adam

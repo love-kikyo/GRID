@@ -4,10 +4,13 @@ from typing import Any, Dict, Optional, Tuple
 import hydra
 import rootutils
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
-
+OmegaConf.register_new_resolver(
+    "sub",
+    lambda x, y: int(x) - int(y),
+)
 # ------------------------------------------------------------------------------------ #
 # the setup_root above is equivalent to:
 # - adding project root dir to PYTHONPATH

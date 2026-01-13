@@ -40,6 +40,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         embedding_dim: int,
         should_check_prefix: bool,
         top_k_for_generation: int,
+        padding_token: int,
         **kwargs,
     ) -> None:
         """
@@ -57,6 +58,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         super().__init__(**kwargs)
 
         self.num_embeddings_per_hierarchy = num_embeddings_per_hierarchy
+        self.padding_token = padding_token
         self.embedding_dim = embedding_dim
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
@@ -145,6 +147,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         table = torch.nn.Embedding(
             num_embeddings=num_embeddings,  # type: ignore
             embedding_dim=embedding_dim,  # type: ignore
+            padding_idx=self.padding_token,
         )
         return table
 
@@ -310,7 +313,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         if generated_ids is None:
             proba_topk, indices_topk = (
                 proba[:, : self.top_k_for_generation],
-                indices[:, : self.top_k_for_generation],
+                indices[:, : self.top_k_for_generation] + 1,
             )
             generated_ids = indices_topk.unsqueeze(-1)
             # we need to overwrite the cache because we expanded the beam width from bsz to bsz * beam_width
@@ -354,7 +357,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             if past_key_values != None:
                 past_key_values.reorder_cache(replace_indices)
 
-            indices_topk = torch.gather(indices, 1, indices_topk)
+            indices_topk = torch.gather(indices, 1, indices_topk) + 1
 
         if replace_indices != None:
             generated_ids = torch.cat(
@@ -468,6 +471,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         top_k_for_generation: int = 10,
         codebooks: torch.Tensor = None,
+        item_feat_tensor: torch.Tensor = None,
         embedding_dim: int = None,
         num_hierarchies: int = None,
         num_embeddings_per_hierarchy: int = None,
@@ -557,8 +561,21 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         # generate embedding tables for each hierarchy
         # here we assume each hierarchy has the same amount of embeddings
         self.item_sid_embedding_table_encoder = self._spawn_embedding_tables(
-            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies,
+            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies + 1,
             embedding_dim=self.embedding_dim,
+        )
+        padding_row = torch.zeros(1, item_feat_tensor.size(1), dtype=item_feat_tensor.dtype)
+        item_feat_tensor = torch.cat([padding_row, item_feat_tensor], dim=0)
+        self.feature_embedding_table = nn.Embedding.from_pretrained(
+            item_feat_tensor,
+            freeze=True,
+            padding_idx=self.padding_token
+        )
+        self.feat_norm = nn.LayerNorm(768)
+        self.sid_feat_mlp = nn.Sequential(
+            nn.Linear(768 + self.embedding_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, self.embedding_dim),
         )
 
         # generating user embedding table
@@ -585,6 +602,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         attention_mask: torch.Tensor,
         input_ids: torch.Tensor,
+        item_ids: torch.Tensor,
         user_id: torch.Tensor,
     ) -> torch.Tensor:
         """
@@ -598,15 +616,39 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # we shift the IDs here to match the hierarchy structure
         # so that we can use a single embedding table to store the embeddigns for all hierarchies
+        B, S = input_ids.shape
+        assert S % self.num_hierarchies == 0, "seq_len % num_hierarchies != 0"
+        num_block = S // self.num_hierarchies
+
         shifted_sids = self._add_repeating_offset_to_rows(
             input_sids=input_ids,
             codebook_size=self.num_embeddings_per_hierarchy,
             num_hierarchies=self.num_hierarchies,
             attention_mask=attention_mask,
         )
-        inputs_embeds_for_encoder = self.get_embedding_table(table_name="encoder")(
+        sid_embeds = self.get_embedding_table(table_name="encoder")(
             shifted_sids
         )
+        feat_embeds = self.get_embedding_table(table_name="feature")(
+            item_ids
+        )
+        sid_embeds = sid_embeds.view(B, num_block, -1, self.embedding_dim)
+        feat_embeds = feat_embeds.view(B, num_block, -1, 768)
+
+        sid_last = sid_embeds[:, :, -1, :]
+        item_feat = feat_embeds[:, :, -1, :]
+        item_feat = self.feat_norm(item_feat)
+        last_embeds = torch.cat([sid_last, item_feat], dim=-1)
+        last_embeds = sid_last + self.sid_feat_mlp(last_embeds)
+
+        inputs_embeds_for_encoder = torch.cat(
+            [
+                sid_embeds[..., :self.num_hierarchies - 1, :],
+                last_embeds.unsqueeze(2)  # (B, num_block, 1, D)
+            ],
+            dim=2
+        )
+        inputs_embeds_for_encoder = inputs_embeds_for_encoder.view(B, -1, self.embedding_dim)
 
         if self.sep_token is not None:
             (
@@ -739,7 +781,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         attention_mask: torch.Tensor,
         input_ids: torch.Tensor,
+        item_ids: torch.Tensor,
         user_id: torch.Tensor = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         """
         Generate the semantic id given the current model in the sequence using beam search.
@@ -755,6 +799,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         encoder_output, encoder_attention_mask = self.encoder_forward_pass(
             attention_mask=attention_mask,
             input_ids=input_ids,
+            item_ids=item_ids,
             user_id=user_id,
         )
 
@@ -832,6 +877,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         input_ids: torch.Tensor,
         user_id: Optional[torch.Tensor] = None,
         future_ids: Optional[torch.Tensor] = None,
+        item_ids: Optional[torch.Tensor] = None,
         attention_mask_decoder: Optional[torch.Tensor] = None,
         **kwargs: Any,
     ) -> torch.Tensor:
@@ -848,6 +894,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         encoder_output, attention_mask_for_encoder = self.encoder_forward_pass(
             attention_mask=attention_mask_encoder,
             input_ids=input_ids,
+            item_ids=item_ids,
             user_id=user_id,
         )
 
@@ -873,6 +920,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             embedding_table = self.item_sid_embedding_table_encoder
         elif table_name == "decoder":
             embedding_table = self.item_sid_embedding_table_encoder
+        elif table_name == "feature":
+            embedding_table = self.feature_embedding_table
 
         if hierarchy is not None:
             return embedding_table(
@@ -948,7 +997,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             input = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
             loss += self.loss_function(
                 input=input,
-                target=fut_ids[:, hierarchy].long(),
+                target=fut_ids[:, hierarchy].long() - 1,
             )
         return model_output, loss
 

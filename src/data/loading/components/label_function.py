@@ -99,7 +99,6 @@ class Identity(LabelFunction):
             sequence=sequence, labels=labels, label_location=label_location
         )
 
-
 class NextKTokenMasking(LabelFunction):
     """
     LabelFunction to create masking to use the last K tokens at the end of each sequence as labels.

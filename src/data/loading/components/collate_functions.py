@@ -101,8 +101,11 @@ def collate_with_sid_causal_duplicate(
                     new_batch[sequence_field_name].append(
                         sequence[start_index:end_index]
                     )
+                    new_batch["sequence_data_item_id"].append(
+                        batch["sequence_data_item_id"][row_index][start_index:end_index]
+                    )
                     for field_name in new_batch:
-                        if field_name != sequence_field_name:
+                        if field_name != sequence_field_name and field_name != "sequence_data_item_id":
                             new_batch[field_name].append(batch[field_name][row_index])
                 current_idx += 1
 
@@ -265,6 +268,16 @@ def collate_fn_train(
             model_label_data.attention_mask[
                 field_name
             ] = label_function_output.attention_mask
+            model_input_data.transformed_sequences[
+                field_name
+            ] = label_function_output.sequence
+        elif field_name == "sequence_data_item_id":
+            label_function = labels["sequence_data"].transform
+            label_function_output: LabelFunctionOutput = label_function.transform_label(
+                sequence=current_sequence,
+                padding_token=padding_token,
+                masking_token=masking_token,
+            )
             model_input_data.transformed_sequences[
                 field_name
             ] = label_function_output.sequence
