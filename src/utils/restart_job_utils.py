@@ -22,6 +22,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Any, Callable, TypeVar
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
@@ -141,7 +142,7 @@ def save_metadata_to_local_or_remote(
     Logs:
         - Info message indicating where metadata is being saved
     """
-
+    Path(metadata_path).parent.mkdir(parents=True, exist_ok=True)
     command_line_logger.info(
         f"Saving metadata to {metadata_path}. {metadata.to_dict()}"
     )

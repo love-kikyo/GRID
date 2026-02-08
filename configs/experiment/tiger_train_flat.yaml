@@ -81,7 +81,7 @@ data_loading:
             next_k: ${model.num_hierarchies}
       batch_size_per_device: 32
       num_workers: 8
-      timeout: 60
+      timeout: 0
       assign_files_by_size: false
       oov_token: null
       masking_token: -1
@@ -90,13 +90,10 @@ data_loading:
       drop_last: true
       persistent_workers: true
       collate_fn:
-        _target_: src.data.loading.components.collate_functions.collate_with_sid_causal_duplicate
+        _target_: src.data.loading.components.collate_functions.collate_fn_train
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
-        sequence_field_name: sequence_data
-        sid_hierarchy: ${model.num_hierarchies}
-        max_batch_size: 512
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig
         user_id_field: user_id
@@ -109,11 +106,11 @@ data_loading:
           "name", "num_placeholder_tokens"}
         semantic_id_map:
           sequence_data:
-            _target_: torch.load
+            _target_: numpy.load
             _args_:
-            - _target_: src.utils.file_utils.open_local_or_remote
-              file_path: ${semantic_id_path}
-              mode: rb
+              - ${semantic_id_path}
+            mmap_mode: r
+            allow_pickle: false
         data_iterator:
           _target_: src.data.loading.components.iterators.TFRecordIterator
         preprocessing_functions:
@@ -142,9 +139,9 @@ data_loading:
           transform:
             _target_: src.data.loading.components.label_function.NextKTokenMasking
             next_k: ${model.num_hierarchies}
-      batch_size_per_device: 8
+      batch_size_per_device: 32
       num_workers: 8
-      timeout: 60
+      timeout: 0
       assign_files_by_size: true
       oov_token: ${data_loading.train_dataloader_config.dataloader.oov_token}
       masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
@@ -172,9 +169,9 @@ data_loading:
           transform:
             _target_: src.data.loading.components.label_function.NextKTokenMasking
             next_k: ${model.num_hierarchies}
-      batch_size_per_device: 8
+      batch_size_per_device: 32
       num_workers: 8
-      timeout: 60
+      timeout: 0
       assign_files_by_size: true
       oov_token: ${data_loading.train_dataloader_config.dataloader.oov_token}
       masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
@@ -200,12 +197,12 @@ model:
     config:
       _target_: transformers.T5Config
       vocab_size: 256
-      d_model: 128
-      num_heads: 6
-      dropout_rate: 0.15
-      d_ff: 1024
+      d_model: 1024
+      num_heads: 16
+      dropout_rate: 0.1
+      d_ff: 4096
       d_kv: 64
-      num_layers: 4
+      num_layers: 12
   _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -225,10 +222,10 @@ model:
       vocab_size: ${model.huggingface_model.config.vocab_size}
       d_model: ${model.huggingface_model.config.d_model}
       num_heads: ${model.huggingface_model.config.num_heads}
-      dropout_rate: 0.15
+      dropout_rate: 0.1
       d_ff: ${model.huggingface_model.config.d_ff}
       d_kv: ${model.huggingface_model.config.d_kv}
-      num_layers: 4
+      num_layers: 12
       is_decoder: true
       is_encoder_decoder: false
     embed_tokens:
@@ -282,17 +279,20 @@ logger:
 trainer:
   _target_: lightning.pytorch.trainer.Trainer
   default_root_dir: ${paths.output_dir}
-  min_steps: 1
-  max_steps: 320000
-  max_epochs: 10
+  precision: bf16-mixed
+  min_steps: 1  
+  max_steps: 400000 
+  max_epochs: null
+  limit_train_batches: 1.0
   accelerator: gpu
   devices: -1
   num_nodes: 1
-  precision: 32-true
-  log_every_n_steps: 100
-  val_check_interval: 1600
+  log_every_n_steps: 1000
+  val_check_interval: 30000
+  check_val_every_n_epoch: null
+  limit_val_batches: 5000
   deterministic: false
-  accumulate_grad_batches: 16
+  accumulate_grad_batches: 4
   profiler:
     _target_: lightning.pytorch.profilers.PassThroughProfiler
   strategy: ddp
@@ -335,4 +335,3 @@ eval:
       recall:
         _target_: src.components.eval_metrics.Recall
         _partial_: true
-

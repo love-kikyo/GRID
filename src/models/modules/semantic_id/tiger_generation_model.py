@@ -1,4 +1,5 @@
 import logging
+import numpy as np
 from typing import Any, Optional, Tuple, Union
 
 import torch
@@ -61,7 +62,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
         if codebooks != None:
-            self.codebooks = codebooks.t()
+            self.codebooks = codebooks
             assert (
                 self.codebooks.size(1) == num_hierarchies
             ), "codebooks should be of shape (-1, num_hierarchies)"
@@ -492,10 +493,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         embedding_dim (Optional[int]): the dimension of the embeddings.
         should_check_prefix (bool): whether to check if the prefix is valid.
         """
-
+        if isinstance(codebooks, np.ndarray):
+            codebooks = torch.from_numpy(codebooks)
         if num_hierarchies is None or num_embeddings_per_hierarchy is None:
             num_hierarchies, num_embeddings_per_hierarchy = (
-                codebooks.shape[0],
+                codebooks.shape[1],
                 codebooks.max().item() + 1,
             )
         if embedding_dim is None:
