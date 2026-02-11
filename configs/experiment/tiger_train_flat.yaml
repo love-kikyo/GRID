@@ -2,7 +2,7 @@
 data_dir: ???
 semantic_id_path: ???
 num_hierarchies: ???
-sequence_length: 120
+sequence_length: 30
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -202,7 +202,7 @@ model:
       dropout_rate: 0.1
       d_ff: 4096
       d_kv: 64
-      num_layers: 12
+      num_layers: 1
   _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -225,7 +225,7 @@ model:
       dropout_rate: 0.1
       d_ff: ${model.huggingface_model.config.d_ff}
       d_kv: ${model.huggingface_model.config.d_kv}
-      num_layers: 12
+      num_layers: 1
       is_decoder: true
       is_encoder_decoder: false
     embed_tokens:
@@ -252,18 +252,18 @@ callbacks:
     train_time_interval: null
     every_n_epochs: null
     save_on_train_epoch_end: false
-  early_stopping:
-    _target_: lightning.pytorch.callbacks.EarlyStopping
-    monitor: ${callbacks.model_checkpoint.monitor}
-    min_delta: 0.0
-    patience: 10
-    verbose: true
-    mode: ${callbacks.model_checkpoint.mode}
-    strict: true
-    check_finite: true
-    stopping_threshold: null
-    divergence_threshold: null
-    check_on_train_epoch_end: false
+  # early_stopping:
+  #   _target_: lightning.pytorch.callbacks.EarlyStopping
+  #   monitor: ${callbacks.model_checkpoint.monitor}
+  #   min_delta: 0.0
+  #   patience: 10
+  #   verbose: true
+  #   mode: ${callbacks.model_checkpoint.mode}
+  #   strict: true
+  #   check_finite: true
+  #   stopping_threshold: null
+  #   divergence_threshold: null
+  #   check_on_train_epoch_end: false
   model_summary:
     _target_: lightning.pytorch.callbacks.RichModelSummary
     max_depth: -1
@@ -276,19 +276,23 @@ logger:
     save_dir: ${paths.output_dir}
     name: csv/
     prefix: ''
+  tensorboard:
+    _target_: lightning.pytorch.loggers.TensorBoardLogger
+    save_dir: ${paths.output_dir}
+    name: tb_logs
 trainer:
   _target_: lightning.pytorch.trainer.Trainer
   default_root_dir: ${paths.output_dir}
   precision: bf16-mixed
   min_steps: 1  
-  max_steps: 400000 
+  max_steps: 1000000 
   max_epochs: null
   limit_train_batches: 1.0
   accelerator: gpu
   devices: -1
   num_nodes: 1
-  log_every_n_steps: 1000
-  val_check_interval: 30000
+  log_every_n_steps: 5
+  val_check_interval: 20000
   check_val_every_n_epoch: null
   limit_val_batches: 5000
   deterministic: false
@@ -317,11 +321,15 @@ loss:
     _target_: torch.nn.CrossEntropyLoss
 optim:
   optimizer:
-    _target_: torch.optim.Adam
+    _target_: torch.optim.AdamW
     _partial_: true
-    lr: 0.001
+    lr: 0.00001
     weight_decay: 0.0001
-  scheduler: null
+  scheduler:
+    _target_: transformers.get_cosine_schedule_with_warmup
+    _partial_: true
+    num_warmup_steps: 20000
+    num_training_steps: ${trainer.max_steps}
 eval:
   evaluator:
     _target_: src.components.eval_metrics.SIDRetrievalEvaluator

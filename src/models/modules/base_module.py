@@ -110,12 +110,12 @@ class BaseModule(LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         "Lightning hook that is called when a validation epoch ends."
-        self.log("val/loss", self.val_loss, sync_dist=False, prog_bar=True, logger=True)
+        self.log("val/loss", self.val_loss, sync_dist=True, prog_bar=True, logger=True)
         self.log_metrics("val")
 
     def on_test_epoch_end(self) -> None:
         self.log(
-            "test/loss", self.test_loss, sync_dist=False, prog_bar=True, logger=True
+            "test/loss", self.test_loss, sync_dist=True, prog_bar=True, logger=True
         )
         self.log_metrics("test")
 

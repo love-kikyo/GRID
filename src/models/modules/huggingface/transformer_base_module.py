@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Tuple
+import time
 
 import torch
 import transformers
@@ -82,6 +83,7 @@ class TransformerBaseModule(BaseModule):
         :param batch_idx: The index of the current batch.
         :return: A tensor of losses between model predictions and targets.
         """
+        step_start = time.time()
         # Lightning wraps it in a tuple for training, we get the batch from position 0.
         # this behavior only happens for training_step.
         batch = batch[0]
@@ -89,27 +91,54 @@ class TransformerBaseModule(BaseModule):
         model_input: SequentialModelInputData = batch[0]
         label_data: SequentialModuleLabelData = batch[1]
         # Batch will be a tuple of model inputs and labels. We use the index here to access them.
-        model_output, loss = self.model_step(
+        model_output, loss, metrics = self.model_step(
             model_input=model_input, label_data=label_data
         )
 
-        # update and log metrics. Will only be logged at the interval specified in the logger config
-        self.train_loss(loss)
         # checks logging interval and logs the loss
         self.log(
             "train/loss",
-            self.train_loss,
+            loss,
             on_step=True,
-            on_epoch=True,
+            on_epoch=False,
             prog_bar=True,
             logger=True,
             sync_dist=True,
         )
 
+        for k, v in metrics.items():
+            self.log(
+                f"train/{k}",
+                v,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+
         # If a training loop function is passed, we call it with the module and the loss.
         # otherwise we use the automatic optimization provided by lightning
         if self.training_loop_function is not None:
             self.training_loop_function(self, loss)
+
+        step_time = time.time() - step_start
+        batch_size = model_input.mask.size(0)
+        world_size = self.trainer.world_size if self.trainer else 1
+        samples_per_sec = (batch_size * world_size) / step_time
+
+        self.log(
+            "train/samples_per_sec_model_only",
+            samples_per_sec,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+
+        lr = self.lr_schedulers().get_last_lr()[0]
+        self.log("train/lr", lr, on_step=True, on_epoch=False, sync_dist=False)
 
         return loss
 

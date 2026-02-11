@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+import time
 from typing import Any, Optional, Tuple, Union
 
 import torch
@@ -76,6 +77,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             )
 
         self.top_k_for_generation = top_k_for_generation
+        self.batch_start_time = None
 
     def _inject_sep_token_between_sids(
         self,
@@ -383,7 +385,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         # Batch is a tuple of model inputs and labels.
         model_input: SequentialModelInputData = batch[0]
         label_data: SequentialModuleLabelData = batch[1]
-        _, loss = self.model_step(model_input=model_input, label_data=label_data)
+        _, loss, metrics = self.model_step(model_input=model_input, label_data=label_data)
 
         generated_ids, marginal_probs = self.generate(
             attention_mask=model_input.mask,
@@ -456,6 +458,42 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         super().on_train_start()
         self._make_deterministic(is_training=True)
 
+    def on_train_batch_start(self, batch, batch_idx):
+        self.batch_start_time = time.time()
+        if not hasattr(self, 'train_start_time'):
+            self.train_start_time = time.time()
+            self.total_samples = 0
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        step_time = time.time() - self.batch_start_time
+        model_input = batch[0][0]
+        local_batch_size = model_input.mask.size(0)
+        world_size = self.trainer.world_size
+        global_batch_size = local_batch_size * world_size
+
+        self.total_samples += global_batch_size
+        running_time = time.time() - self.train_start_time
+        running_samples_per_sec = self.total_samples / running_time
+
+        self.log(
+            "train/samples_per_sec_e2e",
+            global_batch_size / step_time,  # 每 step
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
+
+        self.log(
+            "train/samples_per_sec_avg",
+            running_samples_per_sec,  # 累积平均
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+        )
 
 class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     """
@@ -903,7 +941,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         model_input: SequentialModelInputData,
         label_data: Optional[SequentialModuleLabelData] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Perform a forward pass of the model and calculate the loss if label_data is provided.
 
@@ -945,14 +983,30 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         # the label locations is shared for all semantic id hierarchies
         loss = 0
+        hit_list = []
         for hierarchy in range(self.num_hierarchies):
-
-            input = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
+            logits = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
+            targets = fut_ids[:, hierarchy].long()  # (B,)
             loss += self.loss_function(
-                input=input,
-                target=fut_ids[:, hierarchy].long(),
+                input=logits,
+                target=targets,
             )
-        return model_output, loss
+
+            # ===== hit@10 =====
+            with torch.no_grad():
+                topk = torch.topk(logits, k=10, dim=-1).indices  # (B, 10)
+                hit = (
+                    (topk == targets.unsqueeze(-1))
+                    .any(dim=-1)
+                    .float()
+                )  # (B,)
+                hit_rate = hit.mean()  # scalar
+                hit_list.append(hit_rate)
+        metrics = {
+            f"hit@10_sid{h}": hit_list[h]
+            for h in range(self.num_hierarchies)
+        }
+        return model_output, loss, metrics
 
 
 class SemanticIDDecoderModule(torch.nn.Module):
