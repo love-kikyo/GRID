@@ -539,12 +539,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 codebooks.max().item() + 1,
             )
         if embedding_dim is None:
-            embedding_dim = (
-                kwargs["huggingface_model"]
-                .encoder.block[0]
-                .layer[0]
-                .SelfAttention.q.in_features
-            )
+            embedding_dim = kwargs["decoder"].config.d_model
 
         super().__init__(
             codebooks=codebooks,
@@ -556,9 +551,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             **kwargs,
         )
 
-        self.encoder = SemanticIDEncoderModule(
-            encoder=self.encoder,
-        )
+        if self.encoder != None:
+            self.encoder = SemanticIDEncoderModule(
+                encoder=self.encoder,
+            )
 
         # bos_token used to prompt the decoder to generate the first token
         bos_token = torch.nn.Parameter(
@@ -590,7 +586,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                         parent_module,
                         attr_name,
                         T5MultiLayerFF(
-                            config=self.encoder.encoder.config, num_layers=mlp_layers
+                            config=self.decoder.decoder.config, num_layers=mlp_layers
                         ),
                     )
 
@@ -612,14 +608,38 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         # separation token for the encoder to differentiate between items
-        self.sep_token = (
-            torch.nn.Parameter(torch.randn(1, self.embedding_dim), requires_grad=True)
-            if should_add_sep_token
-            else None
-        )
+        if self.encoder != None:
+            self.sep_token = (
+                torch.nn.Parameter(torch.randn(1, self.embedding_dim), requires_grad=True)
+                if should_add_sep_token
+                else None
+            )
         # the key value names for the prediction output
         self.prediction_key_name = prediction_key_name
         self.prediction_value_name = prediction_value_name
+
+        if self.encoder == None:
+            self.hash_size = 200_000
+            self.hidden_size = embedding_dim
+
+            self.item_emb1 = nn.Embedding(self.hash_size, embedding_dim)
+            self.item_emb2 = nn.Embedding(self.hash_size, embedding_dim)
+            self.item_emb3 = nn.Embedding(self.hash_size, embedding_dim)
+
+            self.mlp = nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim),
+                nn.GELU(),
+                nn.Linear(embedding_dim, embedding_dim),
+            )
+
+    def hash1(self, x):
+        return torch.remainder(x * 1315423911, self.hash_size)
+
+    def hash2(self, x):
+        return torch.remainder(x * 2654435761, self.hash_size)
+
+    def hash3(self, x):
+        return torch.remainder(x * 805459861, self.hash_size)
 
     def encoder_forward_pass(
         self,
@@ -697,6 +717,50 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             attention_mask=attention_mask_for_encoder,
         )
         return encoder_output, attention_mask_for_encoder
+
+    def encoder_forward_pass_mlp(
+        self,
+        attention_mask: torch.Tensor,
+        input_ids: torch.Tensor,
+        user_id: torch.Tensor,
+    ):
+
+        h1 = self.hash1(input_ids)
+        h2 = self.hash2(input_ids)
+        h3 = self.hash3(input_ids)
+
+        item_emb = (
+            self.item_emb1(h1)
+            + self.item_emb2(h2)
+            + self.item_emb3(h3)
+        )
+
+        if attention_mask is not None:
+            item_emb = item_emb * attention_mask.unsqueeze(-1)
+
+        encoder_output = self.mlp(item_emb)
+        if user_id is not None and self.user_embedding is not None:
+            user_id = user_id[:, 0]
+            user_embeds = self.user_embedding(
+                torch.remainder(user_id, self.user_embedding.num_embeddings)
+            )
+
+            encoder_output = torch.cat(
+                [user_embeds.unsqueeze(1), encoder_output],
+                dim=1,
+            )
+
+            user_attention_mask = torch.ones(
+                attention_mask.size(0), 1,
+                device=attention_mask.device,
+            )
+
+            attention_mask = torch.cat(
+                [user_attention_mask, attention_mask],
+                dim=1,
+            )
+
+        return encoder_output, attention_mask
 
     def decoder_forward_pass(
         self,
@@ -885,11 +949,18 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             attention_mask_decoder (Optional[torch.Tensor]): The attention mask for the decoder.
         """
 
-        encoder_output, attention_mask_for_encoder = self.encoder_forward_pass(
-            attention_mask=attention_mask_encoder,
-            input_ids=input_ids,
-            user_id=user_id,
-        )
+        if self.encoder != None:
+            encoder_output, attention_mask_for_encoder = self.encoder_forward_pass(
+                attention_mask=attention_mask_encoder,
+                input_ids=input_ids,
+                user_id=user_id,
+            )
+        else:
+            encoder_output, attention_mask_for_encoder = self.encoder_forward_pass_mlp(
+                attention_mask=attention_mask_encoder,
+                input_ids=input_ids,
+                user_id=user_id,
+            )
 
         decoder_output = self.decoder_forward_pass(
             future_ids=future_ids,

@@ -192,7 +192,7 @@ data_loading:
     val_dataloader_config: ${..val_dataloader_config.dataloader}
     test_dataloader_config: ${..test_dataloader_config.dataloader}
 model:
-  huggingface_model:
+  huggingface_model: 
     _target_: transformers.T5EncoderModel
     config:
       _target_: transformers.T5Config
@@ -219,19 +219,19 @@ model:
     _target_: transformers.models.t5.modeling_t5.T5Stack
     config:
       _target_: transformers.models.t5.configuration_t5.T5Config
-      vocab_size: ${model.huggingface_model.config.vocab_size}
-      d_model: ${model.huggingface_model.config.d_model}
-      num_heads: ${model.huggingface_model.config.num_heads}
+      vocab_size: 256
+      d_model: 1024
+      num_heads: 16
       dropout_rate: 0.1
-      d_ff: ${model.huggingface_model.config.d_ff}
-      d_kv: ${model.huggingface_model.config.d_kv}
+      d_ff: 4096
+      d_kv: 64
       num_layers: 1
       is_decoder: true
       is_encoder_decoder: false
     embed_tokens:
       _target_: torch.nn.Embedding
-      num_embeddings: ${model.huggingface_model.config.vocab_size}
-      embedding_dim: ${model.huggingface_model.config.d_model}
+      num_embeddings: ${model.decoder.config.vocab_size}
+      embedding_dim: ${model.decoder.config.d_model}
   num_hierarchies: ${num_hierarchies}
   num_user_bins: null
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
