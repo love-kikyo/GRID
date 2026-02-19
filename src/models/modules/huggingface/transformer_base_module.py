@@ -15,6 +15,12 @@ from src.models.components.network_blocks.embedding_aggregator import (
     EmbeddingAggregator,
 )
 from src.models.modules.base_module import BaseModule
+from enum import Enum, auto
+
+
+class ModelMode(Enum):
+    TRAIN = auto()
+    INFER = auto()
 
 
 class TransformerBaseModule(BaseModule):
@@ -72,7 +78,7 @@ class TransformerBaseModule(BaseModule):
 
     def training_step(
         self,
-        batch: Tuple[Tuple[SequentialModelInputData, SequentialModuleLabelData]],
+        batch: Tuple[SequentialModelInputData],
         batch_idx: int,
     ) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set.
@@ -88,11 +94,10 @@ class TransformerBaseModule(BaseModule):
         # this behavior only happens for training_step.
         batch = batch[0]
         # Batch is a tuple of model inputs and labels.
-        model_input: SequentialModelInputData = batch[0]
-        label_data: SequentialModuleLabelData = batch[1]
+        model_input: SequentialModelInputData = batch
         # Batch will be a tuple of model inputs and labels. We use the index here to access them.
         model_output, loss, metrics = self.model_step(
-            model_input=model_input, label_data=label_data
+            model_input=model_input, mode=ModelMode.TRAIN
         )
 
         # checks logging interval and logs the loss

@@ -198,7 +198,7 @@ def collate_fn_train(
     data_augmentation_functions: Optional[
         List[Dict[str, callable]]
     ] = None,  # type: ignore
-) -> Tuple[SequentialModelInputData, SequentialModuleLabelData]:
+) -> SequentialModelInputData:
     """The collate function passed to dataloader. It can do training masking and padding for the input sequence.
 
     Parameters
@@ -228,7 +228,6 @@ def collate_fn_train(
             batch = data_augmentation_function(batch)
 
     model_input_data = SequentialModelInputData()
-    model_label_data = SequentialModuleLabelData()
 
     for field_name, field_sequence in batch.items():  # type: ignore
         # TODO (lneves): Allow for non-sequential data to be passed as a feature.
@@ -250,33 +249,14 @@ def collate_fn_train(
             padding_token=padding_token,
         )
 
-        # creating labels if the field is in the labels list
-        if field_name in labels:
-            label_function = labels[field_name].transform
-            label_function_output: LabelFunctionOutput = label_function.transform_label(
-                sequence=current_sequence,
-                padding_token=padding_token,
-                masking_token=masking_token,
-            )
-            model_label_data.labels[field_name] = label_function_output.labels
-            model_label_data.label_location[
-                field_name
-            ] = label_function_output.label_location
-            model_label_data.attention_mask[
-                field_name
-            ] = label_function_output.attention_mask
-            model_input_data.transformed_sequences[
-                field_name
-            ] = label_function_output.sequence
-        else:
-            model_input_data.transformed_sequences[field_name] = current_sequence
+        model_input_data.transformed_sequences[field_name] = current_sequence
 
         # Currently supports a single masking per sequence
         # TODO (lneves): Evaluate if this works or if we should have one mask per feature.
         if model_input_data.mask is None:
             model_input_data.mask = (current_sequence != padding_token).long()
 
-    return model_input_data, model_label_data  # type: ignore
+    return model_input_data  # type: ignore
 
 
 def collate_fn_items(

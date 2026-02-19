@@ -2,7 +2,7 @@
 data_dir: ???
 semantic_id_path: ???
 num_hierarchies: ???
-sequence_length: 30
+sequence_length: 32
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -84,9 +84,9 @@ data_loading:
       timeout: 0
       assign_files_by_size: false
       oov_token: null
-      masking_token: -1
+      masking_token: 0
       sequence_length: ${sequence_length}
-      padding_token: -1
+      padding_token: 0
       drop_last: true
       persistent_workers: true
       collate_fn:
@@ -192,17 +192,7 @@ data_loading:
     val_dataloader_config: ${..val_dataloader_config.dataloader}
     test_dataloader_config: ${..test_dataloader_config.dataloader}
 model:
-  huggingface_model: 
-    _target_: transformers.T5EncoderModel
-    config:
-      _target_: transformers.T5Config
-      vocab_size: 256
-      d_model: 1024
-      num_heads: 16
-      dropout_rate: 0.1
-      d_ff: 4096
-      d_kv: 64
-      num_layers: 1
+  huggingface_model: null
   _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -216,26 +206,19 @@ model:
   weight_tying: true
   compile: false
   decoder:
-    _target_: transformers.models.t5.modeling_t5.T5Stack
+    _target_: transformers.models.llama.modeling_llama.LlamaModel
     config:
-      _target_: transformers.models.t5.configuration_t5.T5Config
+      _target_: transformers.models.llama.configuration_llama.LlamaConfig
       vocab_size: 256
-      d_model: 1024
-      num_heads: 16
-      dropout_rate: 0.1
-      d_ff: 4096
-      d_kv: 64
-      num_layers: 1
-      is_decoder: true
-      is_encoder_decoder: false
-    embed_tokens:
-      _target_: torch.nn.Embedding
-      num_embeddings: ${model.decoder.config.vocab_size}
-      embedding_dim: ${model.decoder.config.d_model}
+      hidden_size: 1024
+      intermediate_size: 4096
+      num_hidden_layers: 2
+      num_attention_heads: 16
+      rms_norm_eps: 1e-6
   num_hierarchies: ${num_hierarchies}
   num_user_bins: null
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
-  mlp_layers: 2
+  padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
 callbacks:
   model_checkpoint:
     _target_: lightning.pytorch.callbacks.ModelCheckpoint
@@ -319,6 +302,7 @@ extras:
 loss:
   loss_function:
     _target_: torch.nn.CrossEntropyLoss
+    ignore_index: ${sub:${data_loading.train_dataloader_config.dataloader.padding_token},1}
 optim:
   optimizer:
     _target_: torch.optim.AdamW
