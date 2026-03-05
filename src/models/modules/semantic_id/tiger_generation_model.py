@@ -8,6 +8,7 @@ import transformers
 from torch import nn
 import torch.nn.functional as F
 from torchmetrics.aggregation import BaseAggregator
+from torchmetrics.functional.classification import binary_auroc
 from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 from transformers.modeling_outputs import Seq2SeqModelOutput
 from transformers.models.t5.modeling_t5 import T5Config, T5LayerNorm
@@ -19,12 +20,6 @@ from src.data.loading.components.interfaces import (
 from src.models.components.interfaces import OneKeyPerPredictionOutput
 from src.models.components.network_blocks.mlp import MLP
 from src.models.modules.huggingface.transformer_base_module import TransformerBaseModule, ModelMode
-from src.utils.utils import (
-    delete_module,
-    find_module_shape,
-    get_parent_module_and_attr,
-    reset_parameters,
-)
 
 
 class SemanticIDGenerativeRecommender(TransformerBaseModule):
@@ -80,6 +75,9 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         self.top_k_for_generation = top_k_for_generation
         self.batch_start_time = None
+        self.prev_batch_end_time = None
+        self.total_val_time = 0
+        self.val_start_time = 0
 
     def _inject_sep_token_between_sids(
         self,
@@ -331,16 +329,17 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         loss_to_aggregate: BaseAggregator,
     ):
         model_input: SequentialModelInputData = batch
-        _, loss, metrics = self.model_step(model_input=model_input, mode=ModelMode.TRAIN)
+        with torch.inference_mode():
+            _, loss, __ = self.model_step(model_input=model_input, mode=ModelMode.TRAIN)
         loss_to_aggregate(loss)
 
         sid = model_input.transformed_sequences["sequence_data"].long()  # (B, S)
         attention_mask = model_input.mask  # (B, S)
 
-        lengths = attention_mask.sum(dim=1)  # (B)
-        B, S = sid.shape
-        device = sid.device
+        sid = sid[:, :-self.num_hierarchies]
+        attention_mask = attention_mask[:, :-self.num_hierarchies]
 
+        lengths = attention_mask.sum(dim=1)  # (B)
         assert torch.all(lengths >= self.num_hierarchies), (
             f"Found sequence length < num_hierarchies={self.num_hierarchies}: {lengths}"
         )
@@ -348,40 +347,20 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             f"Input lengths must be multiples of block={self.num_hierarchies}, got {lengths}"
         )
 
-        # ===== Construct label ===== 
-        idx = lengths[:, None] - self.num_hierarchies + torch.arange(self.num_hierarchies, device=device)  # (B, num_hierarchies)
-        labels = sid.gather(1, idx)  # (B, num_hierarchies)
-        
-        # ===== Left padding =====
-        hist_lengths = lengths - self.num_hierarchies  # (B,)
-        max_hist_len = hist_lengths.max().item()
-
-        hist_sid = torch.full(
-            (B, max_hist_len),
-            self.padding_token,
-            device=device,
-            dtype=sid.dtype,
-        )  # (B, max_hist_len)
-        
-        pos = torch.arange(max_hist_len, device=device)  # (max_hist_len,)
-        start = max_hist_len - hist_lengths[:, None]  # (B, max_hist_len)
-
-        hist_mask = pos >= start    # (B, max_hist_len)
-        hist_mask = hist_mask.to(attention_mask.dtype)
-
-        src_idx = pos - start  # (B, max_hist_len)
-        safe_src_idx = src_idx.clamp(min=0)
-
-        hist_sid[hist_mask.bool()] = sid.gather(1, safe_src_idx)[hist_mask.bool()]
+        labels = sid[:, -self.num_hierarchies:]
+        hist_sid = sid[:, :-self.num_hierarchies]
+        hist_mask = attention_mask[:, :-self.num_hierarchies]
 
         model_input.transformed_sequences["sequence_data"] = hist_sid
-        model_input.mask = hist_mask
+        model_input.hist_mask = hist_mask
 
-        generated_ids, marginal_probs = self.model_step(model_input=model_input, mode=ModelMode.INFER)
+        with torch.inference_mode():
+            generated_ids, marginal_probs = self.model_step(model_input=model_input, mode=ModelMode.INFER)
+        
         self.evaluator(
-            marginal_probs=marginal_probs,
-            generated_ids=generated_ids,
-            labels=labels.to(marginal_probs.device),
+            marginal_probs=marginal_probs.detach(),
+            generated_ids=generated_ids.detach(),
+            labels=labels.detach(),
         )
 
     def _make_deterministic(self, is_training: bool):
@@ -421,10 +400,16 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
     def on_validation_start(self):
         super().on_validation_start()
         self._make_deterministic(is_training=False)
+        self.val_start_time = time.time()
 
     def on_validation_end(self):
         super().on_validation_end()
         self._make_deterministic(is_training=True)
+        val_duration = time.time() - self.val_start_time
+        self.total_val_time += val_duration
+        
+        if self.prev_batch_end_time is not None:
+            self.prev_batch_end_time += val_duration
 
     def on_test_start(self):
         super().on_test_start()
@@ -439,41 +424,34 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self._make_deterministic(is_training=True)
 
     def on_train_batch_start(self, batch, batch_idx):
-        self.batch_start_time = time.time()
+        now = time.time()
+        if self.prev_batch_end_time is not None:
+            data_wait = now - self.prev_batch_end_time
+            self.log("perf/next_batch_wait_time", data_wait, on_step=True, on_epoch=False, logger=True, sync_dist=False)
+        
+        self.batch_start_time = now
         if not hasattr(self, 'train_start_time'):
-            self.train_start_time = time.time()
+            self.train_start_time = now
             self.total_samples = 0
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        step_time = time.time() - self.batch_start_time
-        model_input = batch[0]
+        now = time.time()
+        step_time = now - self.batch_start_time
+        
+        model_input = batch[0][0] if isinstance(batch[0], (list, tuple)) else batch[0]
         local_batch_size = model_input.mask.size(0)
-        world_size = self.trainer.world_size
-        global_batch_size = local_batch_size * world_size
+        global_batch_size = (
+            local_batch_size
+            * self.trainer.num_devices
+            * self.trainer.accumulate_grad_batches
+        )
 
         self.total_samples += global_batch_size
-        running_time = time.time() - self.train_start_time
-        running_samples_per_sec = self.total_samples / running_time
-
-        self.log(
-            "train/samples_per_sec_e2e",
-            global_batch_size / step_time,  # 每 step
-            on_step=True,
-            on_epoch=False,
-            prog_bar=False,
-            logger=True,
-            sync_dist=False,
-        )
-
-        self.log(
-            "train/samples_per_sec_avg",
-            running_samples_per_sec,  # 累积平均
-            on_step=True,
-            on_epoch=False,
-            prog_bar=False,
-            logger=True,
-            sync_dist=False,
-        )
+        running_time = now - self.train_start_time - self.total_val_time
+        
+        self.log("perf/train_samples_per_sec_e2e", global_batch_size / step_time, on_step=True, on_epoch=False, logger=True, sync_dist=False)
+        self.log("perf/train_samples_per_sec_avg", self.total_samples / running_time, on_step=True, on_epoch=False, logger=True, sync_dist=False)
+        self.prev_batch_end_time = time.time()
 
 class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     """
@@ -492,7 +470,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         num_embeddings_per_hierarchy: int = None,
         num_user_bins: Optional[int] = None,
         should_check_prefix: bool = False,
-        should_add_sep_token: bool = True,
         prediction_key_name: str = "user_id",
         prediction_value_name: str = "semantic_ids",
         **kwargs,
@@ -511,11 +488,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         if isinstance(codebooks, np.ndarray):
             codebooks = torch.from_numpy(codebooks)
-        if num_hierarchies is None or num_embeddings_per_hierarchy is None:
-            num_hierarchies, num_embeddings_per_hierarchy = (
-                codebooks.shape[1],
-                codebooks.max().item() + 1,
-            )
         if embedding_dim is None:
             embedding_dim = kwargs["decoder"].config.hidden_size
 
@@ -528,11 +500,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             should_check_prefix=should_check_prefix,
             **kwargs,
         )
-
-        if self.encoder != None:
-            self.encoder = SemanticIDEncoderModule(
-                encoder=self.encoder,
-            )
 
         # bos_token used to prompt the decoder to generate the first token
         bos_token = torch.nn.Parameter(
@@ -552,6 +519,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                     for _ in range(self.num_hierarchies)
                 ]
             ),
+            click_head=torch.nn.Linear(self.embedding_dim, 1, bias=False),
         )
 
         # generate embedding tables for each hierarchy
@@ -559,6 +527,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.item_sid_embedding_table_encoder = self._spawn_embedding_tables(
             num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies + 1,
             embedding_dim=self.embedding_dim,
+        )
+        self.item_embedding_table = DualHashEmbedding(
+            num_buckets=1_000_000,
+            embedding_dim=self.embedding_dim,
+            padding_token=self.padding_token,
+        )
+        self.register_buffer(
+            "powers",
+            self.num_embeddings_per_hierarchy **
+            torch.arange(self.num_hierarchies-1, -1, -1)
         )
 
         # generating user embedding table
@@ -571,13 +549,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             else None
         )
 
-        # separation token for the encoder to differentiate between items
-        if self.encoder != None:
-            self.sep_token = (
-                torch.nn.Parameter(torch.randn(1, self.embedding_dim), requires_grad=True)
-                if should_add_sep_token
-                else None
-            )
+        self.segment_embedding_table = nn.Embedding(3, self.embedding_dim)
+
         # the key value names for the prediction output
         self.prediction_key_name = prediction_key_name
         self.prediction_value_name = prediction_value_name
@@ -588,6 +561,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             torch.Tensor
         ] = None,  # TODO (clark): in the future we should support variable length semantic id
         sid: Optional[torch.Tensor] = None,
+        similar_item_key: Optional[torch.Tensor] = None,
         use_cache: bool = False,
         past_key_values: Optional[DynamicCache] = None,
         add_bos_token: bool = False,
@@ -596,56 +570,82 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         Forward pass for the decoder module.
         Parameters:
             attention_mask (torch.Tensor): The attention mask for the decoder.
-            future_ids (Optional[torch.Tensor]): The future IDs for the decoder.
+            sid (Optional[torch.Tensor]): The future IDs for the decoder.
             use_cache (bool): Whether to use cache for past key values.
             past_key_values (Optional[DynamicCache]): The cache for past key values.
         """
-
-        # ===== Convert to embedding =====
         B, S = sid.shape
-        assert attention_mask.shape == sid.shape
-        sid_table = self.get_embedding_table(table_name="decoder")
+        device = sid.device
+        H = self.num_hierarchies
 
-        pad_len = (-S) % self.num_hierarchies
-        sid_pad = nn.functional.pad(sid, (0, pad_len), value=self.padding_token)  # (B, S + pad_len)
-        attention_mask_pad = F.pad(attention_mask, (0, pad_len), value=0)  # (B, S + pad_len)
+        pad_len = (-S) % H
+        if pad_len > 0:
+            sid = F.pad(sid, (0, pad_len), value=self.padding_token)
+            if attention_mask is not None:
+                attention_mask = F.pad(attention_mask, (0, pad_len), value=0)
 
-        sid_blk = sid_pad.view(B, -1, self.num_hierarchies)  # (B, num_block, in_block_len)
-        attention_mask_blk = attention_mask_pad.view(B, -1, self.num_hierarchies)  # (B, num_block, in_block_len)
+        sid_table = self.get_embedding_table(table_name="sid")
+        item_table = self.get_embedding_table(table_name="item")
 
-        offsets = (
-            torch.arange(self.num_hierarchies, device=sid_blk.device)
-            * self.num_embeddings_per_hierarchy
-        )
-        sid_blk_raw = sid_blk
-        sid_blk = sid_blk + offsets
-        sid_blk = torch.where(
-            sid_blk_raw == self.padding_token,
-            sid_blk_raw,
-            sid_blk
-        )
-        sid_embeds = sid_table(sid_blk)  # (B, num_block, hirerachies, D)
+        sid_blk = sid.view(B, -1, H)  # (B, num_block, H)
+        item_key = (sid_blk * self.powers).sum(dim=-1) # (B, num_block)
 
-        bos = self.decoder.bos_token
-        bos = bos.view(1, 1, 1, -1).expand(B, sid_embeds.size(1), 1, -1)  # (B, num_block, 1, D)
-        mask = torch.ones(B, sid_embeds.size(1), 1, device=sid.device)  # (B, num_block, 1)
+        offsets = torch.arange(0, H * self.num_embeddings_per_hierarchy, self.num_embeddings_per_hierarchy, device=device)
+        sid_indexed = sid_blk + offsets
+        sid_indexed = sid_indexed.masked_fill(sid_blk == self.padding_token, self.padding_token)
+        sid_embeds = sid_table(sid_indexed)  # (B, num_block, H, D)
+        item_embeds = item_table(item_key).unsqueeze(2)  # (B, num_block, D)
 
-        inputs_embeds = torch.cat([bos, sid_embeds], dim=-2)  # (B, num_block, out_block_len, D)
-        mask = torch.cat([mask, attention_mask_blk], dim=-1)  # (B, num_block, out_block_len)
+        bos_token = self.decoder.bos_token.view(1, 1, 1, -1).expand(B, sid_blk.size(1), 1, -1)
+        full_block_embeds = torch.cat([bos_token, sid_embeds, item_embeds], dim=2)
+        # full_block_embeds = torch.cat([bos_token, sid_embeds], dim=2)
+        inputs_embeds = full_block_embeds.view(B, -1, self.embedding_dim)
 
-        inputs_embeds = inputs_embeds.view(B, -1, self.embedding_dim)  # (B, S + pad_len + num_block, D)
-        mask = mask.view(B, -1)  # (B, S + pad + num_block)
+        if attention_mask is not None:
+            att_blk = attention_mask.view(B, -1, H)  # (B, num_block, H)
+            item_mask = att_blk[..., -1:]  # (B, num_block)
+            bos_mask = att_blk[..., 0].unsqueeze(-1)
+            mask = torch.cat([bos_mask, att_blk, item_mask], dim=-1).view(B, -1)
+            # mask = torch.cat([bos_mask, att_blk], dim=-1).view(B, -1)
+        else:
+            mask = None
 
         if pad_len > 0:
-            inputs_embeds = inputs_embeds[:, :-pad_len]
-            mask = mask[:, :-pad_len]
+            valid_length = inputs_embeds.size(1) - (pad_len + 1)
+            # valid_length = inputs_embeds.size(1) - (pad_len)
+            inputs_embeds = inputs_embeds[:, :valid_length]
+            if mask is not None:
+                mask = mask[:, :valid_length]
 
         if add_bos_token:
             bos = self.decoder.bos_token.view(1, 1, -1).expand(B, 1, -1)  # (B, 1, D)
-            inputs_embeds = torch.cat([inputs_embeds, bos], dim=1)  # (B, S + num_block + 1, D)
+            inputs_embeds = torch.cat([inputs_embeds, bos], dim=1)  # (B, , D)
 
             bos_mask = torch.ones(B, 1, device=mask.device)  
             mask = torch.cat([mask, bos_mask], dim=1)
+
+        L1 = inputs_embeds.size(1)
+        if similar_item_key is not None:
+            similar_item_embeds = item_table(similar_item_key)
+            similar_item_mask = similar_item_key != self.padding_token
+            L2 = similar_item_embeds.size(1)
+
+            inputs_embeds = torch.cat([inputs_embeds, similar_item_embeds], dim=1)
+            mask = torch.cat([mask, similar_item_mask], dim=1)
+            
+            s0 = torch.zeros(B, L1, dtype=torch.long, device=inputs_embeds.device)
+            s1 = torch.ones(B, L2 - 1, dtype=torch.long, device=inputs_embeds.device)
+            s2 = torch.full((B, 1), 2, dtype=torch.long, device=inputs_embeds.device)
+            segment_ids = torch.cat([s0, s1, s2], dim=1)
+        else:
+            segment_ids = torch.zeros(
+                B, L1,
+                dtype=torch.long,
+                device=inputs_embeds.device
+            )
+
+        segment_emb = self.segment_embedding_table(segment_ids)
+        inputs_embeds = inputs_embeds + segment_emb
 
         decoder_output = self.decoder(
             sequence_embedding=inputs_embeds,
@@ -655,7 +655,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         return decoder_output
-
+    
     def generate(
         self,
         attention_mask: torch.Tensor = None,
@@ -714,10 +714,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         # here we assume the encoder and decoder share the same embedding table
         # we can have flexible embedding table in the future
-        if table_name == "encoder":
+        if table_name == "sid":
             embedding_table = self.item_sid_embedding_table_encoder
-        elif table_name == "decoder":
-            embedding_table = self.item_sid_embedding_table_encoder
+        elif table_name == "item":
+            embedding_table = self.item_embedding_table
 
         if hierarchy is not None:
             return embedding_table(
@@ -770,50 +770,57 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             )
             return generated_ids, marginal_probs
         
+        similar_item_key = model_input.transformed_sequences["topk_similar_in_time"].long()
+        click_label = model_input.transformed_sequences["click_label"].squeeze(-1).float()
         # ===== Forward =====
         model_output = self.decoder_forward_pass(
             attention_mask=mask,
             sid=sid,
+            similar_item_key=similar_item_key,
         )
 
+        click_logits = self.decoder.click_head(model_output[:, -1, :]).squeeze(-1)
+        loss_bce = self.click_loss_fn(click_logits, click_label)
+
+        with torch.no_grad():
+            auc = binary_auroc(
+                torch.sigmoid(click_logits),
+                click_label.long()
+            )
+
+        L2 = similar_item_key.size(1)
+        sid_hidden = model_output[:, :model_output.size(1)-L2, :]
         # ===== Calculate loss =====
         num_block = S // self.num_hierarchies
-        sid = sid.view(B, num_block, -1)
-        model_output_blk = model_output.view(B, num_block, -1, self.embedding_dim)
+        sid_hidden_blk = sid_hidden.view(B, num_block, -1, self.embedding_dim)
+        sid_targets = sid.view(B, num_block, self.num_hierarchies)
         mask_blk = mask.view(B, num_block, self.num_hierarchies)
 
-        loss = 0
-        hit_list = []
+        neg_mask = (click_label == 0)
+        sid_targets[neg_mask, -1, :] = self.padding_token
+        mask_blk[neg_mask, -1, :] = 0
 
-        for cur in range(self.num_hierarchies):
-            logits = self.decoder.sid_head[cur](
-                model_output_blk[..., cur, :]
-            )  # (B, num_block, num_candidates)
-            targets = sid[..., cur].long() - 1  # (B, num_block)
+        total_sid_loss = 0
+        metrics = {"click_auc" : auc}
 
-            loss_cur = self.loss_function(
-                logits.reshape(-1, logits.size(-1)),  # (B * num_block, num_candidates)
-                targets.reshape(-1).long(), # (B * num_block)
-            )  # (B * num_block)
-            loss = loss + loss_cur
+        for h in range(self.num_hierarchies):
+            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :]) # (B, num_block, C)
+            h_targets = sid_targets[:, :, h].long() - 1
+            h_mask = mask_blk[:, :, h]
+
+            h_loss = self.sid_loss_fn(
+                h_logits.reshape(-1, h_logits.size(-1)), 
+                h_targets.reshape(-1)
+            )
+            total_sid_loss += h_loss
 
             with torch.no_grad():
-                topk = torch.topk(logits, k=10, dim=-1).indices  # (B, num_block, 10)
-                hit = (
-                    (topk == targets.unsqueeze(-1))
-                    .any(dim=-1)
-                    .float()
-                )  # (B, num_block)
+                _, top10_indices = h_logits.topk(10, dim=-1)
+                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)  # (B, num_block)
+                hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
+                metrics[f"hit@10_sid{h}"] = hit_rate
 
-                cur_mask = mask_blk[..., cur]
-                hit = hit * cur_mask
-                hit_rate = hit.sum() / cur_mask.sum().clamp_min(1)
-                hit_list.append(hit_rate)
-        metrics = {
-            f"hit@10_sid{h}": hit_list[h]
-            for h in range(self.num_hierarchies)
-        }
-        return model_output, loss, metrics
+        return model_output, total_sid_loss + loss_bce, metrics
 
 class SemanticIDDecoderModule(torch.nn.Module):
     """
@@ -825,6 +832,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
         self,
         decoder: transformers.PreTrainedModel,
         sid_head: Optional[torch.nn.Module] = None,
+        click_head: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
     ) -> None:
         """
@@ -845,6 +853,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
         # this bos token is prompt for the decoder
         self.bos_token = bos_token
         self.sid_head = sid_head
+        self.click_head = click_head
         # deleting embedding table in the decoder to save space
         self.decoder.embed_tokens = torch.nn.Identity()
 
@@ -869,47 +878,36 @@ class SemanticIDDecoderModule(torch.nn.Module):
 
         return hidden_states
 
-
-class SemanticIDEncoderModule(torch.nn.Module):
-    """
-    This is an in-house replication of the encoder module proposed in TIGER paper,
-    See Figure 2.b in https://arxiv.org/pdf/2305.05065.
-    """
-
+class DualHashEmbedding(nn.Module):
     def __init__(
         self,
-        encoder: transformers.PreTrainedModel,
-    ) -> None:
-        """
-        Initialize the SemanticIDEncoderModule module.
-
-        Paremeters:
-        encoder (transformers.PreTrainedModel): the encoder model (e.g., transformers.T5EncoderModel).
-        """
+        num_buckets: int = 2**22,
+        embedding_dim: int = 1024,
+        prime1: int = 1315423911,
+        prime2: int = 2654435761,
+        padding_token: int = 0,
+    ):
         super().__init__()
 
-        self.encoder = encoder
-        embedding_table_dim = find_module_shape(self.encoder, "embed_tokens")
-        num_embeddings, embedding_dim = embedding_table_dim
+        self.num_buckets = num_buckets
+        self.prime1 = prime1
+        self.prime2 = prime2
 
-        self.num_embeddings_per_hierarchy = num_embeddings
-        self.embedding_dim = embedding_dim
-        # TODO (clark): take care of chunky position encoding
+        self.embedding1 = nn.Embedding(num_buckets, 128, padding_idx=padding_token)
+        self.embedding2 = nn.Embedding(num_buckets, 128, padding_idx=padding_token)
+        self.item_proj = nn.Linear(256, embedding_dim)
 
-        # deleting embedding table in the encoder to save space
-        delete_module(self.encoder, "embed_tokens")
-        delete_module(self.encoder, "shared")
-        reset_parameters(self.encoder)
+    def forward(self, item_key: torch.Tensor):
+        """
+        item_key: (B, num_block) int64
+        return: (B, num_block, D)
+        """
 
-    def forward(
-        self,
-        attention_mask: torch.Tensor,
-        sequence_embedding: torch.Tensor,
-    ) -> torch.Tensor:
+        idx1 = (item_key * self.prime1) % self.num_buckets
+        idx2 = (item_key * self.prime2) % self.num_buckets
 
-        encoder_output = self.encoder(
-            inputs_embeds=sequence_embedding,
-            attention_mask=attention_mask,
-        )
-        embeddings = encoder_output.last_hidden_state
-        return embeddings
+        emb1 = self.embedding1(idx1)
+        emb2 = self.embedding2(idx2)
+
+        final_emb = self.item_proj(torch.cat([emb1, emb2], dim=-1))
+        return final_emb

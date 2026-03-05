@@ -26,6 +26,7 @@ def convert_bytes_to_string(
             batch_or_row[k] = batch_or_row[k].astype(str)
     return batch_or_row
 
+
 def is_feature_in_features_to_apply(features_to_apply: List[str], k: str) -> bool:
     if len(features_to_apply) > 0 and k not in features_to_apply:
         return False
@@ -121,32 +122,26 @@ def map_sparse_id_to_semantic_id(
     row: Dict[str, torch.Tensor],
     dataset_config: SemanticIDDatasetConfig,
     features_to_apply: Optional[List[str]] = [],
-    num_hierarchies: Optional[int] = None,
     **kwargs,
 ) -> Dict[str, torch.Tensor]:
     """
     Given a row of data, maps the sparse ids to semantic ids
     based on the id_map in the dataset config.
     """
+    id_map = dataset_config.semantic_id_map
+    # id_map: (num_items, num_hierarchies)
+    powers = dataset_config.powers
 
+    target_item = row["sequence_data"][-1].clone()
+    row["topk_similar_in_time"] = torch.cat([row["topk_similar_in_time"], target_item.unsqueeze(0)], dim=0)
     for k, v in row.items():
         if is_feature_in_features_to_apply(features_to_apply, k):
-            id_map = dataset_config.semantic_id_map.get(k, None)
-            if isinstance(id_map, np.ndarray):
-                id_map = torch.from_numpy(id_map)
-                dataset_config.semantic_id_map[k] = id_map
-
-            # id_map: (num_items, num_hierarchies)
-            if num_hierarchies is not None:
-                assert num_hierarchies <= id_map.size(1), (
-                    "num_hierarchies must be <= semantic id dimension"
-                )
-                semantic_ids = id_map[v, :num_hierarchies]
+            semantic_ids = id_map[v] + 1
+            if k == "topk_similar_in_time":
+                row[k] = (semantic_ids * powers).sum(dim=-1)
             else:
-                semantic_ids = id_map[v]
-
-            # flatten: (seq_len, D) → (seq_len * D,)
-            row[k] = semantic_ids.reshape(-1) + 1
+                row[k] = semantic_ids.reshape(-1)
+                # flatten: (seq_len, D) → (seq_len * D,)
     return row
 
 
@@ -193,6 +188,7 @@ def trim_sequence_row(
                 v = v[:sequence_length]
                 row[k] = v
     return row
+
 
 def tokenize_text_features(
     batch_or_row: Dict[str, Any],
@@ -269,7 +265,6 @@ def preprocess_categorical_feature_to_idx(
                 # if it's a sequence feature then process the entire sequence
                 batch_or_row[feature] = translate_to_index(batch_or_row[feature])
     return batch_or_row
-
 
 
 def map_sparse_id_to_embedding(

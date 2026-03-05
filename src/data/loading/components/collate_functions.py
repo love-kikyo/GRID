@@ -8,7 +8,7 @@ from src.data.loading.components.interfaces import (
     SequentialModelInputData,
     SequentialModuleLabelData,
 )
-from src.data.loading.utils import combine_list_of_tensor_dicts, pad_or_trim_sequence
+from src.data.loading.utils import combine_list_of_tensor_dicts, pad_or_trim_sequence, left_pad_sequence
 from src.utils.tensor_utils import extract_locations
 from src.data.loading.components.interfaces import ItemData
 
@@ -238,22 +238,23 @@ def collate_fn_train(
                 sequence[sequence != oov_token] for sequence in field_sequence
             ]
         # 1. in-batch padding s.t. all sequences have the same length and in the format of pt tensor
-        current_sequence = pad_sequence(
-            current_sequence, batch_first=True, padding_value=padding_token
+        current_sequence = left_pad_sequence(
+            current_sequence, padding_value=padding_token
         )
 
         # 2. padding or trimming the sequence to the desired length for training
-        current_sequence = pad_or_trim_sequence(
-            padded_sequence=current_sequence,
-            sequence_length=sequence_length,
-            padding_token=padding_token,
-        )
+        if field_name != "click_label":
+            current_sequence = pad_or_trim_sequence(
+                padded_sequence=current_sequence,
+                sequence_length=sequence_length,
+                padding_token=padding_token,
+            )
 
         model_input_data.transformed_sequences[field_name] = current_sequence
 
         # Currently supports a single masking per sequence
         # TODO (lneves): Evaluate if this works or if we should have one mask per feature.
-        if model_input_data.mask is None:
+        if field_name == "sequence_data":
             model_input_data.mask = (current_sequence != padding_token).long()
 
     return model_input_data  # type: ignore

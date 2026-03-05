@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional, Union
+import time
 
 import torch
 import transformers
@@ -36,7 +37,8 @@ class BaseModule(LightningModule):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.loss_function = loss_function
+        self.sid_loss_fn = loss_function["sid_loss"]
+        self.click_loss_fn = loss_function["click_loss"]
         self.evaluator = evaluator
         self.training_loop_function = training_loop_function
         # We use setters to set the prediction key and name.
@@ -103,6 +105,8 @@ class BaseModule(LightningModule):
         """Lightning hook that is called when a validation epoch starts."""
         self.val_loss.reset()
         self.evaluator.reset()
+        self.val_start_time = time.time()
+        self.val_samples = 0
 
     def on_test_epoch_start(self):
         self.test_loss.reset()
@@ -112,6 +116,14 @@ class BaseModule(LightningModule):
         "Lightning hook that is called when a validation epoch ends."
         self.log("val/loss", self.val_loss, sync_dist=True, prog_bar=True, logger=True)
         self.log_metrics("val")
+
+        total_time = time.time() - self.val_start_time
+        self.log(
+            "perf/val_samples_per_sec",
+            self.val_samples / total_time,
+            prog_bar=False,
+            logger=True,
+        )
 
     def on_test_epoch_end(self) -> None:
         self.log(
@@ -202,6 +214,7 @@ class BaseModule(LightningModule):
         and second is a SequentialModuleLabelData object.
         """
         self.eval_step(batch, self.val_loss)
+        self.val_samples += batch.mask.size(0)
 
     def test_step(
         self,

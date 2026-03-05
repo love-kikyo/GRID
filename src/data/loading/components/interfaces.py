@@ -1,6 +1,7 @@
 import abc
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Union
+import numpy as np
 
 import torch
 import transformers
@@ -236,7 +237,22 @@ class SemanticIDDatasetConfig(SequenceDatasetConfig):
 
     semantic_id_map: Optional[Dict[str, torch.Tensor]] = None
     keep_user_id: bool = False
+    num_hierarchies: Optional[int] = None
+    num_embeddings_per_hierarchy: Optional[int] = None
+    powers: torch.Tensor = field(init=False)
 
+    def __post_init__(self):
+        if self.num_hierarchies is not None and self.num_embeddings_per_hierarchy is not None:
+            self.powers = (
+                self.num_embeddings_per_hierarchy **
+                torch.arange(self.num_hierarchies - 1, -1, -1, dtype=torch.int64)
+            )
+        else:
+            self.powers = torch.empty(0)
+        self.powers.requires_grad_(False)
+
+        if isinstance(self.semantic_id_map, np.ndarray):
+            self.semantic_id_map = torch.from_numpy(self.semantic_id_map).long()
 
 @dataclass
 class TokenizerConfig:
