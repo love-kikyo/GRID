@@ -118,30 +118,60 @@ def filter_empty_feature(row: Dict[str, torch.Tensor], dataset_config: BaseDatas
     return row
 
 
+def prepare_sequence_with_target(
+    row: Dict[str, torch.Tensor],
+    split: str,
+    dataset_config: SemanticIDDatasetConfig,
+    features_to_apply: Optional[List[str]] = None,
+    **kwargs
+) -> Dict[str, torch.Tensor]:
+    # Extract or determine target item
+    if split == "train" and int(row["click_label"]) == 0:
+        target_item = row["target_item"]
+    else:
+        # For eval split OR train with click_label != 0, use last sequence item
+        target_item = row["sequence_data"][-1].unsqueeze(0)
+        row["target_item"] = target_item
+
+    # Append target item to topk_similar_in_time
+    if split != "test":
+        row["topk_similar_in_time"] = torch.cat(
+            [row["topk_similar_in_time"], target_item], dim=0
+        )
+
+    # For train split with click_label == 0, also append target to sequence_data
+    if split == "train" and int(row["click_label"]) == 0:
+        row["sequence_data"] = torch.cat([row["sequence_data"], target_item], dim=0)
+
+    return row
+
+
 def map_sparse_id_to_semantic_id(
     row: Dict[str, torch.Tensor],
     dataset_config: SemanticIDDatasetConfig,
     features_to_apply: Optional[List[str]] = [],
     **kwargs,
 ) -> Dict[str, torch.Tensor]:
-    """
-    Given a row of data, maps the sparse ids to semantic ids
-    based on the id_map in the dataset config.
-    """
-    id_map = dataset_config.semantic_id_map
-    # id_map: (num_items, num_hierarchies)
-    powers = dataset_config.powers
+    id_map = dataset_config.semantic_id_map       # (num_items, num_hierarchies)
+    powers = dataset_config.powers                # (num_hierarchies,)
 
-    target_item = row["sequence_data"][-1].clone()
-    row["topk_similar_in_time"] = torch.cat([row["topk_similar_in_time"], target_item.unsqueeze(0)], dim=0)
-    for k, v in row.items():
-        if is_feature_in_features_to_apply(features_to_apply, k):
-            semantic_ids = id_map[v] + 1
-            if k == "topk_similar_in_time":
-                row[k] = (semantic_ids * powers).sum(dim=-1)
-            else:
-                row[k] = semantic_ids.reshape(-1)
-                # flatten: (seq_len, D) → (seq_len * D,)
+    hist_itemkey = None
+    for k in list(row.keys()):
+        if not is_feature_in_features_to_apply(features_to_apply, k):
+            continue
+        v = row[k]
+        semantic_ids = id_map[v] + 1
+        itemkeys = (semantic_ids * powers).sum(dim=-1)
+
+        if k == "topk_similar_in_time":
+            row[k] = itemkeys
+        else:
+            hist_itemkey = itemkeys
+            row[k] = semantic_ids.reshape(-1)
+
+    if hist_itemkey is not None:
+        row["hist_itemkey"] = hist_itemkey
+
     return row
 
 

@@ -39,7 +39,7 @@ class BaseModule(LightningModule):
         self.scheduler = scheduler
         self.sid_loss_fn = loss_function["sid_loss"]
         self.click_loss_fn = loss_function["click_loss"]
-        self.evaluator = evaluator
+        self.evaluators = evaluator
         self.training_loop_function = training_loop_function
         # We use setters to set the prediction key and name.
         self._prediction_key_name = None
@@ -48,14 +48,15 @@ class BaseModule(LightningModule):
         if self.training_loop_function is not None:
             self.automatic_optimization = False
 
-        if self.evaluator:  # For inference, evaluator is not set.
-            for metric_name, metric_object in self.evaluator.metrics.items():
-                setattr(self, metric_name, metric_object)
+        if self.evaluators:  # For inference, evaluator is not set.
+            for name, evaluator in self.evaluators.items():
+                for metric_name, metric_object in evaluator.metrics.items():
+                    setattr(self, f"{name}_{metric_name}", metric_object)
 
-            # for averaging loss across batches
-            self.train_loss = MeanMetric()
-            self.val_loss = MeanMetric()
-            self.test_loss = MeanMetric()
+                    # for averaging loss across batches
+                    self.train_loss = MeanMetric()
+                    self.val_loss = MeanMetric()
+                    self.test_loss = MeanMetric()
 
     @property
     def prediction_key_name(self) -> Optional[str]:
@@ -97,20 +98,23 @@ class BaseModule(LightningModule):
         # by default lightning executes validation step sanity checks before training starts,
         # so it's worth to make sure validation metrics don't store results from these checks
         self.val_loss.reset()
-        self.evaluator.reset()
+        for evaluator in self.evaluators.values():
+            evaluator.reset()
         self.train_loss.reset()
         self.test_loss.reset()
 
     def on_validation_epoch_start(self) -> None:
         """Lightning hook that is called when a validation epoch starts."""
         self.val_loss.reset()
-        self.evaluator.reset()
+        for evaluator in self.evaluators.values():
+            evaluator.reset()
         self.val_start_time = time.time()
         self.val_samples = 0
 
     def on_test_epoch_start(self):
         self.test_loss.reset()
-        self.evaluator.reset()
+        for evaluator in self.evaluators.values():
+            evaluator.reset()
 
     def on_validation_epoch_end(self) -> None:
         "Lightning hook that is called when a validation epoch ends."
@@ -140,20 +144,22 @@ class BaseModule(LightningModule):
         prefix: str,
         on_step=False,
         on_epoch=True,
-        # We use sync_dist=False by default because, if using retrieval metrics, those are already synchronized. Change if using
-        # different metrics than the default ones.
-        sync_dist=False,
+        sync_dist=True,
         logger=True,
         prog_bar=False,
         call_compute=False,
-    ) -> Dict[str, Any]:
+    ):
+        metrics_dict = {}
 
-        metrics_dict = {
-            f"{prefix}/{metric_name}": metric_object.compute()
-            if call_compute
-            else metric_object
-            for metric_name, metric_object in self.evaluator.metrics.items()
-        }
+        beam_metrics = self.evaluators["beam"].metrics
+        rerank_metrics = self.evaluators["rerank"].metrics
+
+        for metric_name in rerank_metrics:
+            beam_value = beam_metrics[metric_name].compute()
+            rerank_value = rerank_metrics[metric_name].compute()
+
+            metrics_dict[f"{prefix}/{metric_name}"] = rerank_value
+            metrics_dict[f"{prefix}/{metric_name}_gain"] = rerank_value - beam_value
 
         self.log_dict(
             metrics_dict,

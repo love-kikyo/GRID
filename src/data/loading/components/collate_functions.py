@@ -188,9 +188,9 @@ def collate_fn_inference_for_sequence(
 def collate_fn_train(
     # batch can be a list or a dict
     batch: Union[List[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]],
-    labels: Dict[str, callable],  # type: ignore
+    labels: Dict[str, callable] = {},  # type: ignore
     sequence_length: int = 200,
-    masking_token: int = 1,
+    masking_token: int = -1,
     padding_token: int = 0,
     oov_token: Optional[
         int
@@ -237,25 +237,38 @@ def collate_fn_train(
             current_sequence = [
                 sequence[sequence != oov_token] for sequence in field_sequence
             ]
-        # 1. in-batch padding s.t. all sequences have the same length and in the format of pt tensor
-        current_sequence = left_pad_sequence(
-            current_sequence, padding_value=padding_token
-        )
 
-        # 2. padding or trimming the sequence to the desired length for training
-        if field_name != "click_label":
+        if field_name == "topk_similar_in_time":
+            current_sequence = left_pad_sequence(
+                current_sequence, padding_value=masking_token
+            )
             current_sequence = pad_or_trim_sequence(
                 padded_sequence=current_sequence,
-                sequence_length=sequence_length,
+                sequence_length=10,
+                padding_token=masking_token,
+            )
+        elif field_name == "sequence_data":
+            current_sequence = left_pad_sequence(
+                current_sequence, padding_value=padding_token
+            )
+
+            current_sequence = pad_or_trim_sequence(
+                padded_sequence=current_sequence,
+                sequence_length=32,
                 padding_token=padding_token,
             )
 
-        model_input_data.transformed_sequences[field_name] = current_sequence
-
-        # Currently supports a single masking per sequence
-        # TODO (lneves): Evaluate if this works or if we should have one mask per feature.
-        if field_name == "sequence_data":
             model_input_data.mask = (current_sequence != padding_token).long()
+        elif field_name == "hist_itemkey":
+            current_sequence = left_pad_sequence(
+                current_sequence, padding_value=masking_token
+            )
+        else:
+            current_sequence = left_pad_sequence(
+                current_sequence, padding_value=padding_token
+            )
+
+        model_input_data.transformed_sequences[field_name] = current_sequence
 
     return model_input_data  # type: ignore
 

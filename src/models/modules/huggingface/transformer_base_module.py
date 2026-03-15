@@ -130,33 +130,7 @@ class TransformerBaseModule(BaseModule):
         batch: Tuple[SequentialModelInputData, SequentialModuleLabelData],
         loss_to_aggregate: BaseAggregator,
     ):
-        """Perform a single evaluation step on a batch of data from the validation or test set.
-        The method will update the metrics and the loss that is passed.
-        """
-        # Batch is a tuple of model inputs and labels.
-        model_input: SequentialModelInputData = batch[0]
-        label_data: SequentialModuleLabelData = batch[1]
-
-        model_output_before_aggregation, loss = self.model_step(
-            model_input=model_input, label_data=label_data
-        )
-
-        model_output_after_aggregation = self.aggregator(
-            model_output_before_aggregation, model_input.mask
-        )
-
-        # Updates metrics inside evaluator.
-        self.evaluator(
-            query_embeddings=model_output_after_aggregation,
-            key_embeddings=self.get_embedding_table().to(
-                model_output_after_aggregation.device
-            ),
-            # TODO: (lneves) hardcoded for now, will need to change for multiple features
-            labels=list(label_data.labels.values())[0].to(
-                model_output_after_aggregation.device
-            ),
-        )
-        loss_to_aggregate(loss)
+        pass
 
     def predict_step(
         self,
