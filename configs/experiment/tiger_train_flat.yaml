@@ -120,9 +120,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: train
+          # - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
+          #   _partial_: true
+          #   split: train
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, topk_similar_in_time]
@@ -181,9 +181,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: eval
+          # - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
+          #   _partial_: true
+          #   split: eval
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, topk_similar_in_time]
@@ -242,9 +242,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: test
+          # - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
+          #   _partial_: true
+          #   split: test
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, topk_similar_in_time]

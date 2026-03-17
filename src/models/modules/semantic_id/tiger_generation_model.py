@@ -872,7 +872,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Perform a forward pass of the model and calculate the loss if mode is INFER.
-
         Args:
             model_input: The input data to the model.
         """
@@ -889,48 +888,25 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 hist_itemkey=hist_itemkey,
             )
             return result_dict
-        
-        similar_itemkey = model_input.transformed_sequences["topk_similar_in_time"].long()
-        click_label = model_input.transformed_sequences["click_label"].squeeze(-1).float()
 
+        # ===== Part 1: SID loss on full sequence =====
+        # This trains the decoder to learn sequence representation
         input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
-        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
-        input_embeds = torch.concat([input_embeds_sid, input_embeds_similar_item], dim=1)
-        input_mask = torch.concat([mask_sid, mask_similar_item], dim=1)
 
-        # ===== Forward =====
-        model_output = self.decoder(
-            sequence_embedding=input_embeds,
-            attention_mask=input_mask,
+        sid_output = self.decoder(
+            sequence_embedding=input_embeds_sid,
+            attention_mask=mask_sid,
+            use_cache=False,
             past_key_values=None,
         )
 
-        click_logits = self.decoder.click_head(model_output[:, -1, :]).squeeze(-1)
-        click_probs = torch.sigmoid(click_logits)
-        loss_bce = self.click_loss_fn(click_logits, click_label)
-
-        with torch.no_grad():
-            auc = binary_auroc(click_probs, click_label.long())
-            click_log_prob = F.logsigmoid(click_logits).mean()
-
-        # ===== Calculate SID loss =====
-        L2 = similar_itemkey.size(1)
-        sid_hidden = model_output[:, :model_output.size(1) - L2, :]
         num_block = S // self.num_hierarchies
-        sid_hidden_blk = sid_hidden.view(B, num_block, -1, self.embedding_dim)
+        sid_hidden_blk = sid_output.view(B, num_block, -1, self.embedding_dim)
         sid_targets = sid.view(B, num_block, self.num_hierarchies).clone()
         mask_blk = mask.view(B, num_block, self.num_hierarchies).clone()
 
-        # Mask negative samples (non-clicked items)
-        neg_mask = (click_label == 0)
-        sid_targets[neg_mask, -1, :] = self.padding_token
-        mask_blk[neg_mask, -1, :] = 0
-
         total_sid_loss = 0
-        metrics = {
-            "click_auc": auc,
-            "click_log_prob": click_log_prob,
-        }
+        metrics = {}
 
         for h in range(self.num_hierarchies):
             h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
@@ -945,11 +921,122 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
             with torch.no_grad():
                 _, top10_indices = h_logits.topk(10, dim=-1)
-                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)  # (B, num_block)
+                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)
                 hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
                 metrics[f"hit@10_sid{h}"] = hit_rate
 
-        return model_output, total_sid_loss + loss_bce, metrics
+        # ===== Part 2: Click loss =====
+        # Get ground truth target (last block)
+        target_itemkey = hist_itemkey[:, -1]
+
+        # Remove last block for input
+        hist_sid = sid[:, :-self.num_hierarchies]
+        hist_mask = mask[:, :-self.num_hierarchies]
+        hist_itemkey_for_beam = hist_itemkey[:, :-1]
+
+        # ===== Beam search path (hard negatives) =====
+        _, loss_bce, click_metrics = self._compute_click_loss_with_beam_search(
+            hist_sid=hist_sid,
+            hist_mask=hist_mask,
+            hist_itemkey_for_beam=hist_itemkey_for_beam,
+            target_itemkey=target_itemkey,
+            batch_size=B,
+        )
+        metrics["beam_log_prob"] = click_metrics["beam_log_prob"]
+
+        metrics["click_auc"] = click_metrics["click_auc"]
+        metrics["click_log_prob"] = click_metrics["click_log_prob"]
+
+        return sid_output, total_sid_loss + loss_bce, metrics
+
+    def _compute_click_loss_with_beam_search(
+        self,
+        hist_sid: torch.Tensor,
+        hist_mask: torch.Tensor,
+        hist_itemkey_for_beam: torch.Tensor,
+        target_itemkey: torch.Tensor,
+        batch_size: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+        """
+        Compute click loss using beam search generated candidates (hard negatives).
+
+        Returns:
+            decoder_output: The decoder output
+            loss_bce: BCE loss for click prediction
+            metrics: Dictionary containing click metrics
+        """
+        B = batch_size
+
+        # Beam search to generate candidates
+        generated_ids, beam_log_prob, input_mask, past_key_values = self._beam_search_semantic_ids(
+            sid=hist_sid,
+            attention_mask=hist_mask,
+        )
+
+        # generated_ids: (B * top_k, H)
+        # beam_log_prob: (B, top_k)
+        generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
+
+        # Build segment2 (similar items) for each candidate
+        hist_itemkey_expanded = hist_itemkey_for_beam.repeat_interleave(self.top_k_for_generation, dim=0)
+        similar_itemkey = self.get_similar_itemkey(
+            target_itemkey=generated_itemkey,
+            hist_itemkey=hist_itemkey_expanded
+        )  # (B * top_k, top_k_for_score + 1)
+
+        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
+
+        # Continue forward with segment2 and segment3
+        input_embeds = torch.concat(
+            [
+                self.embed_token(token_id=generated_ids[:, -1:], hierarchy=self.num_hierarchies - 1),
+                self.embed_token(token_id=generated_itemkey.unsqueeze(-1)),
+                input_embeds_similar_item,
+            ],
+            dim=1,
+        )
+        segment_mask = torch.concat(
+            [
+                torch.ones(B * self.top_k_for_generation, 1, device=self.device),
+                torch.ones(B * self.top_k_for_generation, 1, device=self.device),
+                mask_similar_item,
+            ],
+            dim=-1,
+        )
+        full_input_mask = torch.concat([input_mask, segment_mask], dim=-1)
+
+        decoder_output = self.decoder(
+            sequence_embedding=input_embeds,
+            attention_mask=full_input_mask,
+            use_cache=False,
+            past_key_values=past_key_values,
+        )
+
+        # Click prediction for all candidates
+        click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)  # (B * top_k,)
+        click_logits = click_logits.view(B, self.top_k_for_generation)  # (B, top_k)
+
+        # Create labels - correct candidate gets 1, others get 0
+        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
+        generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
+        click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()  # (B, top_k)
+
+        # BCE loss for click prediction
+        loss_bce = self.click_loss_fn(click_logits, click_labels)
+
+        with torch.no_grad():
+            click_probs = torch.sigmoid(click_logits)
+            # AUC: treat as binary classification over all candidates
+            auc = binary_auroc(click_probs.view(-1), click_labels.view(-1).long())
+
+            # Mean click log prob for all candidates (same as eval)
+            click_log_prob = F.logsigmoid(click_logits).mean()
+
+        return decoder_output, loss_bce, {
+            "click_auc": auc,
+            "click_log_prob": click_log_prob,
+            "beam_log_prob": beam_log_prob.mean(),
+        }
 
     def build_sid_block_embeds(
         self,
