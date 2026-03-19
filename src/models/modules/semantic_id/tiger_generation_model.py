@@ -40,6 +40,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         top_k_for_score: int,
         padding_token: int,
         masking_token: int,
+        beam_search_interval: int = 50,
         **kwargs,
     ) -> None:
         """
@@ -53,6 +54,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         embedding_dim (int): the dimension of the embeddings.
         top_k_for_generation (int): the number of top-k candidates for generation.
         should_check_prefix (bool): whether to check if the prefix is valid.
+        beam_search_interval (int): run beam search training every N steps. Default 1 (every step).
+            Set higher values (e.g., 10) to improve throughput by mixing with fast training.
         """
         super().__init__(**kwargs)
         self.padding_token = padding_token
@@ -77,6 +80,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         self.top_k_for_generation = top_k_for_generation
         self.top_k_for_score = top_k_for_score
+        self.beam_search_interval = beam_search_interval
         self.batch_start_time = None
         self.prev_batch_end_time = None
         self.total_val_time = 0
@@ -85,6 +89,9 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         # Metrics accumulators for validation logging
         self.click_log_prob_accumulator = MeanMetric()
         self.beam_log_prob_accumulator = MeanMetric()
+
+        # Step counter for mixed training mode
+        self.register_buffer("training_step_counter", torch.tensor(0, dtype=torch.long))
 
     def _inject_sep_token_between_sids(
         self,
@@ -706,7 +713,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 batch_size=B,
             )
 
-        return generated_ids, beam_log_prob / self.num_hierarchies, input_mask, past_key_values
+        return generated_ids, beam_log_prob, input_mask, past_key_values
 
     def _rerank_with_click_prediction(
         self,
@@ -869,15 +876,20 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         model_input: SequentialModelInputData,
         mode: ModelMode,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Perform a forward pass of the model and calculate the loss if mode is INFER.
+
         Args:
             model_input: The input data to the model.
+
+        Returns:
+            Tuple of (output, loss, metrics) for training mode.
+            For INFER mode, returns the generation result dict.
         """
-        # ===== Splicing the sid and item_id together =====
+        # ===== Extract all fields from model_input =====
         sid = model_input.transformed_sequences["sequence_data"].long()
-        mask = model_input.mask
+        mask = model_input.mask.clone()  # Clone to avoid modifying original data
         hist_itemkey = model_input.transformed_sequences["hist_itemkey"].long()
 
         B, S = sid.shape
@@ -888,10 +900,63 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 hist_itemkey=hist_itemkey,
             )
             return result_dict
+        
+        similar_itemkey = model_input.transformed_sequences["topk_similar_in_time"].long()
+        click_label = model_input.transformed_sequences["click_label"].squeeze(-1).float()
+        # ===== Determine training mode =====
+        num_pos_samples = (click_label == 1).sum().item()
+        use_beam_search = (
+            (self.training_step_counter.item() % self.beam_search_interval) == 0
+            and num_pos_samples > 0  # Only use beam search if there are positive samples
+        )
 
-        # ===== Part 1: SID loss on full sequence =====
-        # This trains the decoder to learn sequence representation
-        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
+        if use_beam_search:
+            # ===== Beam search training (hard negatives) - only for positive samples =====
+            return self._model_step_with_beam_search(
+                sid=sid,
+                mask=mask,
+                hist_itemkey=hist_itemkey,
+                click_label=click_label,
+                B=B,
+                S=S,
+            )
+        else:
+            # ===== Fast training (teacher forcing) =====
+            return self._model_step_fast(
+                sid=sid,
+                mask=mask,
+                similar_itemkey=similar_itemkey,
+                click_label=click_label,
+                B=B,
+                S=S,
+            )
+
+    def _model_step_with_beam_search(
+        self,
+        sid: torch.Tensor,
+        mask: torch.Tensor,
+        hist_itemkey: torch.Tensor,
+        click_label: torch.Tensor,
+        B: int,
+        S: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+        """
+        Training step with beam search for hard negative sampling.
+        Only processes positive samples (click_label == 1).
+        """
+        # ===== Filter positive samples =====
+        pos_mask = (click_label == 1)
+        num_pos = pos_mask.sum().item()
+        assert num_pos > 0, "Beam search training requires at least one positive sample. This should be checked in model_step."
+
+        # Extract positive samples
+        sid_pos = sid[pos_mask]
+        mask_pos = mask[pos_mask]
+        hist_itemkey_pos = hist_itemkey[pos_mask]
+        B_pos = int(num_pos)
+
+        # ===== Part 1: SID loss on full sequence (positive samples only) =====
+        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid_pos, attention_mask=mask_pos)
 
         sid_output = self.decoder(
             sequence_embedding=input_embeds_sid,
@@ -901,15 +966,15 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         num_block = S // self.num_hierarchies
-        sid_hidden_blk = sid_output.view(B, num_block, -1, self.embedding_dim)
-        sid_targets = sid.view(B, num_block, self.num_hierarchies).clone()
-        mask_blk = mask.view(B, num_block, self.num_hierarchies).clone()
+        sid_hidden_blk = sid_output.view(B_pos, num_block, -1, self.embedding_dim)
+        sid_targets = sid_pos.view(B_pos, num_block, self.num_hierarchies).clone()
+        mask_blk = mask_pos.view(B_pos, num_block, self.num_hierarchies).clone()
 
         total_sid_loss = 0
         metrics = {}
 
         for h in range(self.num_hierarchies):
-            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
+            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B_pos, num_block, C)
             h_targets = sid_targets[:, :, h].long() - 1
             h_mask = mask_blk[:, :, h]
 
@@ -925,14 +990,13 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
                 metrics[f"hit@10_sid{h}"] = hit_rate
 
-        # ===== Part 2: Click loss =====
-        # Get ground truth target (last block)
-        target_itemkey = hist_itemkey[:, -1]
+        # ===== Part 2: Click loss (positive samples only) =====
+        target_itemkey = hist_itemkey_pos[:, -1]
 
         # Remove last block for input
-        hist_sid = sid[:, :-self.num_hierarchies]
-        hist_mask = mask[:, :-self.num_hierarchies]
-        hist_itemkey_for_beam = hist_itemkey[:, :-1]
+        hist_sid = sid_pos[:, :-self.num_hierarchies]
+        hist_mask = mask_pos[:, :-self.num_hierarchies]
+        hist_itemkey_for_beam = hist_itemkey_pos[:, :-1]
 
         # ===== Beam search path (hard negatives) =====
         _, loss_bce, click_metrics = self._compute_click_loss_with_beam_search(
@@ -940,14 +1004,89 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             hist_mask=hist_mask,
             hist_itemkey_for_beam=hist_itemkey_for_beam,
             target_itemkey=target_itemkey,
-            batch_size=B,
+            batch_size=B_pos,
         )
         metrics["beam_log_prob"] = click_metrics["beam_log_prob"]
-
         metrics["click_auc"] = click_metrics["click_auc"]
         metrics["click_log_prob"] = click_metrics["click_log_prob"]
 
+        # Increment step counter
+        self.training_step_counter.add_(1)
+
         return sid_output, total_sid_loss + loss_bce, metrics
+
+    def _model_step_fast(
+        self,
+        sid: torch.Tensor,
+        mask: torch.Tensor,
+        similar_itemkey: torch.Tensor,
+        click_label: torch.Tensor,
+        B: int,
+        S: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+        """
+        Fast training step using teacher forcing (no beam search).
+        """
+        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
+        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
+        input_embeds = torch.concat([input_embeds_sid, input_embeds_similar_item], dim=1)
+        input_mask = torch.concat([mask_sid, mask_similar_item], dim=1)
+
+        # ===== Forward =====
+        model_output = self.decoder(
+            sequence_embedding=input_embeds,
+            attention_mask=input_mask,
+            past_key_values=None,
+        )
+
+        click_logits = self.decoder.click_head(model_output[:, -1, :]).squeeze(-1)
+        click_probs = torch.sigmoid(click_logits)
+        loss_bce = self.click_loss_fn(click_logits, click_label)
+
+        with torch.no_grad():
+            auc = binary_auroc(click_probs, click_label.long())
+            click_log_prob = F.logsigmoid(click_logits).mean()
+
+        # ===== Calculate SID loss =====
+        L2 = similar_itemkey.size(1)
+        sid_hidden = model_output[:, :model_output.size(1) - L2, :]
+        num_block = S // self.num_hierarchies
+        sid_hidden_blk = sid_hidden.view(B, num_block, -1, self.embedding_dim)
+        sid_targets = sid.view(B, num_block, self.num_hierarchies).clone()
+        mask_blk = mask.view(B, num_block, self.num_hierarchies).clone()
+
+        # Mask negative samples (non-clicked items)
+        neg_mask = (click_label == 0)
+        sid_targets[neg_mask, -1, :] = self.padding_token
+        mask_blk[neg_mask, -1, :] = 0
+
+        total_sid_loss = 0
+        metrics = {
+            "click_auc": auc,
+            "click_log_prob": click_log_prob,
+        }
+
+        for h in range(self.num_hierarchies):
+            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
+            h_targets = sid_targets[:, :, h].long() - 1
+            h_mask = mask_blk[:, :, h]
+
+            h_loss = self.sid_loss_fn(
+                h_logits.reshape(-1, h_logits.size(-1)),
+                h_targets.reshape(-1)
+            )
+            total_sid_loss += h_loss
+
+            with torch.no_grad():
+                _, top10_indices = h_logits.topk(10, dim=-1)
+                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)  # (B, num_block)
+                hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
+                metrics[f"hit@10_sid{h}"] = hit_rate
+
+        # Increment step counter
+        self.training_step_counter.add_(1)
+
+        return model_output, total_sid_loss + loss_bce, metrics
 
     def _compute_click_loss_with_beam_search(
         self,
