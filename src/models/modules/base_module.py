@@ -36,7 +36,8 @@ class BaseModule(LightningModule):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.loss_function = loss_function
+        self.sid_loss_fn = loss_function["sid_loss"]
+        self.click_loss_fn = loss_function["click_loss"]
         self.evaluator = evaluator
         self.training_loop_function = training_loop_function
         # We use setters to set the prediction key and name.

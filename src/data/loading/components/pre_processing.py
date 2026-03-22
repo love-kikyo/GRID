@@ -146,7 +146,7 @@ def map_sparse_id_to_semantic_id(
                 semantic_ids = id_map[v]
 
             # flatten: (seq_len, D) → (seq_len * D,)
-            row[k] = semantic_ids.reshape(-1)
+            row[k] = semantic_ids.reshape(-1) + 1
     return row
 
 

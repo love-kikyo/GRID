@@ -42,6 +42,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         embedding_dim: int,
         should_check_prefix: bool,
         top_k_for_generation: int,
+        masking_token: int,
+        padding_token: int,
         **kwargs,
     ) -> None:
         """
@@ -62,6 +64,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.embedding_dim = embedding_dim
         self.num_hierarchies = num_hierarchies
         self.should_check_prefix = should_check_prefix
+        self.masking_token = masking_token
+        self.padding_token = padding_token
         if codebooks != None:
             self.codebooks = codebooks
             assert (
@@ -148,6 +152,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         table = torch.nn.Embedding(
             num_embeddings=num_embeddings,  # type: ignore
             embedding_dim=embedding_dim,  # type: ignore
+            padding_idx=self.padding_token,
         )
         return table
 
@@ -365,12 +370,12 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
                     generated_ids.reshape(-1, hierarchy)[replace_indices].reshape(
                         -1, self.top_k_for_generation, hierarchy
                     ),
-                    indices_topk.unsqueeze(-1),
+                    indices_topk.unsqueeze(-1) + 1,
                 ],
                 dim=-1,
             )
         else:
-            generated_ids = indices_topk.unsqueeze(-1)
+            generated_ids = indices_topk.unsqueeze(-1) + 1
 
         return generated_ids, proba_topk, past_key_values
 
@@ -597,7 +602,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         # generate embedding tables for each hierarchy
         # here we assume each hierarchy has the same amount of embeddings
         self.item_sid_embedding_table_encoder = self._spawn_embedding_tables(
-            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies,
+            num_embeddings=self.num_embeddings_per_hierarchy * self.num_hierarchies + 1,
             embedding_dim=self.embedding_dim,
         )
 
@@ -986,8 +991,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         hit_list = []
         for hierarchy in range(self.num_hierarchies):
             logits = self.decoder.decoder_mlp[hierarchy](model_output[:, hierarchy])
-            targets = fut_ids[:, hierarchy].long()  # (B,)
-            loss += self.loss_function(
+            targets = fut_ids[:, hierarchy].long() - 1  # (B,)
+            loss += self.sid_loss_fn(
                 input=logits,
                 target=targets,
             )

@@ -178,7 +178,7 @@ class NextKTokenMasking(LabelFunction):
         # for prediction, for each row, we replace the last next_k tokens with
         # 1 masking token at the label_start_indices, and next_k - 1 with padding tokens
         sequence[row_interleaved_indices, label_col_indices] = padding_token
-        sequence[row_orig_indices, label_start_indices] = masking_token
+        sequence[row_orig_indices, label_start_indices] = padding_token
 
         # for each row, we use the label_start_index (which was masked) as label prediction for all the next_k labels
         label_location = torch.stack(
