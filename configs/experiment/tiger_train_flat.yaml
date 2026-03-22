@@ -76,18 +76,17 @@ data_loading:
         user_id_field: user_id
         min_sequence_length: 1
         iterate_per_row: true
-        keep_user_id: true
+        keep_user_id: false
         features_to_consider: ${extract_fields_from_list_of_dicts:${data_loading.features_config.features},
           "name", False, "is_item_ids", "True"}
         num_placeholder_tokens_map: ${create_map_from_list_of_dicts:${data_loading.features_config.features},
           "name", "num_placeholder_tokens"}
         semantic_id_map:
-          sequence_data:
-            _target_: numpy.load
-            _args_:
-              - ${semantic_id_path}
-            mmap_mode: r
-            allow_pickle: false
+          _target_: numpy.load
+          _args_:
+            - ${semantic_id_path}
+          mmap_mode: r
+          allow_pickle: false
         data_iterator:
           _target_: src.data.loading.components.iterators.TFRecordIterator
         preprocessing_functions:
@@ -101,7 +100,8 @@ data_loading:
           _partial_: true
           features_to_apply:
           - sequence_data
-          num_hierarchies: ${model.num_hierarchies}
+        num_hierarchies: ${model.num_hierarchies}
+        num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       assign_all_files_per_worker: true
   val_dataloader_config:
     dataloader:
@@ -210,8 +210,9 @@ model:
       num_embeddings: ${model.huggingface_model.config.vocab_size}
       embedding_dim: ${model.huggingface_model.config.d_model}
   num_hierarchies: ${num_hierarchies}
+  num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
   num_user_bins: null
-  codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map.sequence_data}
+  codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   mlp_layers: 2
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
   masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
@@ -231,18 +232,6 @@ callbacks:
     train_time_interval: null
     every_n_epochs: null
     save_on_train_epoch_end: false
-  # early_stopping:
-  #   _target_: lightning.pytorch.callbacks.EarlyStopping
-  #   monitor: ${callbacks.model_checkpoint.monitor}
-  #   min_delta: 0.0
-  #   patience: 10
-  #   verbose: true
-  #   mode: ${callbacks.model_checkpoint.mode}
-  #   strict: true
-  #   check_finite: true
-  #   stopping_threshold: null
-  #   divergence_threshold: null
-  #   check_on_train_epoch_end: false
   model_summary:
     _target_: lightning.pytorch.callbacks.RichModelSummary
     max_depth: -1

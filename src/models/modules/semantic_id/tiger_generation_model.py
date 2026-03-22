@@ -537,12 +537,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         should_check_prefix (bool): whether to check if the prefix is valid.
         """
         if isinstance(codebooks, np.ndarray):
-            codebooks = torch.from_numpy(codebooks)
+            codebooks = torch.from_numpy(codebooks) + 1
         if num_hierarchies is None or num_embeddings_per_hierarchy is None:
-            num_hierarchies, num_embeddings_per_hierarchy = (
-                codebooks.shape[1],
-                codebooks.max().item() + 1,
-            )
+            raise ValueError("Both 'num_hierarchies' and 'num_embeddings_per_hierarchy' must be provided.")
         if embedding_dim is None:
             embedding_dim = (
                 kwargs["huggingface_model"]

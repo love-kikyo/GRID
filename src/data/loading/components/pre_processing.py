@@ -121,32 +121,17 @@ def map_sparse_id_to_semantic_id(
     row: Dict[str, torch.Tensor],
     dataset_config: SemanticIDDatasetConfig,
     features_to_apply: Optional[List[str]] = [],
-    num_hierarchies: Optional[int] = None,
     **kwargs,
 ) -> Dict[str, torch.Tensor]:
-    """
-    Given a row of data, maps the sparse ids to semantic ids
-    based on the id_map in the dataset config.
-    """
+    id_map = dataset_config.semantic_id_map       # (num_items, num_hierarchies)
+    # powers = dataset_config.powers                # (num_hierarchies,)
 
     for k, v in row.items():
         if is_feature_in_features_to_apply(features_to_apply, k):
-            id_map = dataset_config.semantic_id_map.get(k, None)
-            if isinstance(id_map, np.ndarray):
-                id_map = torch.from_numpy(id_map)
-                dataset_config.semantic_id_map[k] = id_map
-
             # id_map: (num_items, num_hierarchies)
-            if num_hierarchies is not None:
-                assert num_hierarchies <= id_map.size(1), (
-                    "num_hierarchies must be <= semantic id dimension"
-                )
-                semantic_ids = id_map[v, :num_hierarchies]
-            else:
-                semantic_ids = id_map[v]
-
+            semantic_ids = id_map[v]
             # flatten: (seq_len, D) → (seq_len * D,)
-            row[k] = semantic_ids.reshape(-1) + 1
+            row[k] = semantic_ids.reshape(-1)
     return row
 
 
