@@ -2,6 +2,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 
 from src.data.loading.components.interfaces import (
     LabelFunctionOutput,
@@ -108,7 +109,6 @@ def collate_with_sid_causal_duplicate(
 
     return collate_fn_train(
         batch=new_batch,
-        labels=labels,
         sequence_length=sequence_length,
         masking_token=masking_token,
         padding_token=padding_token,
@@ -192,81 +192,57 @@ def collate_fn_train(
     sequence_length: int = 200,
     masking_token: int = -1,
     padding_token: int = 0,
-    oov_token: Optional[
-        int
-    ] = None,  # If oov_token is passed, we remove it from the sequence
-    data_augmentation_functions: Optional[
-        List[Dict[str, callable]]
-    ] = None,  # type: ignore
+    oov_token: Optional[int] = None,
+    data_augmentation_functions: Optional[List[Dict[str, callable]]] = None,  # type: ignore
+    hist_itemkey_min_length: int = 100,
 ) -> SequentialModelInputData:
-    """The collate function passed to dataloader. It can do training masking and padding for the input sequence.
+    """Collate function for training dataloader with masking and padding.
 
-    Parameters
-    ----------
-    batch : Union[List[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]]
-        The batch of data to be collated. Can be a list of dictionaries, in the case we were
-        loading the data per row, or a dictionary of tensors, in the case we were loading the data per batch.
-    labels : List[Dict[str, callable]]
-        The list of functions to apply to generate the labels.
-    sequence_length : int
-        The length of the sequence to be padded or trimmed to.
-    masking_token : int
-        The token used for masking.
-    padding_token : int
-        The token used for padding.
-    oov_token : Optional[int]
-        If oov_token is passed, we remove it from the sequence.
-    data_augmentation_functions : Optional[List[Dict[str, callable]]]
-        The list of functions to apply to augment the data.
+    Args:
+        batch: Batch of data, either a list of dicts (per-row loading) or dict of tensors (per-batch loading).
+        sequence_length: Target length for sequence padding/trimming.
+        masking_token: Token value used for masking.
+        padding_token: Token value used for padding.
+        oov_token: If provided, removes this token from sequences.
+        data_augmentation_functions: List of augmentation functions to apply.
+        hist_itemkey_min_length: Minimum length for hist_itemkey field (default 100).
+            Sequences shorter than this will be padded, longer sequences are kept as-is.
+
+    Returns:
+        SequentialModelInputData with transformed sequences and mask.
     """
-
     if isinstance(batch, list):
-        batch = combine_list_of_tensor_dicts(batch)  # type: ignore
+        batch = combine_list_of_tensor_dicts(batch)
 
     if data_augmentation_functions:
-        for data_augmentation_function in data_augmentation_functions:
-            batch = data_augmentation_function(batch)
+        for aug_fn in data_augmentation_functions:
+            batch = aug_fn(batch)
 
     model_input_data = SequentialModelInputData()
 
     for field_name, field_sequence in batch.items():  # type: ignore
-        # TODO (lneves): Allow for non-sequential data to be passed as a feature.
-        current_sequence = field_sequence  # type: ignore
-        if oov_token:
-            # removing the oov token # TODO (Clark): in the future we can add special OOV handling
-            current_sequence = [
-                sequence[sequence != oov_token] for sequence in field_sequence
-            ]
+        current_sequence = field_sequence
 
-        if field_name == "topk_similar_in_time":
-            current_sequence = left_pad_sequence(
-                current_sequence, padding_value=masking_token
-            )
-            current_sequence = pad_or_trim_sequence(
-                padded_sequence=current_sequence,
-                sequence_length=10,
-                padding_token=masking_token,
-            )
+        # Remove OOV tokens if specified
+        if oov_token is not None:
+            current_sequence = [seq[seq != oov_token] for seq in current_sequence]
+
+        # Apply field-specific padding/trimming
+        if field_name == "similar_context":
+            current_sequence = left_pad_sequence(current_sequence, padding_value=masking_token)
+            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=10, padding_token=masking_token)
         elif field_name == "sequence_data":
-            current_sequence = left_pad_sequence(
-                current_sequence, padding_value=padding_token
-            )
-
-            current_sequence = pad_or_trim_sequence(
-                padded_sequence=current_sequence,
-                sequence_length=32,
-                padding_token=padding_token,
-            )
-
+            current_sequence = left_pad_sequence(current_sequence, padding_value=padding_token)
+            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=32, padding_token=padding_token)
             model_input_data.mask = (current_sequence != padding_token).long()
         elif field_name == "hist_itemkey":
-            current_sequence = left_pad_sequence(
-                current_sequence, padding_value=masking_token
-            )
+            current_sequence = left_pad_sequence(current_sequence, padding_value=masking_token)
+            # Only pad to minimum length if shorter, don't trim longer sequences
+            if current_sequence.size(1) < hist_itemkey_min_length:
+                pad_len = hist_itemkey_min_length - current_sequence.size(1)
+                current_sequence = F.pad(current_sequence, (pad_len, 0), value=masking_token)
         else:
-            current_sequence = left_pad_sequence(
-                current_sequence, padding_value=padding_token
-            )
+            current_sequence = left_pad_sequence(current_sequence, padding_value=padding_token)
 
         model_input_data.transformed_sequences[field_name] = current_sequence
 

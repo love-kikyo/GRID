@@ -253,6 +253,7 @@ class SemanticIDDatasetConfig(SequenceDatasetConfig):
 
         if isinstance(self.semantic_id_map, np.ndarray):
             self.semantic_id_map = torch.from_numpy(self.semantic_id_map).long()
+        self.semantic_id_map = self.semantic_id_map + 1
 
 @dataclass
 class TokenizerConfig:

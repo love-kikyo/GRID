@@ -1,6 +1,16 @@
 # @package _global_
 
 # =============================================================================
+# MTP Model Configuration
+# =============================================================================
+# This config demonstrates the MTP-based generative recommender.
+# Key differences from tiger_train_flat.yaml:
+#   1. Uses SemanticIDMTPRecommender instead of SemanticIDEncoderDecoder
+#   2. MTP head predicts complete SID blocks instead of per-token prediction
+#   3. Backbone processes sum-pooled block embeddings
+# =============================================================================
+
+# =============================================================================
 # Global Settings
 # =============================================================================
 data_dir: ???
@@ -120,12 +130,10 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: train
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, similar_context]
+            split: train
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       assign_all_files_per_worker: true
@@ -181,12 +189,10 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: eval
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, similar_context]
+            split: eval
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       pin_memory: false
@@ -242,12 +248,10 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: test
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
             features_to_apply: [sequence_data, similar_context]
+            split: test
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       pin_memory: false
@@ -262,7 +266,9 @@ data_loading:
 # Model Configuration
 # =============================================================================
 model:
-  _target_: src.models.modules.semantic_id.tiger_generation_model.SemanticIDEncoderDecoder
+  _target_: src.models.modules.semantic_id.mtp_generation_model.SemanticIDMTPRecommender
+
+  # Backbone (LLaMA decoder)
   huggingface_model: null
   feature_to_model_input_map:
     sequence_data: input_ids
@@ -274,22 +280,27 @@ model:
   evaluator: ${eval.evaluators}
   weight_tying: true
   compile: false
+
+  # Backbone config
   decoder:
     _target_: transformers.models.llama.modeling_llama.LlamaModel
     config:
       _target_: transformers.models.llama.configuration_llama.LlamaConfig
-      vocab_size: 256
+      vocab_size: 256  # Not used (we use embeddings directly)
       hidden_size: 1024
       intermediate_size: 4096
-      num_hidden_layers: 2
+      num_hidden_layers: 2  # Can be larger since backbone sees fewer tokens
       num_attention_heads: 16
       rms_norm_eps: 1e-6
+
+  # SID configuration
   num_hierarchies: ${num_hierarchies}
   num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
-  num_user_bins: null
-  codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
   masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
+
+  # Codebooks and indices
+  codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   sorted_item_keys:
     _target_: numpy.load
     _args_:
@@ -300,6 +311,18 @@ model:
       - ${sorted_row_indices_path}
   scl_embedding_path: ${scl_embedding_path}
 
+  # Generation config
+  top_k_for_generation: 20
+  top_k_for_score: 10
+  beam_search_interval: 100  # Run beam search training every N steps
+
+  # MTP Head config
+  mtp_hidden_size: 256        # Internal dimension of MTP Transformer
+  num_mtp_layers: 2           # Number of layers in MTP Transformer
+  num_mtp_attention_heads: 4  # Attention heads in MTP Transformer
+  mtp_intermediate_size: 512  # FFN intermediate size in MTP
+  mtp_dropout: 0.1            # Dropout in MTP
+
 # =============================================================================
 # Loss Configuration
 # =============================================================================
@@ -308,6 +331,7 @@ loss:
     sid_loss:
       _target_: torch.nn.CrossEntropyLoss
       ignore_index: ${sub:${data_loading.train_dataloader_config.dataloader.padding_token},1}
+      reduction: none
     click_loss:
       _target_: torch.nn.BCEWithLogitsLoss
 
