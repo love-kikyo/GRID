@@ -10,9 +10,14 @@ Architecture:
     - Internal: Small Transformer decoder with causal attention
     - Output: Autoregressive prediction of [sid0, sid1, sid2, sid3]
     - itemkey is computed deterministically from predicted sids
+
+Optimizations:
+    - Merged projection layers for batched operations
+    - torch.compile support for additional speedup
 """
 
 import math
+import logging
 from typing import Optional, Tuple
 
 import torch
@@ -167,6 +172,10 @@ class MTPHead(nn.Module):
         - Start with backbone_proj
         - Beam search through the MTP Transformer
         - Output top-k complete blocks
+
+    Optimization:
+        - Merged sid_projs into a single linear layer for batched projection
+        - Merged output_heads into a single linear layer for batched logits
     """
 
     def __init__(
@@ -189,23 +198,18 @@ class MTPHead(nn.Module):
         # Project backbone hidden to MTP hidden dimension (only for backbone hidden)
         self.backbone_proj = nn.Linear(config.hidden_size, config.mtp_hidden_size, bias=False)
 
-        # Project SID embeddings to MTP hidden dimension (separate for each hierarchy)
-        # Each hierarchy has its own projection for better expressiveness
-        self.sid_projs = nn.ModuleList([
-            nn.Linear(config.hidden_size, config.mtp_hidden_size, bias=False)
-            for _ in range(config.num_hierarchies)
-        ])
+        # OPTIMIZATION: Merged SID projection into single layer
+        # Projects all hierarchies at once: (B, H, hidden_size) -> (B, H, mtp_hidden_size)
+        self.sid_proj_merged = nn.Linear(config.hidden_size, config.mtp_hidden_size, bias=False)
 
         # MTP Transformer layers
         self.layers = nn.ModuleList([
             MTPTransformerBlock(config) for _ in range(config.num_mtp_layers)
         ])
 
-        # Output projection for each hierarchy (independent, no weight sharing)
-        self.output_heads = nn.ModuleList([
-            nn.Linear(config.mtp_hidden_size, config.vocab_size, bias=False)
-            for _ in range(config.num_hierarchies)
-        ])
+        # OPTIMIZATION: Merged output heads into single layer
+        # Projects to vocab logits for all hierarchies: (B, H, mtp_hidden_size) -> (B, H, vocab_size)
+        self.output_head_merged = nn.Linear(config.mtp_hidden_size, config.vocab_size, bias=False)
 
         # Final layer norm
         self.final_norm = nn.RMSNorm(config.mtp_hidden_size)
@@ -213,11 +217,81 @@ class MTPHead(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(config.dropout)
 
+        # torch.compile optimization
+        self._compiled_forward = None
+        self._is_compiled = False
+
+    def compile(self, mode: str = "reduce-overhead", fullgraph: bool = False):
+        """
+        Compile the MTP head for faster inference/training.
+
+        Args:
+            mode: Compilation mode - "default", "reduce-overhead", or "max-autotune"
+            fullgraph: Whether to require the full graph to be compiled
+        """
+        if not self._is_compiled:
+            logging.info(f"Compiling MTPHead with mode={mode}, fullgraph={fullgraph}")
+            self._compiled_forward = torch.compile(
+                self._forward_impl,
+                mode=mode,
+                fullgraph=fullgraph,
+            )
+            self._is_compiled = True
+            logging.info("MTPHead compilation complete")
+        return self
+
+    def _forward_impl(
+        self,
+        backbone_proj: torch.Tensor,
+        input_embeds: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Core forward implementation for torch.compile.
+
+        Args:
+            backbone_proj: (B, mtp_hidden) - projected backbone hidden
+            input_embeds: (B, H, mtp_hidden) - projected SID embeddings
+
+        Returns:
+            logits: (B, H, vocab_size)
+        """
+        # Prepend backbone hidden as context
+        backbone_context = backbone_proj.unsqueeze(1)  # (B, 1, mtp_hidden)
+        sequence = torch.cat([backbone_context, input_embeds], dim=1)  # (B, H+1, mtp_hidden)
+
+        # Forward through MTP Transformer
+        hidden_states = sequence
+        for layer in self.layers:
+            hidden_states, _ = layer(hidden_states, use_cache=False)
+
+        hidden_states = self.final_norm(hidden_states)  # (B, H+1, mtp_hidden)
+
+        # Get logits for prediction positions
+        H = input_embeds.size(1)
+        pred_hidden = hidden_states[:, :H, :]  # (B, H, mtp_hidden)
+        logits = self.output_head_merged(pred_hidden)  # (B, H, vocab_size)
+
+        return logits
+
     def embed_sid_token(self, token_id: torch.Tensor, hierarchy: int) -> torch.Tensor:
         """Embed a single SID token with hierarchy offset."""
         # Apply hierarchy offset (assuming shared embedding table)
         offset = hierarchy * self.vocab_size
         return self.sid_embedding_table(token_id + offset)
+
+    def embed_sid_tokens_batch(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Embed multiple SID tokens with hierarchy offsets (batched version).
+
+        Args:
+            token_ids: (B, H) - token IDs for each hierarchy
+
+        Returns:
+            embeddings: (B, H, D_backbone)
+        """
+        H = self.num_hierarchies
+        offsets = torch.arange(H, device=token_ids.device) * self.vocab_size  # (H,)
+        offset_tokens = token_ids + offsets.unsqueeze(0)  # (B, H)
+        return self.sid_embedding_table(offset_tokens)  # (B, H, D_backbone)
 
     def forward(
         self,
@@ -251,43 +325,18 @@ class MTPHead(nn.Module):
             # Position i predicts sid_i (backbone_proj predicts sid0, sid0 predicts sid1, ...)
 
             # Embed all target SIDs as input (vectorized)
-            # Apply hierarchy offset for shared embedding table
-            offsets = torch.arange(H, device=target_sids.device) * self.vocab_size  # (H,)
-            offset_tokens = target_sids + offsets.unsqueeze(0)  # (B, H)
-            sid_embeds = self.sid_embedding_table(offset_tokens)  # (B, H, D_backbone)
+            sid_embeds = self.embed_sid_tokens_batch(target_sids)  # (B, H, D_backbone)
 
-            # Project each hierarchy independently
-            input_embeds_list = []
-            for h in range(H):
-                sid_embed_proj = self.sid_projs[h](sid_embeds[:, h, :])  # (B, mtp_hidden)
-                input_embeds_list.append(sid_embed_proj.unsqueeze(1))
-            input_embeds = torch.cat(input_embeds_list, dim=1)  # (B, H, mtp_hidden)
+            # OPTIMIZATION: Single batched projection instead of loop
+            input_embeds = self.sid_proj_merged(sid_embeds)  # (B, H, mtp_hidden)
 
-            # Prepend backbone hidden as context (conditioning)
-            # Sequence: [backbone_context, sid0, sid1, sid2, sid3]
-            backbone_context = backbone_proj.unsqueeze(1)  # (B, 1, mtp_hidden)
-            sequence = torch.cat([backbone_context, input_embeds], dim=1)  # (B, H+1, mtp_hidden)
-
-            # Forward through MTP Transformer
-            hidden_states = sequence
-            for layer in self.layers:
-                hidden_states, _ = layer(hidden_states, use_cache=False)
-
-            hidden_states = self.final_norm(hidden_states)  # (B, H+1, mtp_hidden)
-
-            # Get logits for each hierarchy position
-            # Position i predicts hierarchy i
-            # hidden_states[0] (from backbone_proj) -> sid0
-            # hidden_states[1] (from sid0) -> sid1
-            # ...
-            # hidden_states[3] (from sid2) -> sid3
-            logits_list = []
-            for h in range(H):
-                pos_hidden = hidden_states[:, h, :]  # (B, mtp_hidden)
-                h_logits = self.output_heads[h](pos_hidden)  # (B, vocab_size)
-                logits_list.append(h_logits.unsqueeze(1))
-
-            logits = torch.cat(logits_list, dim=1)  # (B, H, vocab_size)
+            # Use compiled forward if available
+            if self._is_compiled and self._compiled_forward is not None:
+                # Mark step begin for CUDA graphs compatibility (required for reduce-overhead mode)
+                torch.compiler.cudagraph_mark_step_begin()
+                logits = self._compiled_forward(backbone_proj, input_embeds)
+            else:
+                logits = self._forward_impl(backbone_proj, input_embeds)
 
             # Calculate loss and metrics
             loss, metrics = self._compute_loss(logits, target_sids, attention_mask)
@@ -389,10 +438,6 @@ class MTPHead(nn.Module):
         # Project backbone hidden
         backbone_proj = self.backbone_proj(backbone_hidden)  # (B, mtp_hidden)
 
-        # Initialize beam search
-        # beam_hidden: (B * beam_size, seq_len, mtp_hidden)
-        # beam_log_prob: (B, beam_size)
-
         # Start with backbone context (no BOS)
         backbone_context = backbone_proj.unsqueeze(1)  # (B, 1, mtp_hidden)
 
@@ -421,17 +466,14 @@ class MTPHead(nn.Module):
 
             past_key_values = new_past_key_values
 
-            # Get logits for last position
+            # Get logits for last position using merged output head
             last_hidden = self.final_norm(hidden_states[:, -1, :])  # (B * beam_size, mtp_hidden)
-            logits = self.output_heads[h](last_hidden)  # (B * beam_size, vocab_size)
+            logits = self.output_head_merged(last_hidden)  # (B * beam_size, vocab_size)
 
             log_probs = F.log_softmax(logits, dim=-1)  # (B * beam_size, vocab_size)
 
             if h == 0:
                 # First hierarchy: select top beam_size tokens
-                # At this point, we have B sequences (not B * beam_size yet)
-                # log_probs shape: (B * beam_size, vocab_size) but initially beam_size=1 effectively
-                # We only need the first B rows (since all expanded sequences are identical at start)
                 log_probs_first = log_probs[:B]  # (B, vocab_size)
                 topk_result = log_probs_first.topk(beam_size, dim=-1)  # (B, beam_size)
                 beam_log_probs = topk_result.values  # (B, beam_size)
@@ -442,12 +484,11 @@ class MTPHead(nn.Module):
                 generated_tokens.append(new_tokens)
 
                 # Update current_seq with new token embeddings for next iteration
-                # For KV cache: after first iteration, we only need to pass the new token
                 # Convert 0-based to 1-based for embedding lookup
                 new_tokens_1based = topk_indices.view(B * beam_size) + 1  # (B * beam_size,)
                 new_token_embed = self.embed_sid_token(new_tokens_1based, h)  # (B * beam_size, D_backbone)
-                new_token_embed_proj = self.sid_projs[h](new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
-                # For next iteration, only pass the new token (KV cache will handle history)
+                # Use merged projection
+                new_token_embed_proj = self.sid_proj_merged(new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
                 current_seq = new_token_embed_proj  # (B * beam_size, 1, mtp_hidden)
 
             else:
@@ -467,23 +508,18 @@ class MTPHead(nn.Module):
                 token_indices = topk_indices % self.vocab_size  # (B, beam_size)
 
                 # Reorder past key values according to beam selection
-                # beam_indices: (B, beam_size) -> flatten to (B * beam_size,)
                 beam_indices_flat = beam_indices.view(B * beam_size)  # (B * beam_size,)
+
+                # OPTIMIZATION: Compute gather indices once for all layers
+                batch_indices = torch.arange(B, device=device).unsqueeze(1).expand(-1, beam_size).reshape(-1)  # (B * beam_size,)
+                gather_indices = batch_indices * beam_size + beam_indices_flat  # (B * beam_size,)
 
                 # Reorder KV cache for each layer
                 for i in range(len(past_key_values)):
                     k, v = past_key_values[i]
-                    # k, v shape: (B * beam_size, num_heads, seq_len, head_dim)
-                    # We need to select the correct beam for each batch
-                    # Gather from original beams
-                    batch_indices = torch.arange(B, device=device).unsqueeze(1).expand(-1, beam_size).reshape(-1)  # (B * beam_size,)
-                    gather_indices = batch_indices * beam_size + beam_indices_flat  # (B * beam_size,)
-                    k = k[gather_indices]
-                    v = v[gather_indices]
-                    past_key_values[i] = (k, v)
+                    past_key_values[i] = (k[gather_indices], v[gather_indices])
 
                 # Reorder current_seq
-                # current_seq shape: (B * beam_size, seq_len, mtp_hidden)
                 current_seq = current_seq[gather_indices]
 
                 # Add new tokens
@@ -494,14 +530,14 @@ class MTPHead(nn.Module):
                 if h < H - 1:
                     new_tokens_1based = token_indices.view(B * beam_size) + 1  # (B * beam_size,)
                     new_token_embed = self.embed_sid_token(new_tokens_1based, h)  # (B * beam_size, D_backbone)
-                    new_token_embed_proj = self.sid_projs[h](new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
+                    # Use merged projection
+                    new_token_embed_proj = self.sid_proj_merged(new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
                     current_seq = new_token_embed_proj  # (B * beam_size, 1, mtp_hidden)
 
         # Stack generated tokens (0-based from model predictions)
         generated_sids = torch.cat(generated_tokens, dim=-1).view(B, beam_size, H)
 
         # Convert 0-based to 1-based to match data format
-        # (0 is padding, 1 to vocab_size are valid tokens)
         generated_sids = generated_sids + 1
 
         return generated_sids, beam_log_probs

@@ -64,6 +64,10 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         num_mtp_attention_heads: int = 4,
         mtp_intermediate_size: int = 512,
         mtp_dropout: float = 0.1,
+        # torch.compile config
+        compile_mtp: bool = False,
+        compile_mode: str = "reduce-overhead",
+        compile_fullgraph: bool = False,
         # BaseModule required params
         optimizer: torch.optim.Optimizer = None,
         scheduler: torch.optim.lr_scheduler = None,
@@ -110,6 +114,11 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
             loss_fn=self.sid_loss_fn,  # Use loss function from BaseModule
         )
 
+        # Store compile settings for lazy compilation in setup
+        self.compile_mtp = compile_mtp
+        self.compile_mode = compile_mode
+        self.compile_fullgraph = compile_fullgraph
+
         # ===== Click Head =====
         self.click_head = nn.Linear(embedding_dim, 1, bias=False)
 
@@ -126,6 +135,12 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
     def setup(self, stage=None):
         """Load SCL embedding and setup decoder if needed."""
         super().setup(stage)
+
+        # Compile MTP head after setup (on GPU)
+        if self.compile_mtp and self.mtp_head is not None:
+            import logging
+            logging.info(f"Compiling MTP head with mode={self.compile_mode}")
+            self.mtp_head.compile(mode=self.compile_mode, fullgraph=self.compile_fullgraph)
 
     def training_step(
         self,

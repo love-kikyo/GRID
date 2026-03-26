@@ -323,6 +323,11 @@ model:
   mtp_intermediate_size: 512  # FFN intermediate size in MTP
   mtp_dropout: 0.1            # Dropout in MTP
 
+  # torch.compile optimization for MTP head
+  compile_mtp: true           # Enable torch.compile for MTP head
+  compile_mode: "default"     # Compilation mode: "default", "reduce-overhead", "max-autotune"
+  compile_fullgraph: false    # Whether to require full graph compilation
+
 # =============================================================================
 # Loss Configuration
 # =============================================================================
