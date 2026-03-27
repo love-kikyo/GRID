@@ -233,7 +233,7 @@ def collate_fn_train(
             current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=10, padding_token=masking_token)
         elif field_name == "sequence_data":
             current_sequence = left_pad_sequence(current_sequence, padding_value=padding_token)
-            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=32, padding_token=padding_token)
+            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=128, padding_token=padding_token)
             model_input_data.mask = (current_sequence != padding_token).long()
         elif field_name == "hist_itemkey":
             current_sequence = left_pad_sequence(current_sequence, padding_value=masking_token)

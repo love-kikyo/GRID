@@ -68,6 +68,8 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         compile_mtp: bool = False,
         compile_mode: str = "reduce-overhead",
         compile_fullgraph: bool = False,
+        # Two-stage training config
+        sid_train_steps: int = 100000,
         # BaseModule required params
         optimizer: torch.optim.Optimizer = None,
         scheduler: torch.optim.lr_scheduler = None,
@@ -119,6 +121,10 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         self.compile_mode = compile_mode
         self.compile_fullgraph = compile_fullgraph
 
+        # ===== Two-stage Training Config =====
+        self.sid_train_steps = sid_train_steps
+        self._is_sid_frozen = False  # Track if SID params are frozen
+
         # ===== Click Head =====
         self.click_head = nn.Linear(embedding_dim, 1, bias=False)
 
@@ -132,6 +138,12 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         # The model uses inputs_embeds instead of input_ids, so embed_tokens is never used
         self.decoder.embed_tokens = nn.Identity()
 
+        # ===== Default: Freeze click_head for Stage 1 (SID training) =====
+        # This must be done in __init__ before DDP wrapper is created
+        # When switching to Stage 2, _freeze_sid_params will unfreeze click_head
+        for param in self.click_head.parameters():
+            param.requires_grad = False
+
     def setup(self, stage=None):
         """Load SCL embedding and setup decoder if needed."""
         super().setup(stage)
@@ -141,6 +153,56 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
             import logging
             logging.info(f"Compiling MTP head with mode={self.compile_mode}")
             self.mtp_head.compile(mode=self.compile_mode, fullgraph=self.compile_fullgraph)
+
+    def _freeze_sid_params(self):
+        """Freeze SID-related parameters for click-only training (Stage 2)."""
+        if self._is_sid_frozen:
+            return
+
+        import logging
+        logging.info("Freezing SID-related parameters for Stage 2 (click training)")
+
+        # Freeze backbone (decoder)
+        for param in self.decoder.parameters():
+            param.requires_grad = False
+
+        # Freeze MTP head
+        for param in self.mtp_head.parameters():
+            param.requires_grad = False
+
+        # Freeze SID embedding table
+        for param in self.sid_embedding_table.parameters():
+            param.requires_grad = False
+
+        # Freeze item embedding table
+        for param in self.item_embedding_table.parameters():
+            param.requires_grad = False
+
+        # Freeze segment embedding table
+        for param in self.segment_embedding_table.parameters():
+            param.requires_grad = False
+
+        # Unfreeze click_head for Stage 2 training
+        for param in self.click_head.parameters():
+            param.requires_grad = True
+
+        self._is_sid_frozen = True
+
+    def on_train_start(self) -> None:
+        """Log training stage info."""
+        super().on_train_start()
+
+        global_step = self.global_step
+        if global_step >= self.sid_train_steps:
+            # Should already be in Stage 2 if resuming from checkpoint
+            if not self._is_sid_frozen:
+                self._freeze_sid_params()
+            import logging
+            logging.info(f"Starting in Stage 2 (click training) at step {global_step}")
+        else:
+            # Stage 1: click_head already frozen in __init__
+            import logging
+            logging.info(f"Starting in Stage 1 (SID training) at step {global_step}")
 
     def training_step(
         self,
@@ -267,6 +329,10 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         # Sum pool all embeddings
         block_embed = sid_embed_sum + item_embed  # (B, D)
 
+        # Add segment 0 embedding (same as build_sequence_embeds)
+        segment_emb = self.segment_embedding_table.weight[0]  # (D,)
+        block_embed = block_embed + segment_emb.unsqueeze(0)
+
         # Apply mask if provided
         if attention_mask is not None:
             block_embed = block_embed * attention_mask.unsqueeze(-1)
@@ -292,8 +358,6 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         """
         B, S = sid_sequence.shape
         H = self.num_hierarchies
-        D = self.embedding_dim
-        device = sid_sequence.device
         num_blocks = S // H
 
         # Reshape to blocks: (B, num_blocks, H)
@@ -320,7 +384,7 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         sequence_embeds = sid_embed_sum + item_embeds  # (B, num_blocks, D)
 
         # Compute block masks: (B, num_blocks, H) -> (B, num_blocks)
-        sequence_mask = mask_blocks.any(dim=-1).float()
+        sequence_mask = mask_blocks.all(dim=-1).float()
 
         # Apply mask: zero out invalid blocks
         sequence_embeds = sequence_embeds * sequence_mask.unsqueeze(-1)
@@ -400,6 +464,10 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         """
         Perform a forward pass and calculate loss.
 
+        Supports two-stage training:
+        - Stage 1 (step < sid_train_steps): Train SID only (backbone + MTP head)
+        - Stage 2 (step >= sid_train_steps): Freeze SID, train click head only
+
         Args:
             model_input: Input data
             mode: TRAIN, EVAL, or INFER
@@ -417,114 +485,81 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         B, S = sid.shape
 
         # Training mode
-        click_label = model_input.transformed_sequences.get("click_label")
-        similar_itemkey = model_input.transformed_sequences.get("similar_context")
         hist_itemkey = model_input.transformed_sequences.get("hist_itemkey")
-        click_label = click_label.squeeze(-1).float()
 
-        num_pos_samples = click_label.sum().item()
-        use_beam_search = (
-            (self.training_step_counter.item() % self.beam_search_interval) == 0
-            and num_pos_samples > 0
-            and mode != ModelMode.EVAL
-        )
+        is_stage2 = self.global_step >= self.sid_train_steps
 
-        if use_beam_search:
-            return self._train_with_beam_search(sid, mask, click_label, hist_itemkey, B, S)
+        # Switch to Stage 2: freeze SID params
+        if is_stage2 and not self._is_sid_frozen:
+            self._freeze_sid_params()
+
+        if is_stage2:
+            # ===== Stage 2: Click training only =====
+            # SID forward pass with no_grad (inference mode for candidate generation)
+            with torch.no_grad():
+                sid_output = self._compute_sid_loss(sid, mask, B, S)
+                backbone_hidden = sid_output["backbone_hidden"]
+
+            # Click loss (only trainable part in Stage 2)
+            click_output = self._compute_click_loss(
+                sid=sid,
+                hist_itemkey=hist_itemkey,
+                backbone_hidden=backbone_hidden,
+                past_key_values=sid_output["past_key_values"],
+                sequence_mask=sid_output["sequence_mask"],
+                B=B,
+            )
+            total_loss = click_output["click_loss"]
+            metrics = click_output["metrics"]
+            # metrics["mtp_loss"] = torch.tensor(0.0, device=self.device)
+            # metrics["train_stage"] = 2
+
         else:
-            return self._train_fast(sid, mask, click_label, similar_itemkey, B, S)
-
-    def _train_fast(
-        self,
-        sid: torch.Tensor,
-        mask: torch.Tensor,
-        click_label: torch.Tensor,
-        similar_itemkey: torch.Tensor,
-        B: int,
-        S: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
-        """Fast training with teacher forcing."""
-        H = self.num_hierarchies
-        num_blocks = S // H
-
-        # Build sequence embeddings for backbone
-        sequence_embeds, sequence_mask = self.build_sequence_embeds(sid, mask)
-        similar_context_embeds, similar_context_mask = self.build_similar_item_embeds(similar_itemkey)
-        input_embeds = torch.cat([sequence_embeds, similar_context_embeds], dim=1)
-        input_mask = torch.cat([sequence_mask, similar_context_mask], dim=1)
-
-        # Forward through backbone
-        backbone_hidden, _ = self.forward_backbone(input_embeds, input_mask)
-
-        metrics = {}
-        # ===== Click Loss =====
-        last_hidden = backbone_hidden[:, -1, :]  # (B, D)
-        click_logits = self.click_head(last_hidden).squeeze(-1)  # (B,)
-
-        click_loss = self.click_loss_fn(click_logits, click_label)
-        click_probs = torch.sigmoid(click_logits)
-        with torch.no_grad():
-            metrics["click_auc"] = binary_auroc(click_probs, click_label.long())
-            metrics["click_log_prob"] = F.logsigmoid(click_logits).mean()
-
-        # ===== MTP Loss (vectorized across all blocks) =====
-        # Extract hidden states for all blocks except the last one
-        mtp_hidden = backbone_hidden[:, :num_blocks]
-
-        # Vectorized: process all blocks at once instead of loop
-        num_valid_blocks = num_blocks - 1  # Last block has no target
-        assert num_valid_blocks > 0, "num_valid_blocks should > 0"
-        # hidden states: (B, num_valid_blocks, D) -> (B * num_valid_blocks, D)
-        all_hidden = mtp_hidden[:, :num_valid_blocks].reshape(B * num_valid_blocks, -1)
-
-        # target sids: (B, num_valid_blocks * H) -> (B * num_valid_blocks, H)
-        # sid[:, H:] starts from block 1, each block has H tokens
-        all_target_sids = sid[:, H:(num_blocks * H)].reshape(B * num_valid_blocks, H)
-
-        # valid mask: (B, num_valid_blocks * H) -> (B, num_valid_blocks, H) -> (B, num_valid_blocks) -> (B * num_valid_blocks,)
-        all_valid_mask = mask[:, H:(num_blocks * H)].view(B, num_valid_blocks, H).all(dim=-1).float().view(-1)
-
-        # Single batched MTP forward pass
-        _, total_mtp_loss, mtp_metrics = self.mtp_head(
-            backbone_hidden=all_hidden,
-            target_sids=all_target_sids,
-            attention_mask=all_valid_mask,
-        )
-        metrics.update(mtp_metrics)
-
-        total_loss = total_mtp_loss + click_loss
-        metrics["mtp_loss"] = total_mtp_loss
-        self.training_step_counter.add_(1)
+            # ===== Stage 1: SID training only =====
+            sid_output = self._compute_sid_loss(sid, mask, B, S)
+            total_loss = sid_output["mtp_loss"]
+            backbone_hidden = sid_output["backbone_hidden"]
+            metrics = sid_output["metrics"]
+            metrics["mtp_loss"] = total_loss
+            # metrics["train_stage"] = 1
 
         return backbone_hidden, total_loss, metrics
 
-    def _train_with_beam_search(
+    def _compute_sid_loss(
         self,
         sid: torch.Tensor,
         mask: torch.Tensor,
-        click_label: torch.Tensor,
-        hist_itemkey: torch.Tensor,
         B: int,
         S: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
-        """Training with beam search for hard negatives."""
+    ) -> dict:
+        """
+        Compute SID (Semantic ID) loss using MTP head.
+
+        This trains the backbone and MTP head to predict the next SID block.
+
+        Args:
+            sid: (B, S) - SID sequence where S = num_blocks * num_hierarchies
+            mask: (B, S) - attention mask
+            B: batch size
+            S: sequence length
+
+        Returns:
+            Dictionary containing:
+                - mtp_loss: MTP loss tensor
+                - backbone_hidden: Hidden states from backbone
+                - past_key_values: KV cache for continuation
+                - sequence_mask: Sequence mask for continuation
+                - metrics: Dictionary of metrics
+        """
         H = self.num_hierarchies
 
-        # Filter positive samples
-        pos_mask = (click_label == 1)
-
-        sid_pos = sid[pos_mask]
-        mask_pos = mask[pos_mask]
-        hist_itemkey_pos = hist_itemkey[pos_mask]
-        B_pos = pos_mask.sum().item()
-
-        # Build input for backbone (exclude last block)
-        input_sid = sid_pos[:, :-H]
-        input_mask = mask_pos[:, :-H]
+        # Build input for backbone (exclude last block for prediction target)
+        input_sid = sid[:, :-H]
+        input_mask = mask[:, :-H]
 
         sequence_embeds, sequence_mask = self.build_sequence_embeds(input_sid, input_mask)
         seq_len = sequence_embeds.size(1)
-        position_ids = torch.arange(seq_len, device=self.device).unsqueeze(0).expand(B_pos, -1)
+        position_ids = torch.arange(seq_len, device=self.device).unsqueeze(0).expand(B, -1)
         backbone_hidden, past_key_values = self.forward_backbone(
             sequence_embeds, sequence_mask, use_cache=True, position_ids=position_ids
         )
@@ -533,18 +568,18 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         num_input_blocks = backbone_hidden.size(1)
         metrics = {}
 
-        # Vectorized: process all blocks at once instead of loop
-        num_valid_blocks = num_input_blocks - 1 # Last input block has no target
+        # Vectorized: process all blocks at once
+        num_valid_blocks = num_input_blocks - 1  # Last input block has no target
         assert num_valid_blocks > 0, "num_valid_blocks should > 0"
-        # hidden states: (B_pos, num_valid_blocks, D) -> (B_pos * num_valid_blocks, D)
-        all_hidden = backbone_hidden[:, :num_valid_blocks].reshape(B_pos * num_valid_blocks, -1)
 
-        # target sids: (B_pos, num_valid_blocks * H) -> (B_pos * num_valid_blocks, H)
-        # Targets start from block 1 (index H) to block num_input_blocks-1
-        all_target_sids = sid_pos[:, H:(num_input_blocks * H)].reshape(B_pos * num_valid_blocks, H)
+        # hidden states: (B, num_valid_blocks, D) -> (B * num_valid_blocks, D)
+        all_hidden = backbone_hidden[:, :num_valid_blocks].reshape(B * num_valid_blocks, -1)
 
-        # valid mask: (B_pos, num_valid_blocks * H) -> (B_pos, num_valid_blocks, H) -> (B_pos, num_valid_blocks) -> (B_pos * num_valid_blocks,)
-        all_valid_mask = mask_pos[:, H:(num_input_blocks * H)].view(B_pos, num_valid_blocks, H).any(dim=-1).float().view(-1)
+        # target sids: (B, num_valid_blocks * H) -> (B * num_valid_blocks, H)
+        all_target_sids = sid[:, H:(num_input_blocks * H)].reshape(B * num_valid_blocks, H)
+
+        # valid mask
+        all_valid_mask = mask[:, H:(num_input_blocks * H)].view(B, num_valid_blocks, H).all(dim=-1).float().view(-1)
 
         # Single batched MTP forward pass
         _, total_mtp_loss, mtp_metrics = self.mtp_head(
@@ -554,42 +589,88 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
         )
         metrics.update(mtp_metrics)
 
-        # Beam search for last block prediction
-        last_hidden = backbone_hidden[:, -1, :]  # (B_pos, D)
+        return {
+            "mtp_loss": total_mtp_loss,
+            "backbone_hidden": backbone_hidden,
+            "past_key_values": past_key_values,
+            "sequence_mask": sequence_mask,
+            "metrics": metrics,
+        }
+
+    def _compute_click_loss(
+        self,
+        sid: torch.Tensor,
+        hist_itemkey: torch.Tensor,
+        backbone_hidden: torch.Tensor,
+        past_key_values: Any,
+        sequence_mask: torch.Tensor,
+        B: int,
+    ) -> dict:
+        """
+        Compute click loss using beam search candidates.
+
+        This trains the click head to rank beam search candidates.
+
+        Args:
+            sid: (B, S) - Full SID sequence (needed for target block)
+            hist_itemkey: (B, num_hist) - Historical item keys for similarity
+            backbone_hidden: Hidden states from backbone forward pass
+            past_key_values: KV cache from backbone forward pass
+            sequence_mask: Sequence mask from backbone forward pass
+            B: batch size
+
+        Returns:
+            Dictionary containing:
+                - click_loss: Click loss tensor
+                - metrics: Dictionary of metrics
+        """
+        H = self.num_hierarchies
         beam_size = self.top_k_for_generation
+
+        # Beam search for last block prediction
+        last_hidden = backbone_hidden[:, -1, :]  # (B, D)
 
         generated_sids, beam_log_probs = self.mtp_head.generate(
             backbone_hidden=last_hidden,
             beam_size=beam_size,
-        )  # generated_sids: (B_pos, beam_size, H)
+        )  # generated_sids: (B, beam_size, H)
 
         # ===== Compute pos_flag: which beam matches the target block =====
-        target_block = sid_pos[:, -H:]  # (B_pos, H) - real last block
-        target_block_expanded = target_block.unsqueeze(1).expand(-1, beam_size, -1)  # (B_pos, beam_size, H)
-        pos_flag = (generated_sids == target_block_expanded).all(dim=-1).float()  # (B_pos, beam_size)
+        target_block = sid[:, -H:]  # (B, H) - real last block
+        target_block_expanded = target_block.unsqueeze(1).expand(-1, beam_size, -1)  # (B, beam_size, H)
+        pos_flag = (generated_sids == target_block_expanded).all(dim=-1).float()  # (B, beam_size)
+
+        # ===== Ensure positive sample is in candidates for click head training =====
+        has_positive = pos_flag.sum(dim=-1) > 0  # (B,)
+        if not has_positive.all():
+            neg_batches = ~has_positive
+            if neg_batches.any():
+                random_pos = torch.randint(0, beam_size, (neg_batches.sum(),), device=self.device)
+                generated_sids[neg_batches, random_pos] = target_block[neg_batches]
+                pos_flag = (generated_sids == target_block.unsqueeze(1).expand(-1, beam_size, -1)).all(dim=-1).float()
 
         # ===== Flatten beam dimension for batch processing =====
-        generated_sids_flat = generated_sids.view(B_pos * beam_size, H)  # (B_pos * beam_size, H)
-        generated_itemkey_flat = self.compute_itemkey(generated_sids_flat)  # (B_pos * beam_size,)
+        generated_sids_flat = generated_sids.view(B * beam_size, H)
+        generated_itemkey_flat = self.compute_itemkey(generated_sids_flat)
 
         # Build block embeddings for generated sids
-        generated_block_embeds, generated_block_mask = self.build_block_embed(generated_sids_flat)  # (B_pos * beam_size, D), (B_pos * beam_size,)
+        generated_block_embeds, generated_block_mask = self.build_block_embed(generated_sids_flat)
 
-        # Expand hist_itemkey for beam search: (B_pos, num_hist) -> (B_pos * beam_size, num_hist)
-        num_hist = hist_itemkey_pos.size(1)
-        hist_itemkey_expanded = hist_itemkey_pos.unsqueeze(1).repeat(1, beam_size, 1).view(B_pos * beam_size, num_hist)
+        # Expand hist_itemkey for beam search
+        num_hist = hist_itemkey.size(1)
+        hist_itemkey_expanded = hist_itemkey.unsqueeze(1).repeat(1, beam_size, 1).view(B * beam_size, num_hist)
 
         # Get similar items for each generated item
         similar_context = self.get_similar_itemkey(
             target_itemkey=generated_itemkey_flat,
             hist_itemkey=hist_itemkey_expanded,
-        )  # (B_pos * beam_size, top_k_for_score + 1)
+        )
         similar_context_embeds, similar_context_mask = self.build_similar_item_embeds(similar_context)
 
         # Expand past KV cache and sequence mask for beam
         past_key_values = self.repeat_kv_cache(past_key_values, beam_size)
         num_input_blocks = sequence_mask.size(1)
-        sequence_mask_expanded = sequence_mask.unsqueeze(1).repeat(1, beam_size, 1).view(B_pos * beam_size, num_input_blocks)
+        sequence_mask_expanded = sequence_mask.unsqueeze(1).repeat(1, beam_size, 1).view(B * beam_size, num_input_blocks)
 
         # Concatenate generated block embed with similar context
         input_embeds = torch.cat([generated_block_embeds.unsqueeze(1), similar_context_embeds], dim=1)
@@ -599,39 +680,38 @@ class SemanticIDMTPRecommender(SemanticIDBaseRecommender):
             similar_context_mask,
         ], dim=1)
 
-        # Position IDs for continuation with KV cache (start from num_input_blocks)
+        # Position IDs for continuation with KV cache
         new_seq_len = input_embeds.size(1)
         new_position_ids = torch.arange(
             num_input_blocks, num_input_blocks + new_seq_len, device=self.device
-        ).unsqueeze(0).expand(B_pos * beam_size, -1)
+        ).unsqueeze(0).expand(B * beam_size, -1)
 
-        # Forward through backbone with generated block (using KV cache)
+        # Forward through backbone with generated block
         backbone_hidden, _ = self.forward_backbone(
             input_embeds, input_mask, use_cache=True,
             past_key_values=past_key_values, position_ids=new_position_ids
         )
 
         # ===== Click Loss =====
-        last_hidden = backbone_hidden[:, -1, :]  # (B_pos * beam_size, D)
-        click_logits = self.click_head(last_hidden).squeeze(-1)  # (B_pos * beam_size,)
+        last_hidden = backbone_hidden[:, -1, :]
+        click_logits = self.click_head(last_hidden).squeeze(-1)
 
-        # Flatten pos_flag for loss computation
-        pos_flag_flat = pos_flag.view(B_pos * beam_size)  # (B_pos * beam_size,)
+        pos_flag_flat = pos_flag.view(B * beam_size)
 
         click_loss = self.click_loss_fn(click_logits, pos_flag_flat)
         click_probs = torch.sigmoid(click_logits)
+
+        metrics = {}
         with torch.no_grad():
             metrics["click_auc"] = binary_auroc(click_probs, pos_flag_flat.long())
             metrics["click_log_prob"] = F.logsigmoid(click_logits).mean()
 
         metrics["beam_log_prob"] = beam_log_probs.mean()
 
-        total_loss = total_mtp_loss + click_loss
-        metrics["mtp_loss"] = total_mtp_loss
-
-        self.training_step_counter.add_(1)
-
-        return backbone_hidden, total_loss, metrics
+        return {
+            "click_loss": click_loss,
+            "metrics": metrics,
+        }
     
     def _infer_step(
         self,

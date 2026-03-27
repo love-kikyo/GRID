@@ -162,9 +162,6 @@ class SemanticIDBaseRecommender(BaseModule):
         self.click_log_prob_accumulator = MeanMetric()
         self.beam_log_prob_accumulator = MeanMetric()
 
-        # ===== Step Counter =====
-        self.register_buffer("training_step_counter", torch.tensor(0, dtype=torch.long))
-
         # ===== Timing Variables =====
         self.batch_start_time = None
         self.prev_batch_end_time = None

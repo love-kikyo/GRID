@@ -198,18 +198,22 @@ class MTPHead(nn.Module):
         # Project backbone hidden to MTP hidden dimension (only for backbone hidden)
         self.backbone_proj = nn.Linear(config.hidden_size, config.mtp_hidden_size, bias=False)
 
-        # OPTIMIZATION: Merged SID projection into single layer
-        # Projects all hierarchies at once: (B, H, hidden_size) -> (B, H, mtp_hidden_size)
-        self.sid_proj_merged = nn.Linear(config.hidden_size, config.mtp_hidden_size, bias=False)
+        # Per-hierarchy SID projection weights: (H, mtp_hidden_size, hidden_size)
+        # Einsum: 'bhd,hmd->bhm' where b=batch, h=hierarchy, d=hidden_size, m=mtp_hidden_size
+        self.sid_proj_weights = nn.Parameter(
+            torch.randn(config.num_hierarchies, config.mtp_hidden_size, config.hidden_size) * 0.02
+        )
 
         # MTP Transformer layers
         self.layers = nn.ModuleList([
             MTPTransformerBlock(config) for _ in range(config.num_mtp_layers)
         ])
 
-        # OPTIMIZATION: Merged output heads into single layer
-        # Projects to vocab logits for all hierarchies: (B, H, mtp_hidden_size) -> (B, H, vocab_size)
-        self.output_head_merged = nn.Linear(config.mtp_hidden_size, config.vocab_size, bias=False)
+        # Per-hierarchy output head weights: (H, vocab_size, mtp_hidden_size)
+        # Einsum: 'bhm,hvm->bhv' where b=batch, h=hierarchy, m=mtp_hidden_size, v=vocab_size
+        self.output_head_weights = nn.Parameter(
+            torch.randn(config.num_hierarchies, config.vocab_size, config.mtp_hidden_size) * 0.02
+        )
 
         # Final layer norm
         self.final_norm = nn.RMSNorm(config.mtp_hidden_size)
@@ -269,7 +273,8 @@ class MTPHead(nn.Module):
         # Get logits for prediction positions
         H = input_embeds.size(1)
         pred_hidden = hidden_states[:, :H, :]  # (B, H, mtp_hidden)
-        logits = self.output_head_merged(pred_hidden)  # (B, H, vocab_size)
+        # Per-hierarchy output projection: (B, H, mtp_hidden) -> (B, H, vocab_size)
+        logits = torch.einsum('bhm,hvm->bhv', pred_hidden, self.output_head_weights)
 
         return logits
 
@@ -327,8 +332,8 @@ class MTPHead(nn.Module):
             # Embed all target SIDs as input (vectorized)
             sid_embeds = self.embed_sid_tokens_batch(target_sids)  # (B, H, D_backbone)
 
-            # OPTIMIZATION: Single batched projection instead of loop
-            input_embeds = self.sid_proj_merged(sid_embeds)  # (B, H, mtp_hidden)
+            # Per-hierarchy projection: (B, H, D_backbone) -> (B, H, mtp_hidden)
+            input_embeds = torch.einsum('bhd,hmd->bhm', sid_embeds, self.sid_proj_weights)
 
             # Use compiled forward if available
             if self._is_compiled and self._compiled_forward is not None:
@@ -382,18 +387,10 @@ class MTPHead(nn.Module):
             h_targets = target_sids[:, h].long() - 1  # (B,)
 
             # Use external loss function if provided, otherwise default to F.cross_entropy
-            if self.loss_fn is not None:
-                loss = self.loss_fn(h_logits, h_targets)
-                if attention_mask is not None and loss.dim() > 0:
-                    # If loss_fn returns per-sample loss (reduction='none')
-                    loss = (loss * attention_mask).sum() / attention_mask.sum().clamp(min=1)
-            else:
-                loss = F.cross_entropy(h_logits, h_targets, reduction='none')
-                if attention_mask is not None:
-                    loss = loss * attention_mask
-                    loss = loss.sum() / attention_mask.sum().clamp(min=1)
-                else:
-                    loss = loss.mean()
+            loss = self.loss_fn(h_logits, h_targets)
+            if attention_mask is not None and loss.dim() > 0:
+                # If loss_fn returns per-sample loss (reduction='none')
+                loss = (loss * attention_mask).sum() / attention_mask.sum().clamp(min=1)
 
             total_loss = total_loss + loss
             # metrics[f'loss_sid{h}'] = loss.item()
@@ -466,9 +463,10 @@ class MTPHead(nn.Module):
 
             past_key_values = new_past_key_values
 
-            # Get logits for last position using merged output head
+            # Get logits for last position using per-hierarchy output head
             last_hidden = self.final_norm(hidden_states[:, -1, :])  # (B * beam_size, mtp_hidden)
-            logits = self.output_head_merged(last_hidden)  # (B * beam_size, vocab_size)
+            # For hierarchy h, use weights[h]: (vocab_size, mtp_hidden_size)
+            logits = torch.matmul(last_hidden, self.output_head_weights[h].T)  # (B * beam_size, vocab_size)
 
             log_probs = F.log_softmax(logits, dim=-1)  # (B * beam_size, vocab_size)
 
@@ -487,8 +485,8 @@ class MTPHead(nn.Module):
                 # Convert 0-based to 1-based for embedding lookup
                 new_tokens_1based = topk_indices.view(B * beam_size) + 1  # (B * beam_size,)
                 new_token_embed = self.embed_sid_token(new_tokens_1based, h)  # (B * beam_size, D_backbone)
-                # Use merged projection
-                new_token_embed_proj = self.sid_proj_merged(new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
+                # Per-hierarchy projection for hierarchy h
+                new_token_embed_proj = torch.matmul(new_token_embed, self.sid_proj_weights[h].T).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
                 current_seq = new_token_embed_proj  # (B * beam_size, 1, mtp_hidden)
 
             else:
@@ -530,8 +528,8 @@ class MTPHead(nn.Module):
                 if h < H - 1:
                     new_tokens_1based = token_indices.view(B * beam_size) + 1  # (B * beam_size,)
                     new_token_embed = self.embed_sid_token(new_tokens_1based, h)  # (B * beam_size, D_backbone)
-                    # Use merged projection
-                    new_token_embed_proj = self.sid_proj_merged(new_token_embed).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
+                    # Per-hierarchy projection for hierarchy h
+                    new_token_embed_proj = torch.matmul(new_token_embed, self.sid_proj_weights[h].T).unsqueeze(1)  # (B * beam_size, 1, mtp_hidden)
                     current_seq = new_token_embed_proj  # (B * beam_size, 1, mtp_hidden)
 
         # Stack generated tokens (0-based from model predictions)

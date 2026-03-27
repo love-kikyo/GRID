@@ -128,11 +128,6 @@ def map_sparse_id_to_semantic_id(
     id_map = dataset_config.semantic_id_map       # (num_items, num_hierarchies)
     powers = dataset_config.powers                # (num_hierarchies,)
 
-    target_item = row["target_item"]
-    row["similar_context"] = torch.cat([row["similar_context"], target_item], dim=-1)
-    if split == "train":
-        row["sequence_data"] = torch.cat([row["sequence_data"], target_item], dim=-1)
-
     for k in list(row.keys()):
         if not is_feature_in_features_to_apply(features_to_apply, k):
             continue

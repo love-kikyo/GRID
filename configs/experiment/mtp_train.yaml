@@ -328,6 +328,9 @@ model:
   compile_mode: "default"     # Compilation mode: "default", "reduce-overhead", "max-autotune"
   compile_fullgraph: false    # Whether to require full graph compilation
 
+  # Two-stage training config
+  sid_train_steps: 90000     # Stage 1: train SID for this many steps, then switch to click training
+
 # =============================================================================
 # Loss Configuration
 # =============================================================================
@@ -429,7 +432,7 @@ trainer:
   default_root_dir: ${paths.output_dir}
   precision: bf16-mixed
   min_steps: 1
-  max_steps: 1000000
+  max_steps: 100000
   max_epochs: null
   min_epochs: 0
   limit_train_batches: 1.0
