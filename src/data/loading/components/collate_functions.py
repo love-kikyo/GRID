@@ -238,7 +238,7 @@ def collate_fn_train(
                 sequence[sequence != oov_token] for sequence in field_sequence
             ]
 
-        if field_name == "topk_similar_in_time":
+        if field_name == "similar_context":
             current_sequence = left_pad_sequence(
                 current_sequence, padding_value=masking_token
             )

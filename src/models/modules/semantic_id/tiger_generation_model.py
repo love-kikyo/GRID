@@ -901,7 +901,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             )
             return result_dict
         
-        similar_itemkey = model_input.transformed_sequences["topk_similar_in_time"].long()
+        similar_itemkey = model_input.transformed_sequences["similar_context"].long()
         click_label = model_input.transformed_sequences["click_label"].squeeze(-1).float()
         # ===== Determine training mode =====
         num_pos_samples = (click_label == 1).sum().item()

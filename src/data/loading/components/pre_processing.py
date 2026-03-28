@@ -118,34 +118,6 @@ def filter_empty_feature(row: Dict[str, torch.Tensor], dataset_config: BaseDatas
     return row
 
 
-def prepare_sequence_with_target(
-    row: Dict[str, torch.Tensor],
-    split: str,
-    dataset_config: SemanticIDDatasetConfig,
-    features_to_apply: Optional[List[str]] = None,
-    **kwargs
-) -> Dict[str, torch.Tensor]:
-    # Extract or determine target item
-    if split == "train" and int(row["click_label"]) == 0:
-        target_item = row["target_item"]
-    else:
-        # For eval split OR train with click_label != 0, use last sequence item
-        target_item = row["sequence_data"][-1].unsqueeze(0)
-        row["target_item"] = target_item
-
-    # Append target item to topk_similar_in_time
-    if split != "test":
-        row["topk_similar_in_time"] = torch.cat(
-            [row["topk_similar_in_time"], target_item], dim=0
-        )
-
-    # For train split with click_label == 0, also append target to sequence_data
-    if split == "train" and int(row["click_label"]) == 0:
-        row["sequence_data"] = torch.cat([row["sequence_data"], target_item], dim=0)
-
-    return row
-
-
 def map_sparse_id_to_semantic_id(
     row: Dict[str, torch.Tensor],
     dataset_config: SemanticIDDatasetConfig,
@@ -163,7 +135,7 @@ def map_sparse_id_to_semantic_id(
         semantic_ids = id_map[v] + 1
         itemkeys = (semantic_ids * powers).sum(dim=-1)
 
-        if k == "topk_similar_in_time":
+        if k == "similar_context":
             row[k] = itemkeys
         else:
             hist_itemkey = itemkeys
