@@ -54,20 +54,20 @@ data_loading:
         type:
           _target_: torch.__dict__.get
           _args_: [int32]
-      - name: topk_similar_in_time
-        num_placeholder_tokens: 0
-        semantic_ids: ???
-        type:
-          _target_: torch.__dict__.get
-          _args_: [int32]
-      - name: click_label
-        type:
-          _target_: torch.__dict__.get
-          _args_: [int32]
-      - name: target_item
-        type:
-          _target_: torch.__dict__.get
-          _args_: [int32]
+      # - name: similar_context
+      #   num_placeholder_tokens: 0
+      #   semantic_ids: ???
+      #   type:
+      #     _target_: torch.__dict__.get
+      #     _args_: [int32]
+      # - name: click_label
+      #   type:
+      #     _target_: torch.__dict__.get
+      #     _args_: [int32]
+      # - name: target_item
+      #   type:
+      #     _target_: torch.__dict__.get
+      #     _args_: [int32]
 
   train_dataloader_config:
     dataloader:
@@ -120,12 +120,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: train
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
-            features_to_apply: [sequence_data, topk_similar_in_time]
+            features_to_apply: [sequence_data, similar_context]
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       assign_all_files_per_worker: true
@@ -181,12 +178,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: eval
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
-            features_to_apply: [sequence_data, topk_similar_in_time]
+            features_to_apply: [sequence_data, similar_context]
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       pin_memory: false
@@ -242,12 +236,9 @@ data_loading:
             _partial_: true
           - _target_: src.data.loading.components.pre_processing.convert_fields_to_tensors
             _partial_: true
-          - _target_: src.data.loading.components.pre_processing.prepare_sequence_with_target
-            _partial_: true
-            split: test
           - _target_: src.data.loading.components.pre_processing.map_sparse_id_to_semantic_id
             _partial_: true
-            features_to_apply: [sequence_data, topk_similar_in_time]
+            features_to_apply: [sequence_data, similar_context]
         num_hierarchies: ${num_hierarchies}
         num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
       pin_memory: false
@@ -287,6 +278,7 @@ model:
   num_hierarchies: ${num_hierarchies}
   num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
   num_user_bins: null
+  sid_warmup_steps: 90000
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
   masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
@@ -365,8 +357,8 @@ callbacks:
     save_last: null
     save_top_k: 1
     mode: max
-    auto_insert_metric_name: true
-    save_weights_only: true
+    auto_insert_metric_name: false
+    save_weights_only: false
     every_n_train_steps: null
     train_time_interval: null
     every_n_epochs: null
@@ -400,7 +392,7 @@ trainer:
   default_root_dir: ${paths.output_dir}
   precision: bf16-mixed
   min_steps: 1
-  max_steps: 1000000
+  max_steps: 150000
   max_epochs: null
   min_epochs: 0
   limit_train_batches: 1.0

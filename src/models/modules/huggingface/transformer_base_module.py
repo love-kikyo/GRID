@@ -81,49 +81,7 @@ class TransformerBaseModule(BaseModule):
         batch: Tuple[SequentialModelInputData],
         batch_idx: int,
     ) -> torch.Tensor:
-        """Perform a single training step on a batch of data from the training set.
-
-        :param batch: A batch of data of data (tuple). Because of lightning, the tuple is wrapped in another tuple,
-        and the actual batch is at position 0. The batch is a tuple of data where first object is a SequentialModelInputData object
-        and second is a SequentialModuleLabelData object.
-        :param batch_idx: The index of the current batch.
-        :return: A tensor of losses between model predictions and targets.
-        """
-        batch = batch[0]
-        model_input: SequentialModelInputData = batch
-        model_output, loss, metrics = self.model_step(
-            model_input=model_input, mode=ModelMode.TRAIN
-        )
-
-        # checks logging interval and logs the loss
-        self.log(
-            "train/loss",
-            loss.detach().item(),
-            on_step=True,
-            on_epoch=False,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-        )
-
-        for k, v in metrics.items():
-            self.log(
-                f"train/{k}",
-                v,
-                on_step=True,
-                on_epoch=False,
-                prog_bar=False,
-                logger=True,
-                sync_dist=True,
-            )
-
-        if self.training_loop_function is not None:
-            self.training_loop_function(self, loss)
-
-        lr = self.lr_schedulers().get_last_lr()[0]
-        self.log("train/lr", lr, on_step=True, on_epoch=False, sync_dist=False)
-
-        return loss
+        pass
 
     def eval_step(
         self,
@@ -137,22 +95,4 @@ class TransformerBaseModule(BaseModule):
         batch: Tuple[SequentialModelInputData, SequentialModuleLabelData],
         batch_idx: int,
     ):
-        """Perform a single prediction step on a batch of data from the test set.
-
-        :param batch: A batch of data of data (tuple) where first object is a SequentialModelInputData object
-        and second is a SequentialModuleLabelData object.
-        """
-        model_input: SequentialModelInputData = batch[0]
-        model_output_before_aggregation, _ = self.model_step(model_input=model_input)
-
-        model_output_after_aggregation = self.aggregator(
-            model_output_before_aggregation, model_input.mask
-        )
-        # TODO(lneves): Currently passing batch idx, change it to user_id and allow for the user to specify the key and prediction names.
-        model_output = SharedKeyAcrossPredictionsOutput(
-            key=batch_idx,
-            predictions=model_output_after_aggregation,
-            key_name=self.prediction_key_name,
-            prediction_name=self.prediction_name,
-        )
-        return model_output
+        pass

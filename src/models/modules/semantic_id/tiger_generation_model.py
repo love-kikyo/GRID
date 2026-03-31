@@ -40,7 +40,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         top_k_for_score: int,
         padding_token: int,
         masking_token: int,
-        beam_search_interval: int = 50,
+        sid_warmup_steps: int = 10000,
         **kwargs,
     ) -> None:
         """
@@ -54,8 +54,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         embedding_dim (int): the dimension of the embeddings.
         top_k_for_generation (int): the number of top-k candidates for generation.
         should_check_prefix (bool): whether to check if the prefix is valid.
-        beam_search_interval (int): run beam search training every N steps. Default 1 (every step).
-            Set higher values (e.g., 10) to improve throughput by mixing with fast training.
         """
         super().__init__(**kwargs)
         self.padding_token = padding_token
@@ -80,7 +78,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         self.top_k_for_generation = top_k_for_generation
         self.top_k_for_score = top_k_for_score
-        self.beam_search_interval = beam_search_interval
+        self.sid_warmup_steps = sid_warmup_steps
         self.batch_start_time = None
         self.prev_batch_end_time = None
         self.total_val_time = 0
@@ -90,62 +88,54 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.click_log_prob_accumulator = MeanMetric()
         self.beam_log_prob_accumulator = MeanMetric()
 
-        # Step counter for mixed training mode
-        self.register_buffer("training_step_counter", torch.tensor(0, dtype=torch.long))
+    def _check_and_update_training_stage(self):
+        """Check current training stage and update requires_grad accordingly.
 
-    def _inject_sep_token_between_sids(
-        self,
-        id_embeddings: torch.Tensor,
-        attention_mask: torch.Tensor,
-        sep_token: torch.Tensor,
-        num_hierarchies: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        This method should be called at the beginning of each training step.
+        It handles the transition from SID training stage to joint training stage.
+
+        Stage 1 (SID warmup): Only sid_head has gradients, click_head frozen.
+        Stage 2 (Joint training): Both sid_head and click_head have gradients.
+
+        Note: Uses self.global_step which accounts for gradient accumulation,
+        representing the actual optimizer update step count.
         """
-        Inject a separator token into the ID embeddings and attention mask.
+        # Use global_step which accounts for gradient accumulation
+        current_step = self.global_step
+        is_sid_stage = current_step < self.sid_warmup_steps
 
-        Parameters:
-        id_embeddings (torch.Tensor): The ID embeddings of shape (batch_size, seq_len, emb_dim).
-        attention_mask (torch.Tensor): The attention mask of shape (batch_size, seq_len).
-        sep_token (torch.Tensor): The separator token of shape (1, emb_dim).
-        num_hierarchies (int): The number of hierarchies in the codebooks.
+        # Check if we need to transition stages
+        if not hasattr(self, "_current_stage"):
+            self._current_stage = None
 
-        Returns:
-        Tuple[torch.Tensor, torch.Tensor]: The modified ID embeddings and attention mask.
-        id_embeddings: The ID embeddings with the separator token injected of shape (batch_size, seq_len + num_items, emb_dim).
-        attention_mask: The attention mask with the separator token injected of shape (batch_size, seq_len + num_items).
+        new_stage = "sid" if is_sid_stage else "joint"
 
-        An intuitive example of the input and output:
-        input:
-        id_embeddings: [[1, 2, 3, 4], [5, 6, 7, 8]]
-        attention_mask: [[1, 1, 1, 1], [1, 1, 1, 1], [0, 0, 0, 0]]
-        output:
-        id_embeddings: [[1, 2, 3, 4, sep_token], [5, 6, 7, 8, sep_token]]
-        attention_mask: [[1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [0, 0, 0, 0, 0]]
-        """
-        batch_size, seq_len, emb_dim = id_embeddings.size()
-        item_count_per_sequence = seq_len // num_hierarchies
+        if self._current_stage != new_stage:
+            # Stage transition detected - update requires_grad
+            model = self.module if hasattr(self, "module") else self
 
-        reshaped_id_embeddings = id_embeddings.view(
-            batch_size, item_count_per_sequence, num_hierarchies, -1
-        )
-        reshaped_attention_mask = attention_mask.view(
-            batch_size, item_count_per_sequence, num_hierarchies
-        )
-        reshaped_sep_token_for_concat = (
-            sep_token.unsqueeze(0)
-            .expand(batch_size, item_count_per_sequence, -1)
-            .unsqueeze(-2)
-        )
-        id_embeddings = torch.cat(
-            [reshaped_id_embeddings, reshaped_sep_token_for_concat], dim=-2
-        )
-        attention_mask = torch.cat(
-            [reshaped_attention_mask, reshaped_attention_mask[:, :, [-1]]],
-            dim=-1,
-        )
-        id_embeddings = id_embeddings.reshape(batch_size, -1, emb_dim)
-        attention_mask = attention_mask.reshape(batch_size, -1)
-        return id_embeddings, attention_mask
+            if new_stage == "sid":
+                # Entering SID training stage: freeze click_head, unfreeze sid_head
+                if hasattr(model, "decoder"):
+                    if hasattr(model.decoder, "click_head") and model.decoder.click_head is not None:
+                        for param in model.decoder.click_head.parameters():
+                            param.requires_grad = False
+                    if hasattr(model.decoder, "sid_head") and model.decoder.sid_head is not None:
+                        for param in model.decoder.sid_head.parameters():
+                            param.requires_grad = True
+                logging.info(f"[Stage Transition] Entering SID training stage at step {current_step}")
+            else:
+                # Entering joint training stage: BOTH sid_head and click_head are unfrozen
+                if hasattr(model, "decoder"):
+                    if hasattr(model.decoder, "sid_head") and model.decoder.sid_head is not None:
+                        for param in model.decoder.sid_head.parameters():
+                            param.requires_grad = True
+                    if hasattr(model.decoder, "click_head") and model.decoder.click_head is not None:
+                        for param in model.decoder.click_head.parameters():
+                            param.requires_grad = True
+                logging.info(f"[Stage Transition] Entering joint training stage (both heads) at step {current_step}")
+
+            self._current_stage = new_stage
 
     def _spawn_embedding_tables(
         self,
@@ -165,108 +155,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             padding_idx=self.padding_token,
         )
         return table
-
-    def _is_kv_cache_valid(
-        self, kv_cache: Union[Tuple, DynamicCache, EncoderDecoderCache]
-    ) -> bool:
-
-        if isinstance(kv_cache, (EncoderDecoderCache, DynamicCache)):
-            return len(kv_cache) > 0
-        elif isinstance(kv_cache, Tuple):
-            return True
-        else:
-            return False
-
-    def _add_repeating_offset_to_rows(
-        self,
-        input_sids: torch.Tensor,
-        codebook_size: int,
-        num_hierarchies: int,
-        attention_mask: Optional[torch.Tensor] = None,
-    ):
-        """Adds repeating offsets to each element in each row of input_sids.
-        we use a single embedding table for multiple code books.
-        for example if each codebook has 300 embeddings and we have 3 codebooks,
-        the input sequence will be transformed from [0, 1, 2] -> to [0, 301, 602]
-
-        Parameters:
-            input_sids (torch.Tensor): A 2D PyTorch tensor.
-            codebook_size (int): The number of elements in the codebook.
-            num_hierarchies (int): The number of hierarchy levels.
-        """
-
-        if input_sids.ndim != 2:
-            raise ValueError("Input tensor must be 2-dimensional.")
-
-        num_rows, num_cols = input_sids.shape
-        offsets = (
-            torch.arange(num_hierarchies, device=input_sids.device) * codebook_size
-        )
-
-        # Calculate how many times the full offset pattern needs to repeat
-        num_repeats = (
-            num_cols + num_hierarchies - 1
-        ) // num_hierarchies  # Integer division to handle cases where num_cols is not a multiple of num_hierarchies
-
-        # Repeat the offsets and slice to match the number of columns
-        repeated_offsets = offsets.repeat(num_repeats)[:num_cols]
-
-        # Add the repeated offsets to each row using broadcasting
-        input_sids_with_offsets = input_sids + repeated_offsets
-        if attention_mask is not None:
-            input_sids_with_offsets = input_sids_with_offsets * attention_mask
-        return input_sids_with_offsets
-
-    def _check_valid_prefix(
-        self, prefix: torch.Tensor, batch_size: int = 100000
-    ) -> torch.Tensor:
-        """
-        Checks if a given prefix is a valid prefix of the codebooks.
-
-        Args:
-            prefix: A tensor of shape [batch_size, hierarchy_level].
-            batch_size: The size of the batch to process.
-
-        Returns:
-            A boolean tensor of shape [batch_size] indicating the validity of each prefix.
-        """
-        # TODO (clark): this is a temporary solution, we should use a more efficient way to do this
-        # like pre-sorting the codebook and implementing a tree strcture
-
-        current_hierarchy = prefix.shape[1]
-        num_prefixes = prefix.shape[0]
-        results = []
-
-        # Ensure codebooks are on the correct device.  Do this *once* outside the loop.
-        if prefix.device != self.codebooks.device:
-            self.codebooks = self.codebooks.to(prefix.device)
-
-        # Trim the codebooks to the relevant hierarchy *once* outside the loop.
-        trimmed_codebooks = self.codebooks[:, :current_hierarchy]
-
-        for i in range(0, num_prefixes, batch_size):
-            # Get the current batch of prefixes.
-            batch_prefix = prefix[
-                i : i + batch_size
-            ]  # Shape: [batch_size, hierarchy_level]
-
-            # Perform the comparison.  Broadcasting is now limited by batch_size.
-            # trimmed_codebooks shape: [C, H] -> unsqueezed [C, 1, H]
-            # batch_prefix shape   : [b, H] -> unsqueezed [1, b, H]
-            # comparison result    : [C, b, H]
-            comparison = trimmed_codebooks.unsqueeze(1) == batch_prefix.unsqueeze(0)
-
-            # Reduce along the hierarchy dimension (H). Shape: [C, b]
-            all_match = comparison.all(dim=2)
-
-            # Reduce along the codebook dimension (C).  Shape: [b]
-            any_match = all_match.any(dim=0)
-
-            # Append the results for this batch.
-            results.append(any_match)
-
-        # Concatenate the results from all batches.
-        return torch.cat(results)
 
     def _beam_search_one_step(
         self,
@@ -359,57 +247,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             past_key_values.value_cache[layer] = value
 
         return past_key_values
-
-    def eval_step(
-        self,
-        batch: SequentialModelInputData,
-        loss_to_aggregate: BaseAggregator,
-    ):
-        with torch.inference_mode():
-            _, loss, __ = self.model_step(model_input=batch, mode=ModelMode.TRAIN)
-        loss_to_aggregate(loss)
-
-        sid = batch.transformed_sequences["sequence_data"].long()  # (B, S)
-        hist_itemkey = batch.transformed_sequences["hist_itemkey"]
-        attention_mask = batch.mask  # (B, S)
-
-        lengths = attention_mask.sum(dim=1)  # (B)
-        assert torch.all(lengths >= self.num_hierarchies), (
-            f"Found sequence length < num_hierarchies={self.num_hierarchies}: {lengths}"
-        )
-        assert torch.all(lengths % self.num_hierarchies == 0), (
-            f"Input lengths must be multiples of block={self.num_hierarchies}, got {lengths}"
-        )
-
-        labels = sid[:, -self.num_hierarchies:]
-        hist_sid = sid[:, :-self.num_hierarchies]
-        hist_itemkey = hist_itemkey[:, :-1]
-        hist_mask = attention_mask[:, :-self.num_hierarchies]
-
-        # Create a new model input to avoid inplace modification of the original batch
-        infer_input = SequentialModelInputData(
-            user_id_list=batch.user_id_list,
-            transformed_sequences={
-                "sequence_data": hist_sid,
-                "hist_itemkey": hist_itemkey,
-            },
-            mask=hist_mask,
-        )
-
-        with torch.inference_mode():
-            result_dict = self.model_step(model_input=infer_input, mode=ModelMode.INFER)
-
-        self.evaluators["beam"](
-            marginal_probs=result_dict["beam"]["scores"].detach(),
-            generated_ids=result_dict["beam"]["ids"].detach(),
-            labels=labels.detach(),
-        )
-
-        self.evaluators["rerank"](
-            marginal_probs=result_dict["rerank"]["scores"].detach(),
-            generated_ids=result_dict["rerank"]["ids"].detach(),
-            labels=labels.detach(),
-        )
 
     def _make_deterministic(self, is_training: bool):
         """
@@ -599,6 +436,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 ]
             ),
             click_head=torch.nn.Linear(self.embedding_dim, 1, bias=False),
+            click_head_requires_grad=False,  # Initially freeze click_head for SID stage
         )
 
         # generate embedding tables for each hierarchy
@@ -615,7 +453,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.register_buffer(
             "powers",
             self.num_embeddings_per_hierarchy **
-            torch.arange(self.num_hierarchies-1, -1, -1)
+            torch.arange(self.num_hierarchies-1, -1, -1),
+            persistent=False,
         )
         # Pre-compute hierarchy offsets for SID embedding indexing
         # Avoids repeated tensor creation in build_sid_block_embeds
@@ -859,18 +698,111 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         return embedding_table
 
     def predict_step(self, batch: SequentialModelInputData):
-        generated_sids, _ = self.model_step(batch)
-        ids = [
-            id.item() if isinstance(id, torch.Tensor) else id
-            for id in batch.user_id_list
-        ]
-        model_output = OneKeyPerPredictionOutput(
-            keys=ids,
-            predictions=generated_sids,
-            key_name=self.prediction_key_name,
-            prediction_name=self.prediction_value_name,
+        pass
+
+    def eval_step(
+        self,
+        batch: SequentialModelInputData,
+        loss_to_aggregate: BaseAggregator,
+    ):
+        with torch.inference_mode():
+            _, loss, __ = self.model_step(model_input=batch, mode=ModelMode.TRAIN)
+        loss_to_aggregate(loss)
+
+        sid = batch.transformed_sequences["sequence_data"].long()  # (B, S)
+        hist_itemkey = batch.transformed_sequences["hist_itemkey"]
+        attention_mask = batch.mask  # (B, S)
+
+        lengths = attention_mask.sum(dim=1)  # (B)
+        assert torch.all(lengths >= self.num_hierarchies), (
+            f"Found sequence length < num_hierarchies={self.num_hierarchies}: {lengths}"
         )
-        return model_output
+        assert torch.all(lengths % self.num_hierarchies == 0), (
+            f"Input lengths must be multiples of block={self.num_hierarchies}, got {lengths}"
+        )
+
+        labels = sid[:, -self.num_hierarchies:]
+        hist_sid = sid[:, :-self.num_hierarchies]
+        hist_itemkey = hist_itemkey[:, :-1]
+        hist_mask = attention_mask[:, :-self.num_hierarchies]
+
+        # Create a new model input to avoid inplace modification of the original batch
+        infer_input = SequentialModelInputData(
+            user_id_list=batch.user_id_list,
+            transformed_sequences={
+                "sequence_data": hist_sid,
+                "hist_itemkey": hist_itemkey,
+            },
+            mask=hist_mask,
+        )
+
+        with torch.inference_mode():
+            result_dict = self.model_step(model_input=infer_input, mode=ModelMode.INFER)
+
+        self.evaluators["beam"](
+            marginal_probs=result_dict["beam"]["scores"].detach(),
+            generated_ids=result_dict["beam"]["ids"].detach(),
+            labels=labels.detach(),
+        )
+
+        self.evaluators["rerank"](
+            marginal_probs=result_dict["rerank"]["scores"].detach(),
+            generated_ids=result_dict["rerank"]["ids"].detach(),
+            labels=labels.detach(),
+        )
+
+    def training_step(
+        self,
+        batch: Tuple[SequentialModelInputData],
+        batch_idx: int,
+    ) -> torch.Tensor:
+        """Perform a single training step on a batch of data from the training set.
+
+        :param batch: A batch of data of data (tuple). Because of lightning, the tuple is wrapped in another tuple,
+        and the actual batch is at position 0. The batch is a tuple of data where first object is a SequentialModelInputData object
+        and second is a SequentialModuleLabelData object.
+        :param batch_idx: The index of the current batch.
+        :return: A tensor of losses between model predictions and targets.
+        """
+        batch = batch[0]
+        model_input: SequentialModelInputData = batch
+
+        # Check and handle stage transition
+        self._check_and_update_training_stage()
+
+        _, loss, metrics = self.model_step(
+            model_input=model_input, mode=ModelMode.TRAIN
+        )
+
+        # checks logging interval and logs the loss
+        self.log(
+            "train/loss",
+            loss.detach().item(),
+            on_step=True,
+            on_epoch=False,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+        )
+
+        for k, v in metrics.items():
+            self.log(
+                f"train/{k}",
+                v,
+                on_step=True,
+                on_epoch=False,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+
+        if self.training_loop_function is not None:
+            self.training_loop_function(self, loss)
+
+        lr = self.lr_schedulers().get_last_lr()[0]
+        self.log("train/lr", lr, on_step=True, on_epoch=False, sync_dist=False)
+
+        return loss
 
     def model_step(
         self,
@@ -889,7 +821,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         # ===== Extract all fields from model_input =====
         sid = model_input.transformed_sequences["sequence_data"].long()
-        mask = model_input.mask.clone()  # Clone to avoid modifying original data
+        mask = model_input.mask
         hist_itemkey = model_input.transformed_sequences["hist_itemkey"].long()
 
         B, S = sid.shape
@@ -900,63 +832,48 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 hist_itemkey=hist_itemkey,
             )
             return result_dict
-        
-        similar_itemkey = model_input.transformed_sequences["topk_similar_in_time"].long()
-        click_label = model_input.transformed_sequences["click_label"].squeeze(-1).float()
-        # ===== Determine training mode =====
-        num_pos_samples = (click_label == 1).sum().item()
-        use_beam_search = (
-            (self.training_step_counter.item() % self.beam_search_interval) == 0
-            and num_pos_samples > 0  # Only use beam search if there are positive samples
-        )
 
-        if use_beam_search:
-            # ===== Beam search training (hard negatives) - only for positive samples =====
-            return self._model_step_with_beam_search(
+        # ===== Two-stage training: decide which stage based on global_step =====
+        is_sid_stage = self.global_step < self.sid_warmup_steps
+
+        if is_sid_stage:
+            # Stage 1: SID training (click_head frozen, no gradients)
+            return self._model_step_sid(
+                sid=sid,
+                mask=mask,
+                batch_size=B,
+                seq_len=S,
+            )
+        else:
+            # Stage 2: Joint training (BOTH sid_head and click_head have gradients)
+            return self._model_step_click_head(
                 sid=sid,
                 mask=mask,
                 hist_itemkey=hist_itemkey,
-                click_label=click_label,
-                B=B,
-                S=S,
-            )
-        else:
-            # ===== Fast training (teacher forcing) =====
-            return self._model_step_fast(
-                sid=sid,
-                mask=mask,
-                similar_itemkey=similar_itemkey,
-                click_label=click_label,
-                B=B,
-                S=S,
+                batch_size=B,
+                seq_len=S,
             )
 
-    def _model_step_with_beam_search(
+    def _model_step_click_head(
         self,
         sid: torch.Tensor,
         mask: torch.Tensor,
         hist_itemkey: torch.Tensor,
-        click_label: torch.Tensor,
-        B: int,
-        S: int,
+        batch_size: int,
+        seq_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Training step with beam search for hard negative sampling.
-        Only processes positive samples (click_label == 1).
+        Training step for joint training of click_head and sid_head.
+        Stage 2 of two-stage training - BOTH heads participate.
         """
-        # ===== Filter positive samples =====
-        pos_mask = (click_label == 1)
-        num_pos = pos_mask.sum().item()
-        assert num_pos > 0, "Beam search training requires at least one positive sample. This should be checked in model_step."
+        target_itemkey = hist_itemkey[:, -1]
+        # Remove last block for input (history for beam search)
+        hist_sid = sid[:, :-self.num_hierarchies]
+        hist_mask = mask[:, :-self.num_hierarchies]
+        hist_itemkey_for_beam = hist_itemkey[:, :-1]
 
-        # Extract positive samples
-        sid_pos = sid[pos_mask]
-        mask_pos = mask[pos_mask]
-        hist_itemkey_pos = hist_itemkey[pos_mask]
-        B_pos = int(num_pos)
-
-        # ===== Part 1: SID loss on full sequence (positive samples only) =====
-        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid_pos, attention_mask=mask_pos)
+        # ===== Compute SID loss on full sequence (to train sid_head) =====
+        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
 
         sid_output = self.decoder(
             sequence_embedding=input_embeds_sid,
@@ -965,16 +882,83 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=None,
         )
 
-        num_block = S // self.num_hierarchies
-        sid_hidden_blk = sid_output.view(B_pos, num_block, -1, self.embedding_dim)
-        sid_targets = sid_pos.view(B_pos, num_block, self.num_hierarchies).clone()
-        mask_blk = mask_pos.view(B_pos, num_block, self.num_hierarchies).clone()
+        num_block = seq_len // self.num_hierarchies
+        sid_hidden_blk = sid_output.view(batch_size, num_block, -1, self.embedding_dim)
+        sid_targets = sid.view(batch_size, num_block, self.num_hierarchies).clone()
+        mask_blk = mask.view(batch_size, num_block, self.num_hierarchies).clone()
+
+        total_sid_loss = 0
+        sid_metrics = {}
+
+        for h in range(self.num_hierarchies):
+            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
+            h_targets = sid_targets[:, :, h].long() - 1
+            h_mask = mask_blk[:, :, h]
+
+            h_loss = self.sid_loss_fn(
+                h_logits.reshape(-1, h_logits.size(-1)),
+                h_targets.reshape(-1)
+            )
+            total_sid_loss += h_loss
+
+            with torch.no_grad():
+                _, top10_indices = h_logits.topk(10, dim=-1)
+                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)
+                hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
+                sid_metrics[f"hit@10_sid{h}"] = hit_rate
+
+        # ===== Beam search to generate candidates, then compute click loss =====
+        _, loss_bce, click_metrics = self._compute_click_loss_with_beam_search(
+            hist_sid=hist_sid,
+            hist_mask=hist_mask,
+            hist_itemkey_for_beam=hist_itemkey_for_beam,
+            target_itemkey=target_itemkey,
+            batch_size=batch_size,
+        )
+
+        # ===== Joint loss: sum of SID loss and click loss =====
+        total_loss = total_sid_loss + loss_bce
+
+        metrics = {
+            "beam_log_prob": click_metrics["beam_log_prob"],
+            "click_auc": click_metrics["click_auc"],
+            "click_log_prob": click_metrics["click_log_prob"],
+            **sid_metrics,
+        }
+
+        return sid_output, total_loss, metrics
+
+    def _model_step_sid(
+        self,
+        sid: torch.Tensor,
+        mask: torch.Tensor,
+        batch_size: int,
+        seq_len: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+        """
+        Training step for SID (Semantic ID) generation.
+        Stage 1 of two-stage training.
+        """
+        # ===== SID loss on full sequence =====
+        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
+
+        sid_output = self.decoder(
+            sequence_embedding=input_embeds_sid,
+            attention_mask=mask_sid,
+            use_cache=False,
+            past_key_values=None,
+        )
+
+        num_block = seq_len // self.num_hierarchies
+        sid_hidden_blk = sid_output.view(batch_size, num_block, -1, self.embedding_dim)
+        sid_targets = sid.view(batch_size, num_block, self.num_hierarchies).clone()
+        mask_blk = mask.view(batch_size, num_block, self.num_hierarchies).clone()
 
         total_sid_loss = 0
         metrics = {}
 
         for h in range(self.num_hierarchies):
-            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B_pos, num_block, C)
+            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
             h_targets = sid_targets[:, :, h].long() - 1
             h_mask = mask_blk[:, :, h]
 
@@ -990,103 +974,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
                 metrics[f"hit@10_sid{h}"] = hit_rate
 
-        # ===== Part 2: Click loss (positive samples only) =====
-        target_itemkey = hist_itemkey_pos[:, -1]
-
-        # Remove last block for input
-        hist_sid = sid_pos[:, :-self.num_hierarchies]
-        hist_mask = mask_pos[:, :-self.num_hierarchies]
-        hist_itemkey_for_beam = hist_itemkey_pos[:, :-1]
-
-        # ===== Beam search path (hard negatives) =====
-        _, loss_bce, click_metrics = self._compute_click_loss_with_beam_search(
-            hist_sid=hist_sid,
-            hist_mask=hist_mask,
-            hist_itemkey_for_beam=hist_itemkey_for_beam,
-            target_itemkey=target_itemkey,
-            batch_size=B_pos,
-        )
-        metrics["beam_log_prob"] = click_metrics["beam_log_prob"]
-        metrics["click_auc"] = click_metrics["click_auc"]
-        metrics["click_log_prob"] = click_metrics["click_log_prob"]
-
-        # Increment step counter
-        self.training_step_counter.add_(1)
-
-        return sid_output, total_sid_loss + loss_bce, metrics
-
-    def _model_step_fast(
-        self,
-        sid: torch.Tensor,
-        mask: torch.Tensor,
-        similar_itemkey: torch.Tensor,
-        click_label: torch.Tensor,
-        B: int,
-        S: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
-        """
-        Fast training step using teacher forcing (no beam search).
-        """
-        input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
-        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
-        input_embeds = torch.concat([input_embeds_sid, input_embeds_similar_item], dim=1)
-        input_mask = torch.concat([mask_sid, mask_similar_item], dim=1)
-
-        # ===== Forward =====
-        model_output = self.decoder(
-            sequence_embedding=input_embeds,
-            attention_mask=input_mask,
-            past_key_values=None,
-        )
-
-        click_logits = self.decoder.click_head(model_output[:, -1, :]).squeeze(-1)
-        click_probs = torch.sigmoid(click_logits)
-        loss_bce = self.click_loss_fn(click_logits, click_label)
-
-        with torch.no_grad():
-            auc = binary_auroc(click_probs, click_label.long())
-            click_log_prob = F.logsigmoid(click_logits).mean()
-
-        # ===== Calculate SID loss =====
-        L2 = similar_itemkey.size(1)
-        sid_hidden = model_output[:, :model_output.size(1) - L2, :]
-        num_block = S // self.num_hierarchies
-        sid_hidden_blk = sid_hidden.view(B, num_block, -1, self.embedding_dim)
-        sid_targets = sid.view(B, num_block, self.num_hierarchies).clone()
-        mask_blk = mask.view(B, num_block, self.num_hierarchies).clone()
-
-        # Mask negative samples (non-clicked items)
-        neg_mask = (click_label == 0)
-        sid_targets[neg_mask, -1, :] = self.padding_token
-        mask_blk[neg_mask, -1, :] = 0
-
-        total_sid_loss = 0
-        metrics = {
-            "click_auc": auc,
-            "click_log_prob": click_log_prob,
-        }
-
-        for h in range(self.num_hierarchies):
-            h_logits = self.decoder.sid_head[h](sid_hidden_blk[:, :, h, :])  # (B, num_block, C)
-            h_targets = sid_targets[:, :, h].long() - 1
-            h_mask = mask_blk[:, :, h]
-
-            h_loss = self.sid_loss_fn(
-                h_logits.reshape(-1, h_logits.size(-1)),
-                h_targets.reshape(-1)
-            )
-            total_sid_loss += h_loss
-
-            with torch.no_grad():
-                _, top10_indices = h_logits.topk(10, dim=-1)
-                hit = (top10_indices == h_targets.unsqueeze(-1)).any(dim=-1)  # (B, num_block)
-                hit_rate = (hit * h_mask).sum() / h_mask.sum().clamp_min(1)
-                metrics[f"hit@10_sid{h}"] = hit_rate
-
-        # Increment step counter
-        self.training_step_counter.add_(1)
-
-        return model_output, total_sid_loss + loss_bce, metrics
+        return sid_output, total_sid_loss, metrics
 
     def _compute_click_loss_with_beam_search(
         self,
@@ -1136,8 +1024,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
         segment_mask = torch.concat(
             [
-                torch.ones(B * self.top_k_for_generation, 1, device=self.device),
-                torch.ones(B * self.top_k_for_generation, 1, device=self.device),
+                torch.ones(B * self.top_k_for_generation, 2, device=self.device),
                 mask_similar_item,
             ],
             dim=-1,
@@ -1159,6 +1046,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
         generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
         click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()  # (B, top_k)
+
+        # Handle the case where no beam matches the target (no positive sample)
+        # In this case, randomly select one beam as the positive sample
+        no_hit_mask = (click_labels.sum(dim=1) == 0)  # (B,)
+        if no_hit_mask.any():
+            # For samples with no hit, randomly select a beam as positive
+            random_beam_indices = torch.randint(
+                0, self.top_k_for_generation, (B,), device=click_labels.device
+            )
+            # Only apply to samples with no hit (vectorized)
+            click_labels[no_hit_mask, random_beam_indices[no_hit_mask]] = 1.0
 
         # BCE loss for click prediction
         loss_bce = self.click_loss_fn(click_logits, click_labels)
@@ -1344,6 +1242,7 @@ class SemanticIDDecoderModule(torch.nn.Module):
         sid_head: Optional[torch.nn.Module] = None,
         click_head: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
+        click_head_requires_grad: bool = True,
     ) -> None:
         """
         Initialize the SemanticIDDecoderModule.
@@ -1351,9 +1250,11 @@ class SemanticIDDecoderModule(torch.nn.Module):
         Parameters:
         decoder (transformers.PreTrainedModel): the encoder model (e.g., transformers.T5EncoderModel).
         sid_head (torch.nn.Module): the mlp layers used to project the decoder output to the embedding table.
+        click_head (torch.nn.Module): the head used for click prediction.
         bos_token (Optional[torch.nn.Parameter]):
             the bos token used to prompt the decoder.
             if None, then this means the decoder is used standalone without an encoder.
+        click_head_requires_grad (bool): whether click_head requires grad. Used for two-stage training.
         """
 
         super().__init__()
@@ -1364,6 +1265,12 @@ class SemanticIDDecoderModule(torch.nn.Module):
         self.bos_token = bos_token
         self.sid_head = sid_head
         self.click_head = click_head
+
+        # Set requires_grad for click_head (for two-stage training)
+        if self.click_head is not None:
+            for param in self.click_head.parameters():
+                param.requires_grad = click_head_requires_grad
+
         # deleting embedding table in the decoder to save space
         self.decoder.embed_tokens = torch.nn.Identity()
 
