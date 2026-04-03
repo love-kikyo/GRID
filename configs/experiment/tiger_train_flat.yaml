@@ -21,6 +21,9 @@ test: true
 ckpt_path: null
 seed: 42
 
+# Training task: "sid" or "click"
+training_task: sid
+
 # =============================================================================
 # Paths Configuration
 # =============================================================================
@@ -54,20 +57,6 @@ data_loading:
         type:
           _target_: torch.__dict__.get
           _args_: [int32]
-      # - name: similar_context
-      #   num_placeholder_tokens: 0
-      #   semantic_ids: ???
-      #   type:
-      #     _target_: torch.__dict__.get
-      #     _args_: [int32]
-      # - name: click_label
-      #   type:
-      #     _target_: torch.__dict__.get
-      #     _args_: [int32]
-      # - name: target_item
-      #   type:
-      #     _target_: torch.__dict__.get
-      #     _args_: [int32]
 
   train_dataloader_config:
     dataloader:
@@ -278,7 +267,8 @@ model:
   num_hierarchies: ${num_hierarchies}
   num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
   num_user_bins: null
-  sid_warmup_steps: 90000
+  training_task: ${training_task}
+  load_only_weights: false
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
   masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
@@ -316,7 +306,7 @@ optim:
     _target_: transformers.get_cosine_schedule_with_warmup
     _partial_: true
     num_warmup_steps: 20000
-    num_training_steps: ${trainer.max_steps}
+    num_training_steps: 120000
 
 # =============================================================================
 # Evaluation Configuration
@@ -392,7 +382,7 @@ trainer:
   default_root_dir: ${paths.output_dir}
   precision: bf16-mixed
   min_steps: 1
-  max_steps: 150000
+  max_steps: 120000
   max_epochs: null
   min_epochs: 0
   limit_train_batches: 1.0
@@ -410,3 +400,7 @@ trainer:
   strategy: ddp
   sync_batchnorm: true
   num_sanity_val_steps: 0
+
+defaults:
+  - _self_
+  - optional config_override:

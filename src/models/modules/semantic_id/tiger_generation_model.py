@@ -1,7 +1,8 @@
 import logging
 import numpy as np
+import os
 import time
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import transformers
@@ -40,7 +41,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         top_k_for_score: int,
         padding_token: int,
         masking_token: int,
-        sid_warmup_steps: int = 10000,
         **kwargs,
     ) -> None:
         """
@@ -78,7 +78,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         self.top_k_for_generation = top_k_for_generation
         self.top_k_for_score = top_k_for_score
-        self.sid_warmup_steps = sid_warmup_steps
         self.batch_start_time = None
         self.prev_batch_end_time = None
         self.total_val_time = 0
@@ -87,55 +86,6 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         # Metrics accumulators for validation logging
         self.click_log_prob_accumulator = MeanMetric()
         self.beam_log_prob_accumulator = MeanMetric()
-
-    def _check_and_update_training_stage(self):
-        """Check current training stage and update requires_grad accordingly.
-
-        This method should be called at the beginning of each training step.
-        It handles the transition from SID training stage to joint training stage.
-
-        Stage 1 (SID warmup): Only sid_head has gradients, click_head frozen.
-        Stage 2 (Joint training): Both sid_head and click_head have gradients.
-
-        Note: Uses self.global_step which accounts for gradient accumulation,
-        representing the actual optimizer update step count.
-        """
-        # Use global_step which accounts for gradient accumulation
-        current_step = self.global_step
-        is_sid_stage = current_step < self.sid_warmup_steps
-
-        # Check if we need to transition stages
-        if not hasattr(self, "_current_stage"):
-            self._current_stage = None
-
-        new_stage = "sid" if is_sid_stage else "joint"
-
-        if self._current_stage != new_stage:
-            # Stage transition detected - update requires_grad
-            model = self.module if hasattr(self, "module") else self
-
-            if new_stage == "sid":
-                # Entering SID training stage: freeze click_head, unfreeze sid_head
-                if hasattr(model, "decoder"):
-                    if hasattr(model.decoder, "click_head") and model.decoder.click_head is not None:
-                        for param in model.decoder.click_head.parameters():
-                            param.requires_grad = False
-                    if hasattr(model.decoder, "sid_head") and model.decoder.sid_head is not None:
-                        for param in model.decoder.sid_head.parameters():
-                            param.requires_grad = True
-                logging.info(f"[Stage Transition] Entering SID training stage at step {current_step}")
-            else:
-                # Entering joint training stage: BOTH sid_head and click_head are unfrozen
-                if hasattr(model, "decoder"):
-                    if hasattr(model.decoder, "sid_head") and model.decoder.sid_head is not None:
-                        for param in model.decoder.sid_head.parameters():
-                            param.requires_grad = True
-                    if hasattr(model.decoder, "click_head") and model.decoder.click_head is not None:
-                        for param in model.decoder.click_head.parameters():
-                            param.requires_grad = True
-                logging.info(f"[Stage Transition] Entering joint training stage (both heads) at step {current_step}")
-
-            self._current_stage = new_stage
 
     def _spawn_embedding_tables(
         self,
@@ -383,6 +333,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         should_check_prefix: bool = False,
         prediction_key_name: str = "user_id",
         prediction_value_name: str = "semantic_ids",
+        training_task: str = "sid",
+        load_only_weights: bool = False,
+        manual_ckpt_path: Optional[str] = None,
         **kwargs,
     ) -> None:
         """
@@ -396,6 +349,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         num_user_bins (Optional[int]): the number of bins for user in the dataset (this number equals to the number of rows in the embedding table ).
         embedding_dim (Optional[int]): the dimension of the embeddings.
         should_check_prefix (bool): whether to check if the prefix is valid.
+        manual_ckpt_path (Optional[str]): Path to checkpoint for manual weight loading.
+            When load_only_weights=True and manual_ckpt_path is set, weights are loaded
+            manually in setup() to avoid Lightning's automatic state restoration.
         """
         if isinstance(codebooks, np.ndarray):
             codebooks = torch.from_numpy(codebooks)
@@ -417,6 +373,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             **kwargs,
         )
 
+        self.training_task = training_task
+        self.load_only_weights = load_only_weights
+        self._manual_ckpt_path = manual_ckpt_path
+
         # bos_token used to prompt the decoder to generate the first token
         bos_token = torch.nn.Parameter(
             torch.randn(1, self.embedding_dim), requires_grad=True
@@ -436,7 +396,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 ]
             ),
             click_head=torch.nn.Linear(self.embedding_dim, 1, bias=False),
-            click_head_requires_grad=False,  # Initially freeze click_head for SID stage
         )
 
         # generate embedding tables for each hierarchy
@@ -497,6 +456,102 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         if self.scl_embedding is None:
             arr = np.load(self.scl_embedding_path, mmap_mode="r")
             self.scl_embedding = torch.from_numpy(arr)
+
+        if stage == "fit":
+            self._set_trainable_params()
+            # Manually load weights if load_only_weights is True and ckpt_path is set
+            # This avoids Lightning's automatic state restoration
+            if self.load_only_weights and hasattr(self, '_manual_ckpt_path') and self._manual_ckpt_path:
+                self._load_weights_only()
+
+    def _load_weights_only(self):
+        """Load only model weights from checkpoint, skipping optimizer/trainer states."""
+        import os
+        ckpt_path = self._manual_ckpt_path
+        if not os.path.exists(ckpt_path):
+            logging.warning(f"Checkpoint not found: {ckpt_path}")
+            return
+
+        logging.info(f"[load_only_weights] Loading model weights from: {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False)
+
+        # Load only model state dict
+        if 'state_dict' in checkpoint:
+            self.load_state_dict(checkpoint['state_dict'], strict=False)
+            logging.info("[load_only_weights] Model weights loaded successfully")
+        else:
+            logging.warning("[load_only_weights] No state_dict found in checkpoint")
+            return
+
+        # Mark that we need to reset trainer states in on_fit_start
+        self._needs_trainer_reset = True
+
+    def on_fit_start(self) -> None:
+        """Reset trainer step/epoch/optimizer/scheduler when weights were manually loaded."""
+        super().on_fit_start()
+        if getattr(self, '_needs_trainer_reset', False):
+            logging.info("[load_only_weights] Resetting trainer global_step and current_epoch to 0")
+            # Use internal attributes to reset read-only properties
+            self.trainer._global_step = 0
+            self.trainer._current_epoch = 0
+            self.trainer.fit_loop.epoch_progress.current.reset()
+            self.trainer.fit_loop.epoch_progress.current.completed = 0
+            self.trainer.fit_loop.epoch_loop.batch_progress.current.reset()
+            self.trainer.fit_loop.epoch_loop.batch_progress.current.completed = 0
+
+            # Reset callbacks that track step/epoch state
+            for callback in self.trainer.callbacks:
+                if hasattr(callback, '_current_epoch'):
+                    callback._current_epoch = 0
+                if hasattr(callback, '_global_step'):
+                    callback._global_step = 0
+
+            # Reset optimizer states (re-initialize instead of clear)
+            for optimizer in self.trainer.optimizers:
+                # Reset all state values but keep parameter keys
+                for param in optimizer.state:
+                    optimizer.state[param] = {}
+                # Re-initialize state for all parameters
+                optimizer.zero_grad(set_to_none=True)
+
+            # Reset scheduler states
+            lr_schedulers = getattr(self.trainer, 'lr_scheduler_configs', getattr(self.trainer, 'lr_schedulers', []))
+            for scheduler_config in lr_schedulers:
+                scheduler_obj = scheduler_config['scheduler'] if isinstance(scheduler_config, dict) else scheduler_config
+                if hasattr(scheduler_obj, '_reset'):
+                    scheduler_obj._reset()
+                elif hasattr(scheduler_obj, 'last_epoch'):
+                    scheduler_obj.last_epoch = 0
+                if hasattr(scheduler_obj, '_last_lr'):
+                    initial_lr = self.trainer.optimizers[0].param_groups[0].get('initial_lr', self.trainer.optimizers[0].param_groups[0]['lr'])
+                    scheduler_obj._last_lr = [initial_lr]
+
+            # Clear the flag
+            self._needs_trainer_reset = False
+
+    def _set_trainable_params(self):
+        """Set requires_grad for head parameters based on training_task.
+
+        This must be called in setup("fit") before DDP wrapper is created.
+
+        New two-stage training flow:
+        - Stage 1 (training_task=sid): Train sid_head only (freeze click_head)
+        - Stage 2 (training_task=click): Joint training of sid_head and click_head (both trainable)
+        """
+        if self.training_task == "sid":
+            # Stage 1: SID only - only sid_head is trainable
+            for p in self.decoder.sid_head.parameters():
+                p.requires_grad = True
+            for p in self.decoder.click_head.parameters():
+                p.requires_grad = False
+            logging.info("Stage 1: Training sid_head only (click_head frozen)")
+        elif self.training_task == "click":
+            # Stage 2: Joint training - both heads are trainable
+            for p in self.decoder.sid_head.parameters():
+                p.requires_grad = True
+            for p in self.decoder.click_head.parameters():
+                p.requires_grad = True
+            logging.info("Stage 2: Joint training sid_head and click_head")
 
     def _beam_search_semantic_ids(
         self,
@@ -767,9 +822,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         batch = batch[0]
         model_input: SequentialModelInputData = batch
 
-        # Check and handle stage transition
-        self._check_and_update_training_stage()
-
         _, loss, metrics = self.model_step(
             model_input=model_input, mode=ModelMode.TRAIN
         )
@@ -833,19 +885,20 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             )
             return result_dict
 
-        # ===== Two-stage training: decide which stage based on global_step =====
-        is_sid_stage = self.global_step < self.sid_warmup_steps
+        # ===== Training mode: call appropriate training step based on task =====
+        # Use self.training_task to determine which heads to train:
+        # "sid": Stage 1 - train sid_head only (freeze click_head)
+        # "click": Stage 2 - joint training of sid_head and click_head
+        training_task = getattr(self, "training_task", "sid")
 
-        if is_sid_stage:
-            # Stage 1: SID training (click_head frozen, no gradients)
+        if training_task == "sid":
             return self._model_step_sid(
                 sid=sid,
                 mask=mask,
                 batch_size=B,
                 seq_len=S,
             )
-        else:
-            # Stage 2: Joint training (BOTH sid_head and click_head have gradients)
+        else:  # training_task == "click"
             return self._model_step_click_head(
                 sid=sid,
                 mask=mask,
@@ -863,10 +916,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         seq_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Training step for joint training of click_head and sid_head.
-        Stage 2 of two-stage training - BOTH heads participate.
+        Stage 2: Joint training of click_head and sid_head.
+        Both heads are trained together for 90k steps.
         """
         target_itemkey = hist_itemkey[:, -1]
+        # Extract target SID (last block of the sequence)
+        target_sid = sid[:, -self.num_hierarchies:].contiguous()
         # Remove last block for input (history for beam search)
         hist_sid = sid[:, :-self.num_hierarchies]
         hist_mask = mask[:, :-self.num_hierarchies]
@@ -913,6 +968,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             hist_mask=hist_mask,
             hist_itemkey_for_beam=hist_itemkey_for_beam,
             target_itemkey=target_itemkey,
+            target_sid=target_sid,
             batch_size=batch_size,
         )
 
@@ -936,8 +992,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         seq_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Training step for SID (Semantic ID) generation.
-        Stage 1 of two-stage training.
+        Stage 2: SID (Semantic ID) generation training.
+        Only sid_head is trained for additional 30k steps from joint checkpoint.
+        The checkpoint is loaded with full trainer state for LR continuity.
         """
         # ===== SID loss on full sequence =====
         input_embeds_sid, mask_sid = self.build_sid_block_embeds(sid=sid, attention_mask=mask)
@@ -982,6 +1039,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         hist_mask: torch.Tensor,
         hist_itemkey_for_beam: torch.Tensor,
         target_itemkey: torch.Tensor,
+        target_sid: torch.Tensor,
         batch_size: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
@@ -1003,6 +1061,29 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         # generated_ids: (B * top_k, H)
         # beam_log_prob: (B, top_k)
         generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
+
+        # Check which samples have no positive sample in beam
+        generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
+        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
+        has_hit = (generated_itemkey_2d == target_itemkey_expanded).any(dim=1)  # (B,)
+        no_hit_mask = ~has_hit  # (B,)
+
+        if no_hit_mask.any():
+            # For samples with no hit, randomly select a beam to replace with GT
+            num_no_hit = no_hit_mask.sum().item()
+            random_beam_indices = torch.randint(
+                0, self.top_k_for_generation, (num_no_hit,), device=generated_ids.device
+            )
+
+            # Compute indices in flattened generated_ids
+            no_hit_indices = torch.where(no_hit_mask)[0]  # (num_no_hit,)
+            replace_indices = no_hit_indices * self.top_k_for_generation + random_beam_indices
+
+            # Replace selected beams with target SID
+            generated_ids[replace_indices] = target_sid[no_hit_indices]
+
+            # Recompute generated_itemkey after replacement
+            generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
 
         # Build segment2 (similar items) for each candidate
         hist_itemkey_expanded = hist_itemkey_for_beam.repeat_interleave(self.top_k_for_generation, dim=0)
@@ -1043,20 +1124,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         click_logits = click_logits.view(B, self.top_k_for_generation)  # (B, top_k)
 
         # Create labels - correct candidate gets 1, others get 0
+        # Now GT is guaranteed to be in the candidates (either from beam or replaced)
         target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
         generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
         click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()  # (B, top_k)
-
-        # Handle the case where no beam matches the target (no positive sample)
-        # In this case, randomly select one beam as the positive sample
-        no_hit_mask = (click_labels.sum(dim=1) == 0)  # (B,)
-        if no_hit_mask.any():
-            # For samples with no hit, randomly select a beam as positive
-            random_beam_indices = torch.randint(
-                0, self.top_k_for_generation, (B,), device=click_labels.device
-            )
-            # Only apply to samples with no hit (vectorized)
-            click_labels[no_hit_mask, random_beam_indices[no_hit_mask]] = 1.0
 
         # BCE loss for click prediction
         loss_bce = self.click_loss_fn(click_logits, click_labels)
@@ -1242,7 +1313,6 @@ class SemanticIDDecoderModule(torch.nn.Module):
         sid_head: Optional[torch.nn.Module] = None,
         click_head: Optional[torch.nn.Module] = None,
         bos_token: Optional[torch.nn.Parameter] = None,
-        click_head_requires_grad: bool = True,
     ) -> None:
         """
         Initialize the SemanticIDDecoderModule.
@@ -1254,7 +1324,6 @@ class SemanticIDDecoderModule(torch.nn.Module):
         bos_token (Optional[torch.nn.Parameter]):
             the bos token used to prompt the decoder.
             if None, then this means the decoder is used standalone without an encoder.
-        click_head_requires_grad (bool): whether click_head requires grad. Used for two-stage training.
         """
 
         super().__init__()
@@ -1265,11 +1334,6 @@ class SemanticIDDecoderModule(torch.nn.Module):
         self.bos_token = bos_token
         self.sid_head = sid_head
         self.click_head = click_head
-
-        # Set requires_grad for click_head (for two-stage training)
-        if self.click_head is not None:
-            for param in self.click_head.parameters():
-                param.requires_grad = click_head_requires_grad
 
         # deleting embedding table in the decoder to save space
         self.decoder.embed_tokens = torch.nn.Identity()

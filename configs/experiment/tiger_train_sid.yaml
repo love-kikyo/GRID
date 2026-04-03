@@ -1,0 +1,10 @@
+# @package _global_
+# Stage 1: Train sid_head only for 70k steps from joint checkpoint
+
+training_task: sid
+
+tags:
+  - tiger-sid-stage
+
+trainer:
+  max_steps: 40000
