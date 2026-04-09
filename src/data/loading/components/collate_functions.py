@@ -196,20 +196,18 @@ def collate_fn_train(
     padding_token: int = 0,
     oov_token: Optional[int] = None,
     data_augmentation_functions: Optional[List[Dict[str, callable]]] = None,  # type: ignore
-    hist_itemkey_min_length: int = 100,
 ) -> SequentialModelInputData:
     """Collate function for training dataloader with masking and padding.
 
     Args:
         batch: Batch of data, either a list of dicts (per-row loading) or dict of tensors (per-batch loading).
         sequence_length: Target length for sequence_data padding/trimming.
-        hist_itemkey_length: Target length for hist_itemkey padding/trimming.
+        hist_itemkey_length: Minimum length for hist_itemkey field (default 100).
+            Sequences shorter than this will be padded, longer sequences are kept as-is.
         masking_token: Token value used for masking.
         padding_token: Token value used for padding.
         oov_token: If provided, removes this token from sequences.
         data_augmentation_functions: List of augmentation functions to apply.
-        hist_itemkey_min_length: Minimum length for hist_itemkey field (default 100).
-            Sequences shorter than this will be padded, longer sequences are kept as-is.
 
     Returns:
         SequentialModelInputData with transformed sequences and mask.
@@ -237,7 +235,10 @@ def collate_fn_train(
             model_input_data.mask = (current_sequence != padding_token).long()
         elif field_name == "hist_itemkey":
             current_sequence = left_pad_sequence(current_sequence, padding_value=masking_token)
-            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=hist_itemkey_length, padding_token=masking_token)
+            # Only pad to minimum length if shorter, don't trim longer sequences
+            if current_sequence.size(1) < hist_itemkey_length:
+                pad_len = hist_itemkey_length - current_sequence.size(1)
+                current_sequence = F.pad(current_sequence, (pad_len, 0), value=masking_token)
         else:
             raise ValueError(f"Unexpected feature '{field_name}' in collate_fn_train")
 
