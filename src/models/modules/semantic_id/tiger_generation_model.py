@@ -405,7 +405,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             embedding_dim=self.embedding_dim,
         )
         self.item_embedding_table = DualHashEmbedding(
-            num_buckets=1_000_000,
+            num_buckets=300_000,
             embedding_dim=self.embedding_dim,
             masking_token=self.masking_token,
         )
@@ -634,8 +634,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             batch_size: Original batch size B
 
         Returns:
-            rerank_ids: Reranked semantic IDs (B, top_k_for_score, num_hierarchies)
-            rerank_scores: Reranked scores (B, top_k_for_score)
+            rerank_ids: Reranked semantic IDs (B, top_k_for_generation, num_hierarchies)
+            rerank_scores: Reranked scores (B, top_k_for_generation)
         """
         B = batch_size
         target_itemkey = (generated_ids * self.powers).sum(dim=-1)
@@ -668,7 +668,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.beam_log_prob_accumulator(beam_log_prob.mean())
 
         final_score = click_log_prob + beam_log_prob
-        topk_results = torch.topk(final_score, k=self.top_k_for_score, dim=-1)
+        topk_results = torch.topk(final_score, k=self.top_k_for_generation, dim=-1)
         rerank_scores, indices_topk = topk_results.values, topk_results.indices
 
         replace_indices = (
@@ -676,7 +676,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             + (torch.arange(B, device=self.device) * self.top_k_for_generation).unsqueeze(-1)
         ).flatten()
 
-        rerank_ids = generated_ids[replace_indices].view(B, self.top_k_for_score, -1)
+        rerank_ids = generated_ids[replace_indices].view(B, self.top_k_for_generation, -1)
 
         return rerank_ids, rerank_scores
 

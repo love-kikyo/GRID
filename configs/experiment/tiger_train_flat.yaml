@@ -281,6 +281,8 @@ model:
     _args_:
       - ${sorted_row_indices_path}
   scl_embedding_path: ${scl_embedding_path}
+  top_k_for_generation: 20
+  top_k_for_score: 10
 
 # =============================================================================
 # Loss Configuration
@@ -353,6 +355,18 @@ callbacks:
     train_time_interval: null
     every_n_epochs: null
     save_on_train_epoch_end: false
+  early_stopping:
+    _target_: lightning.pytorch.callbacks.EarlyStopping
+    monitor: ${callbacks.model_checkpoint.monitor}
+    min_delta: 0.0
+    patience: 5
+    verbose: true
+    mode: ${callbacks.model_checkpoint.mode}
+    strict: true
+    check_finite: true
+    stopping_threshold: null
+    divergence_threshold: null
+    check_on_train_epoch_end: false
   model_summary:
     _target_: lightning.pytorch.callbacks.RichModelSummary
     max_depth: -1
