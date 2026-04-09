@@ -11,6 +11,7 @@ scl_embedding_path: ???
 num_hierarchies: ???
 num_embeddings_per_hierarchy: ???
 sequence_length: 32
+hist_itemkey_length: 100
 
 task_name: train
 id: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -85,6 +86,7 @@ data_loading:
         _target_: src.data.loading.components.collate_functions.collate_fn_train
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
+        hist_itemkey_length: ${hist_itemkey_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig
@@ -143,6 +145,7 @@ data_loading:
         _target_: src.data.loading.components.collate_functions.collate_fn_train
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
+        hist_itemkey_length: ${hist_itemkey_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig
@@ -201,6 +204,7 @@ data_loading:
         _target_: src.data.loading.components.collate_functions.collate_fn_train
         _partial_: true
         sequence_length: ${data_loading.train_dataloader_config.dataloader.sequence_length}
+        hist_itemkey_length: ${hist_itemkey_length}
         padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
       dataset_config:
         _target_: src.data.loading.components.interfaces.SemanticIDDatasetConfig

@@ -191,6 +191,7 @@ def collate_fn_train(
     batch: Union[List[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]],
     labels: Dict[str, callable] = {},  # type: ignore
     sequence_length: int = 200,
+    hist_itemkey_length: int = 100,
     masking_token: int = -1,
     padding_token: int = 0,
     oov_token: Optional[int] = None,
@@ -201,7 +202,8 @@ def collate_fn_train(
 
     Args:
         batch: Batch of data, either a list of dicts (per-row loading) or dict of tensors (per-batch loading).
-        sequence_length: Target length for sequence padding/trimming.
+        sequence_length: Target length for sequence_data padding/trimming.
+        hist_itemkey_length: Target length for hist_itemkey padding/trimming.
         masking_token: Token value used for masking.
         padding_token: Token value used for padding.
         oov_token: If provided, removes this token from sequences.
@@ -231,14 +233,11 @@ def collate_fn_train(
         # Apply field-specific padding/trimming
         if field_name == "sequence_data":
             current_sequence = left_pad_sequence(current_sequence, padding_value=padding_token)
-            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=32, padding_token=padding_token)
+            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=sequence_length, padding_token=padding_token)
             model_input_data.mask = (current_sequence != padding_token).long()
         elif field_name == "hist_itemkey":
             current_sequence = left_pad_sequence(current_sequence, padding_value=masking_token)
-            # Only pad to minimum length if shorter, don't trim longer sequences
-            if current_sequence.size(1) < hist_itemkey_min_length:
-                pad_len = hist_itemkey_min_length - current_sequence.size(1)
-                current_sequence = F.pad(current_sequence, (pad_len, 0), value=masking_token)
+            current_sequence = pad_or_trim_sequence(current_sequence, sequence_length=hist_itemkey_length, padding_token=masking_token)
         else:
             raise ValueError(f"Unexpected feature '{field_name}' in collate_fn_train")
 
