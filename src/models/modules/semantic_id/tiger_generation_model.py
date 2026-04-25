@@ -86,6 +86,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         # Metrics accumulators for validation logging
         self.click_log_prob_accumulator = MeanMetric()
         self.beam_log_prob_accumulator = MeanMetric()
+        self.click_auc_accumulator = MeanMetric()
 
     def _spawn_embedding_tables(
         self,
@@ -241,6 +242,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         super().on_validation_epoch_start()
         self.click_log_prob_accumulator.reset()
         self.beam_log_prob_accumulator.reset()
+        self.click_auc_accumulator.reset()
 
     def on_validation_epoch_end(self) -> None:
         super().on_validation_epoch_end()
@@ -258,6 +260,13 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             prog_bar=False,
             logger=True,
         )
+        self.log(
+            "val/click_auc",
+            self.click_auc_accumulator,
+            sync_dist=True,
+            prog_bar=True,
+            logger=True,
+        )
 
     def on_validation_end(self):
         super().on_validation_end()
@@ -271,6 +280,20 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
     def on_test_start(self):
         super().on_test_start()
         self._make_deterministic(is_training=False)
+
+    def on_test_epoch_start(self) -> None:
+        super().on_test_epoch_start()
+        self.click_auc_accumulator.reset()
+
+    def on_test_epoch_end(self) -> None:
+        super().on_test_epoch_end()
+        self.log(
+            "test/click_auc",
+            self.click_auc_accumulator,
+            sync_dist=True,
+            prog_bar=True,
+            logger=True,
+        )
 
     def on_test_end(self):
         super().on_test_end()
@@ -662,12 +685,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=past_key_values,
         )
 
-        click_logits = self.decoder.click_head(decoder_output[:, -1, :]).view(B, self.top_k_for_generation)
+        click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)  # (B * top_k)
         click_log_prob = F.logsigmoid(click_logits)
         self.click_log_prob_accumulator(click_log_prob.mean())
         self.beam_log_prob_accumulator(beam_log_prob.mean())
 
-        final_score = click_log_prob + beam_log_prob
+        final_score = click_log_prob.view(B, self.top_k_for_generation) + beam_log_prob
         topk_results = torch.topk(final_score, k=self.top_k_for_generation, dim=-1)
         rerank_scores, indices_topk = topk_results.values, topk_results.indices
 
@@ -677,8 +700,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         ).flatten()
 
         rerank_ids = generated_ids[replace_indices].view(B, self.top_k_for_generation, -1)
+        # Index click_logits before reshape, then reshape to match rerank order
+        rerank_click_logits = click_logits[replace_indices].view(B, self.top_k_for_generation)
 
-        return rerank_ids, rerank_scores
+        return rerank_ids, rerank_scores, rerank_click_logits
 
     def generate(
         self,
@@ -709,7 +734,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         beam_scores = beam_log_prob
 
         # Step 2: Rerank using click prediction (uses KV cache to maintain historical context)
-        rerank_ids, rerank_scores = self._rerank_with_click_prediction(
+        rerank_ids, rerank_scores, rerank_click_logits = self._rerank_with_click_prediction(
             generated_ids=generated_ids,
             beam_log_prob=beam_log_prob,
             input_mask=input_mask,
@@ -725,7 +750,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             },
             "rerank": {
                 "ids": rerank_ids,
-                "scores": rerank_scores
+                "scores": rerank_scores,
+                "click_logits": rerank_click_logits
             }
         }
 
@@ -805,6 +831,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             generated_ids=result_dict["rerank"]["ids"].detach(),
             labels=labels.detach(),
         )
+
+        # Compute click AUC for rerank results
+        rerank_click_logits = result_dict["rerank"]["click_logits"]  # (B, top_k)
+        rerank_ids = result_dict["rerank"]["ids"]  # (B, top_k, H)
+        target_itemkey = (labels * self.powers).sum(dim=-1)  # (B,)
+        rerank_itemkey = (rerank_ids * self.powers).sum(dim=-1)  # (B, top_k)
+        click_labels = (rerank_itemkey == target_itemkey.unsqueeze(1)).float()  # (B, top_k)
+        click_probs = torch.sigmoid(rerank_click_logits)
+        auc = binary_auroc(click_probs.view(-1), click_labels.view(-1).long())
+        self.click_auc_accumulator(auc)
 
     def training_step(
         self,
@@ -1274,6 +1310,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         target_itemkey.shape = (B * num_beam)
         hist_itemkey.shape = (B * num_beam, num_items)
         """
+        if self.top_k_for_score == 0:
+            # Only return candidate itself (for segment 2), no retrieved items
+            return target_itemkey.unsqueeze(-1)
+
         target_emb = self.itemkey_lookup(target_itemkey)  # (B * num_beam, dim)
         hist_emb = self.itemkey_lookup(hist_itemkey)  # (B * num_beam, num_items, dim)
 
