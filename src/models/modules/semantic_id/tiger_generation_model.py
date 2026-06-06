@@ -1391,8 +1391,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             # Only return candidate itself (for segment 2), no retrieved items
             return target_itemkey.unsqueeze(-1)
 
-        target_emb = self.itemkey_lookup(target_itemkey)  # (B * num_beam, dim)
-        hist_emb = self.itemkey_lookup(hist_itemkey)  # (B * num_beam, num_items, dim)
+        # Use on-device hash embeddings here to avoid CPU-side SCL lookup IO.
+        target_emb = self.item_embedding_table(target_itemkey.unsqueeze(-1)).squeeze(1)  # (B * num_beam, dim)
+        hist_emb = self.item_embedding_table(hist_itemkey)  # (B * num_beam, num_items, dim)
 
         # cosine similarity
         sim = torch.einsum(
