@@ -199,6 +199,16 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         return past_key_values
 
+    def replace_kv_cache_rows(self, past_key_values, row_indices, replacement_past_key_values):
+        if past_key_values is None or replacement_past_key_values is None:
+            return past_key_values
+
+        for layer in range(len(past_key_values.key_cache)):
+            past_key_values.key_cache[layer][row_indices] = replacement_past_key_values.key_cache[layer]
+            past_key_values.value_cache[layer][row_indices] = replacement_past_key_values.value_cache[layer]
+
+        return past_key_values
+
     def _make_deterministic(self, is_training: bool):
         """
         Make the model deterministic by turning off some flags.
@@ -631,6 +641,61 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             )
 
         return generated_ids, beam_log_prob, input_mask, past_key_values
+
+    def _build_cache_for_given_sid(
+        self,
+        hist_sid: torch.Tensor,
+        hist_mask: torch.Tensor,
+        target_sid: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, DynamicCache]:
+        """
+        Rebuild the decoder cache for a fixed SID path.
+
+        This mirrors `_beam_search_semantic_ids` but follows a prescribed target SID
+        instead of branching with beam search. The returned cache is aligned with the
+        state expected by reranking: the last SID token is included in `generated_ids`
+        and `input_mask`, but has not yet been forwarded into the cache.
+        """
+        B = hist_sid.size(0)
+        if B == 0:
+            return target_sid, hist_mask, DynamicCache()
+
+        input_embeds, input_mask = self.build_sid_block_embeds(
+            sid=hist_sid,
+            attention_mask=hist_mask,
+            add_bos_token=True,
+        )
+        past_key_values = DynamicCache()
+
+        _, past_key_values = self.decoder(
+            sequence_embedding=input_embeds,
+            attention_mask=input_mask,
+            use_cache=True,
+            past_key_values=past_key_values,
+        )
+
+        generated_ids = target_sid[:, :1]
+        next_mask = torch.ones(B, 1, device=hist_sid.device, dtype=input_mask.dtype)
+        input_mask = torch.cat([input_mask, next_mask], dim=-1)
+
+        for hierarchy in range(1, self.num_hierarchies):
+            input_embeds = self.embed_token(
+                token_id=generated_ids[:, -1:],
+                hierarchy=hierarchy - 1,
+            )
+            _, past_key_values = self.decoder(
+                sequence_embedding=input_embeds,
+                attention_mask=input_mask,
+                use_cache=True,
+                past_key_values=past_key_values,
+            )
+
+            next_sid = target_sid[:, hierarchy:hierarchy + 1]
+            generated_ids = torch.cat([generated_ids, next_sid], dim=-1)
+            next_mask = torch.ones(B, 1, device=hist_sid.device, dtype=input_mask.dtype)
+            input_mask = torch.cat([input_mask, next_mask], dim=-1)
+
+        return generated_ids, input_mask, past_key_values
 
     def _rerank_with_click_prediction(
         self,
@@ -1115,8 +1180,20 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             no_hit_indices = torch.where(no_hit_mask)[0]  # (num_no_hit,)
             replace_indices = no_hit_indices * self.top_k_for_generation + random_beam_indices
 
-            # Replace selected beams with target SID
-            generated_ids[replace_indices] = target_sid[no_hit_indices]
+            gt_generated_ids, gt_input_mask, gt_past_key_values = self._build_cache_for_given_sid(
+                hist_sid=hist_sid[no_hit_indices],
+                hist_mask=hist_mask[no_hit_indices],
+                target_sid=target_sid[no_hit_indices],
+            )
+
+            # Replace selected beams with GT SID and its aligned cache state.
+            generated_ids[replace_indices] = gt_generated_ids
+            input_mask[replace_indices] = gt_input_mask
+            past_key_values = self.replace_kv_cache_rows(
+                past_key_values=past_key_values,
+                row_indices=replace_indices.long(),
+                replacement_past_key_values=gt_past_key_values,
+            )
 
             # Recompute generated_itemkey after replacement
             generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
