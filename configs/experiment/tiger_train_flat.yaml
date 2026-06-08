@@ -297,7 +297,7 @@ loss:
       _target_: torch.nn.CrossEntropyLoss
       ignore_index: ${sub:${data_loading.train_dataloader_config.dataloader.padding_token},1}
     click_loss:
-      _target_: torch.nn.BCEWithLogitsLoss
+      _target_: torch.nn.CrossEntropyLoss
 
 # =============================================================================
 # Optimizer & Scheduler Configuration

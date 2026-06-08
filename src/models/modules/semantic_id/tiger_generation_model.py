@@ -1148,7 +1148,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         Returns:
             decoder_output: The decoder output
-            loss_bce: BCE loss for click prediction
+            loss_rank: Group-wise ranking loss for click prediction
             metrics: Dictionary containing click metrics
         """
         B = batch_size
@@ -1236,14 +1236,14 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)  # (B * top_k,)
         click_logits = click_logits.view(B, self.top_k_for_generation)  # (B, top_k)
 
-        # Create labels - correct candidate gets 1, others get 0
-        # Now GT is guaranteed to be in the candidates (either from beam or replaced)
+        # Create labels - exactly one candidate matches the target item.
         target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
         generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
         click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()  # (B, top_k)
 
-        # BCE loss for click prediction
-        loss_bce = self.click_loss_fn(click_logits, click_labels)
+        pos_index = click_labels.argmax(dim=1).long()  # (B,)
+        rank_logits = F.logsigmoid(click_logits)
+        loss_rank = self.click_loss_fn(rank_logits, pos_index)
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
@@ -1253,7 +1253,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             # Mean click log prob for all candidates (same as eval)
             click_log_prob = F.logsigmoid(click_logits).mean()
 
-        return decoder_output, loss_bce, {
+        return decoder_output, loss_rank, {
             "click_auc": auc,
             "click_log_prob": click_log_prob,
             "beam_log_prob": beam_log_prob.mean(),
