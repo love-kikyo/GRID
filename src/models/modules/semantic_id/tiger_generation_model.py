@@ -356,9 +356,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         top_k_for_generation: int = 20,
         top_k_for_score: int = 10,
         codebooks: torch.Tensor = None,
-        sorted_item_keys: torch.Tensor = None,
-        sorted_row_indices: torch.Tensor = None,
-        scl_embedding_path: torch.Tensor = None,
         embedding_dim: int = None,
         num_hierarchies: int = None,
         num_embeddings_per_hierarchy: int = None,
@@ -388,10 +385,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         if isinstance(codebooks, np.ndarray):
             codebooks = torch.from_numpy(codebooks)
-        if isinstance(sorted_item_keys, np.ndarray):
-            sorted_item_keys = torch.from_numpy(sorted_item_keys)
-        if isinstance(sorted_row_indices, np.ndarray):
-            sorted_row_indices = torch.from_numpy(sorted_row_indices)
         if embedding_dim is None:
             embedding_dim = kwargs["decoder"].config.hidden_size
 
@@ -456,18 +449,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                          self.num_embeddings_per_hierarchy),
             persistent=False,
         )
-        self.register_buffer(
-            "sorted_item_keys",
-            sorted_item_keys.long(),
-            persistent=False,
-        )
-        self.register_buffer(
-            "sorted_row_indices",
-            sorted_row_indices.long(),
-            persistent=False,
-        )
-        self.scl_embedding_path = scl_embedding_path
-        self.scl_embedding = None
 
         # generating user embedding table
         self.user_embedding: torch.nn.Embedding = (
@@ -486,10 +467,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.prediction_value_name = prediction_value_name
     
     def setup(self, stage=None):
-        if self.scl_embedding is None:
-            arr = np.load(self.scl_embedding_path, mmap_mode="r")
-            self.scl_embedding = torch.from_numpy(arr)
-
         if stage == "fit":
             self._set_trainable_params()
             # Manually load weights if load_only_weights is True and ckpt_path is set
@@ -1356,32 +1333,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         return emb + segment_emb
 
-    def itemkey_lookup(self, key):
-        """
-        Look up item embeddings by key using pre-sorted index arrays.
-        Uses pure PyTorch operations to minimize CPU-GPU sync overhead.
-        Note: scl_embedding remains on CPU due to memory constraints with large item catalogs.
-
-        Args:
-            key: Tensor of item keys to look up
-
-        Returns:
-            Tensor of embeddings for the requested keys, moved to model device
-        """
-        pos = torch.bucketize(key, self.sorted_item_keys)
-
-        mask = pos < self.sorted_item_keys.numel()
-        pos_safe = torch.clamp(pos, max=self.sorted_item_keys.numel() - 1)
-        valid = mask & (self.sorted_item_keys[pos_safe] == key)
-        row_idx = torch.where(valid, self.sorted_row_indices[pos_safe], -1).cpu()
-
-        # Use pure PyTorch indexing instead of numpy conversion
-        # This avoids creating a new tensor and reduces synchronization overhead
-        emb = self.scl_embedding[row_idx]
-        emb[row_idx == -1] = 0
-
-        return emb.float().to(self.device)
-
     def get_similar_itemkey(self, target_itemkey, hist_itemkey):
         """
         target_itemkey.shape = (B * num_beam)
@@ -1406,7 +1357,6 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         sim = sim.masked_fill(pad_mask, -1e9)
 
         topk_idx = torch.topk(sim, k=self.top_k_for_score, dim=-1).indices
-        topk_idx = torch.sort(topk_idx, dim=-1).values
 
         similar_itemkey = torch.gather(
             hist_itemkey,

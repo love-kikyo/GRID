@@ -5,9 +5,6 @@
 # =============================================================================
 data_dir: ???
 semantic_id_path: ???
-sorted_item_keys_path: ???
-sorted_row_indices_path: ???
-scl_embedding_path: ???
 num_hierarchies: ???
 num_embeddings_per_hierarchy: ???
 sequence_length: 32
@@ -276,15 +273,6 @@ model:
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
   masking_token: ${data_loading.train_dataloader_config.dataloader.masking_token}
-  sorted_item_keys:
-    _target_: numpy.load
-    _args_:
-      - ${sorted_item_keys_path}
-  sorted_row_indices:
-    _target_: numpy.load
-    _args_:
-      - ${sorted_row_indices_path}
-  scl_embedding_path: ${scl_embedding_path}
   top_k_for_generation: 20
   top_k_for_score: 10
 
@@ -385,12 +373,15 @@ logger:
   csv:
     _target_: lightning.pytorch.loggers.csv_logs.CSVLogger
     save_dir: ${paths.output_dir}
-    name: csv/
+    name: csv
+    version: ''
     prefix: ''
   tensorboard:
     _target_: lightning.pytorch.loggers.TensorBoardLogger
     save_dir: ${paths.output_dir}
     name: tb_logs
+    version: ''
+    sub_dir: ''
 
 # =============================================================================
 # Trainer Configuration

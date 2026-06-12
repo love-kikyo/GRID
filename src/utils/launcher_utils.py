@@ -15,12 +15,12 @@ from src.utils import (
     instantiate_loggers,
     log_hyperparameters,
 )
+from src.utils.logging_utils import finalize_loggers, save_run_metadata
 from src.utils.file_utils import (
     get_last_modified_file,
     has_no_extension,
     list_subfolders,
 )
-from src.utils.logging_utils import finalize_loggers
 from src.utils.restart_job_utils import get_attribute_from_metadata_file
 from src.utils.utils import has_class_object_inside_list
 
@@ -190,6 +190,7 @@ def pipeline_launcher(cfg: DictConfig):
 
     try:
         pipeline_modules: PipelineModules = initialize_pipeline_modules(cfg)
+        save_run_metadata(cfg)
         # Log hyperparameters if loggers are present
         if len(pipeline_modules.loggers) > 0:
             command_line_logger.info("Logging hyperparameters!")

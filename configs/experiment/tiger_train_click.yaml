@@ -1,5 +1,5 @@
 # @package _global_
-# Stage 2: Joint training of click_head and sid_head for 30k steps
+# Joint training of click_head and sid_head for 300k steps
 # Usage: python src/train.py experiment=tiger_train_flat,tiger_train_click
 
 training_task: click
