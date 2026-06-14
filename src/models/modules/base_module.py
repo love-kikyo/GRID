@@ -149,17 +149,39 @@ class BaseModule(LightningModule):
         prog_bar=False,
         call_compute=False,
     ):
+        if not self.evaluators:
+            return
+
         metrics_dict = {}
+        primary_evaluator_name = self.get_primary_evaluator_name()
+        evaluator_values = {}
 
-        beam_metrics = self.evaluators["beam"].metrics
-        rerank_metrics = self.evaluators["rerank"].metrics
+        for evaluator_name, evaluator in self.evaluators.items():
+            evaluator_values[evaluator_name] = {}
+            for metric_name, metric_object in evaluator.metrics.items():
+                metric_value = metric_object.compute()
+                evaluator_values[evaluator_name][metric_name] = metric_value
 
-        for metric_name in rerank_metrics:
-            beam_value = beam_metrics[metric_name].compute()
-            rerank_value = rerank_metrics[metric_name].compute()
+                # Keep per-evaluator metrics visible when multiple evaluators are present.
+                if len(self.evaluators) > 1:
+                    metrics_dict[f"{prefix}/{evaluator_name}_{metric_name}"] = metric_value
 
-            metrics_dict[f"{prefix}/{metric_name}"] = rerank_value
-            metrics_dict[f"{prefix}/{metric_name}_gain"] = rerank_value - beam_value
+        if primary_evaluator_name is None:
+            primary_evaluator_name = next(iter(self.evaluators))
+
+        for metric_name, metric_value in evaluator_values[primary_evaluator_name].items():
+            metrics_dict[f"{prefix}/{metric_name}"] = metric_value
+
+        if self.should_log_rerank_gain():
+            beam_metrics = evaluator_values.get("beam", {})
+            rerank_metrics = evaluator_values.get("rerank", {})
+
+            for metric_name, rerank_value in rerank_metrics.items():
+                if metric_name not in beam_metrics:
+                    continue
+                metrics_dict[f"{prefix}/{metric_name}_gain"] = (
+                    rerank_value - beam_metrics[metric_name]
+                )
 
         self.log_dict(
             metrics_dict,
@@ -169,6 +191,16 @@ class BaseModule(LightningModule):
             logger=logger,
             prog_bar=prog_bar,
         )
+
+    def get_primary_evaluator_name(self) -> Optional[str]:
+        if not self.evaluators:
+            return None
+        if "beam" in self.evaluators:
+            return "beam"
+        return next(iter(self.evaluators))
+
+    def should_log_rerank_gain(self) -> bool:
+        return "beam" in self.evaluators and "rerank" in self.evaluators
 
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,

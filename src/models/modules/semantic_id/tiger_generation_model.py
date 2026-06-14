@@ -563,6 +563,18 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 p.requires_grad = True
             logging.info("Stage 2: Joint training sid_head and click_head")
 
+    def get_primary_evaluator_name(self) -> Optional[str]:
+        if getattr(self, "training_task", "sid") == "click" and "rerank" in self.evaluators:
+            return "rerank"
+        return super().get_primary_evaluator_name()
+
+    def should_log_rerank_gain(self) -> bool:
+        return (
+            getattr(self, "training_task", "sid") == "click"
+            and "beam" in self.evaluators
+            and "rerank" in self.evaluators
+        )
+
     def _beam_search_semantic_ids(
         self,
         sid: torch.Tensor,

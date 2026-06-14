@@ -39,6 +39,17 @@ def _safe_run_command(command: list[str], cwd: str | None = None) -> str | None:
     return output or None
 
 
+def _resolve_git_root(candidates: list[Path]) -> Path | None:
+    for candidate in candidates:
+        git_root = _safe_run_command(
+            ["git", "rev-parse", "--show-toplevel"], cwd=str(candidate)
+        )
+        if git_root:
+            return Path(git_root).resolve()
+
+    return None
+
+
 def _find_slurm_artifacts(job_id: str, search_roots: list[Path]) -> list[Path]:
     patterns = [
         f"slurm-{job_id}.out",
@@ -111,11 +122,23 @@ def save_run_metadata(cfg: DictConfig) -> None:
 
     work_dir = Path(cfg.paths.work_dir).resolve()
     root_dir = Path(cfg.paths.root_dir).resolve()
-    git_commit = _safe_run_command(["git", "rev-parse", "HEAD"], cwd=str(work_dir))
-    git_branch = _safe_run_command(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(work_dir)
+    git_root = _resolve_git_root([work_dir, root_dir, output_dir])
+    git_cwd = str(git_root) if git_root else None
+    git_commit = (
+        _safe_run_command(["git", "rev-parse", "HEAD"], cwd=git_cwd)
+        if git_cwd
+        else None
     )
-    git_status = _safe_run_command(["git", "status", "--short"], cwd=str(work_dir))
+    git_branch = (
+        _safe_run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_cwd)
+        if git_cwd
+        else None
+    )
+    git_status = (
+        _safe_run_command(["git", "status", "--short"], cwd=git_cwd)
+        if git_cwd
+        else None
+    )
 
     slurm_job_id = os.getenv("SLURM_JOB_ID")
     slurm_job_name = os.getenv("SLURM_JOB_NAME")
@@ -136,6 +159,7 @@ def save_run_metadata(cfg: DictConfig) -> None:
         "work_dir": str(work_dir),
         "hostname": socket.gethostname(),
         "git": {
+            "root": str(git_root) if git_root else None,
             "commit": git_commit,
             "branch": git_branch,
             "status": git_status.splitlines() if git_status else [],
