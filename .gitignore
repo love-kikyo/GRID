@@ -202,12 +202,18 @@ cython_debug/
 __MACOSX/
 
 # Logs
-logs/
+/logs/
 output*.txt
 errors*.txt
+/outputs/
 
 # Model weights
 flan-t5-xl/
 
-# Slurm instruction
+# Slurm / launcher scripts
 *.sh
+!run_sid.sh
+!run_click.sh
+!run_sid_candidates.sh
+!run_sid_candidates_all_splits.sh
+!run_rerank_small.sh

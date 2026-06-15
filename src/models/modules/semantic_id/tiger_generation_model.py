@@ -17,7 +17,7 @@ from src.data.loading.components.interfaces import (
     SequentialModelInputData,
     SequentialModuleLabelData,
 )
-from src.models.components.interfaces import OneKeyPerPredictionOutput
+from src.models.components.interfaces import RowListOutput
 from src.models.components.network_blocks.mlp import MLP
 from src.models.modules.huggingface.transformer_base_module import TransformerBaseModule, ModelMode
 
@@ -764,6 +764,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         attention_mask: torch.Tensor = None,
         sid: torch.Tensor = None,
         hist_itemkey: torch.Tensor = None,
+        run_rerank: bool = True,
     ) -> torch.Tensor:
         """
         Generate the semantic id given the current model in the sequence using beam search.
@@ -787,6 +788,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         beam_ids = generated_ids.view(B, self.top_k_for_generation, -1)
         beam_scores = beam_log_prob
 
+        result_dict = {
+            "beam": {
+                "ids": beam_ids,
+                "scores": beam_scores,
+            },
+        }
+
+        if not run_rerank:
+            return result_dict
+
         # Step 2: Rerank using click prediction (uses KV cache to maintain historical context)
         rerank_ids, rerank_scores, rerank_click_logits = self._rerank_with_click_prediction(
             generated_ids=generated_ids,
@@ -797,17 +808,13 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             batch_size=B,
         )
 
-        return {
-            "beam": {
-                "ids": beam_ids,
-                "scores": beam_scores
-            },
-            "rerank": {
-                "ids": rerank_ids,
-                "scores": rerank_scores,
-                "click_logits": rerank_click_logits
-            }
+        result_dict["rerank"] = {
+            "ids": rerank_ids,
+            "scores": rerank_scores,
+            "click_logits": rerank_click_logits,
         }
+
+        return result_dict
 
     def get_embedding_table(self, table_name: str, hierarchy: Optional[int] = None):
         """
@@ -833,7 +840,78 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         return embedding_table
 
     def predict_step(self, batch: SequentialModelInputData):
-        pass
+        sid = batch.transformed_sequences["sequence_data"].long()
+        hist_itemkey = batch.transformed_sequences["hist_itemkey"].long()
+        attention_mask = batch.mask
+
+        lengths = attention_mask.sum(dim=1)
+        assert torch.all(lengths >= self.num_hierarchies), (
+            f"Found sequence length < num_hierarchies={self.num_hierarchies}: {lengths}"
+        )
+        assert torch.all(lengths % self.num_hierarchies == 0), (
+            f"Input lengths must be multiples of block={self.num_hierarchies}, got {lengths}"
+        )
+
+        target_sid = sid[:, -self.num_hierarchies:]
+        target_itemkey = (target_sid * self.powers).sum(dim=-1)
+        hist_sid = sid[:, :-self.num_hierarchies]
+        hist_itemkey = hist_itemkey[:, :-1]
+        hist_mask = attention_mask[:, :-self.num_hierarchies]
+
+        with torch.inference_mode():
+            result_dict = self.generate(
+                attention_mask=hist_mask,
+                sid=hist_sid,
+                hist_itemkey=hist_itemkey,
+                run_rerank=False,
+            )
+
+        beam_candidate_sids = result_dict["beam"]["ids"]
+        beam_scores = result_dict["beam"]["scores"]
+        beam_candidate_itemkeys = (beam_candidate_sids * self.powers).sum(dim=-1)
+        candidate_labels = (beam_candidate_itemkeys == target_itemkey.unsqueeze(1)).long()
+        label_index = torch.where(
+            candidate_labels.any(dim=1),
+            candidate_labels.float().argmax(dim=1).long(),
+            torch.full_like(target_itemkey, -1),
+        )
+
+        user_ids = batch.user_id_list
+        if isinstance(user_ids, torch.Tensor):
+            user_ids = user_ids.detach().cpu().tolist()
+        elif isinstance(user_ids, list):
+            normalized_user_ids = []
+            for user_id in user_ids:
+                if isinstance(user_id, torch.Tensor):
+                    normalized_user_ids.append(user_id.item())
+                else:
+                    normalized_user_ids.append(user_id)
+            user_ids = normalized_user_ids
+
+        rows = []
+        hist_lengths = hist_mask.sum(dim=1) // self.num_hierarchies
+        for idx in range(sid.size(0)):
+            valid_hist_len = int(hist_lengths[idx].item())
+            hist_itemkey_row = (
+                hist_itemkey[idx, -valid_hist_len:].detach().cpu().tolist()
+                if valid_hist_len > 0
+                else []
+            )
+            rows.append(
+                {
+                    "user_id": user_ids[idx] if user_ids is not None else idx,
+                    "hist_itemkey": hist_itemkey_row,
+                    "target_itemkey": int(target_itemkey[idx].item()),
+                    "target_sid": target_sid[idx].detach().cpu().tolist(),
+                    "beam_candidate_sids": beam_candidate_sids[idx].detach().cpu().tolist(),
+                    "beam_candidate_itemkeys": beam_candidate_itemkeys[idx].detach().cpu().tolist(),
+                    "beam_scores": beam_scores[idx].detach().cpu().tolist(),
+                    "candidate_labels": candidate_labels[idx].detach().cpu().tolist(),
+                    "label_index": int(label_index[idx].item()),
+                }
+            )
+
+        return RowListOutput(rows=rows)
 
     def eval_step(
         self,

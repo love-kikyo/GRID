@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import pickle
+import json
 from typing import Any, Dict, List, Optional, Union
 
 import pyarrow as pa
@@ -176,6 +177,7 @@ class LocalPickleWriter(BaseBufferedWriter):
         write_interval: str = "batch",
         should_merge_files_on_main: bool = True,
         should_merge_list_of_keyed_tensors_to_single_tensor: bool = True,
+        shard_manifest_filename: str = "shard_manifest.json",
         post_processing_functions: Optional[List[Dict[str, callable]]] = [],
         **kwargs,
     ):
@@ -198,7 +200,9 @@ class LocalPickleWriter(BaseBufferedWriter):
         self.should_merge_list_of_keyed_tensors_to_single_tensor = (
             should_merge_list_of_keyed_tensors_to_single_tensor
         )
+        self.shard_manifest_filename = shard_manifest_filename
         self.post_processing_functions = post_processing_functions
+        self._written_shards: List[Dict[str, Union[str, int]]] = []
 
     def _create_file_path(self) -> str:
         """Create a file path for the pickle file."""
@@ -218,6 +222,13 @@ class LocalPickleWriter(BaseBufferedWriter):
         with open(self._local_file_path(file_path=file_path), "wb") as f:
             pickle.dump(self.rows_buffer, f)
 
+        self._written_shards.append(
+            {
+                "file_name": file_path,
+                "num_rows": len(self.rows_buffer),
+            }
+        )
+
         log.info(
             f"Global Rank: {self.global_rank} wrote {len(self.rows_buffer)} rows to {self._local_file_path(file_path=file_path)}."
         )
@@ -235,6 +246,14 @@ class LocalPickleWriter(BaseBufferedWriter):
         pl_module: LightningModule,
     ) -> None:
         super().on_predict_end(trainer, pl_module)
+
+        self._write_rank_shard_metadata()
+
+        if trainer.global_rank != None and self._is_distributed():
+            torch.distributed.barrier()
+
+        if self.global_rank == 0:
+            self._write_shard_manifest()
 
         if self.should_merge_files_on_main:
             # if we use multiple workers, we need to wait for all of them to finish writing
@@ -262,6 +281,41 @@ class LocalPickleWriter(BaseBufferedWriter):
                 if trainer.global_rank != None and self._is_distributed():
                     torch.distributed.barrier()
 
+    def _write_rank_shard_metadata(self):
+        metadata_path = os.path.join(
+            self.output_dir,
+            f"_rank_{self.global_rank}_shards.json",
+        )
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump(self._written_shards, handle, indent=2, ensure_ascii=True)
+
+    def _write_shard_manifest(self):
+        shard_sizes = []
+        for file_name in os.listdir(self.output_dir):
+            if not (file_name.startswith("_rank_") and file_name.endswith("_shards.json")):
+                continue
+            metadata_path = os.path.join(self.output_dir, file_name)
+            with open(metadata_path, "r", encoding="utf-8") as handle:
+                shard_sizes.extend(json.load(handle))
+            os.remove(metadata_path)
+
+        shard_sizes.sort(key=lambda shard: shard["file_name"])
+        shard_files = [shard["file_name"] for shard in shard_sizes]
+        total_rows = sum(shard["num_rows"] for shard in shard_sizes)
+        manifest = {
+            "output_dir": os.path.abspath(self.output_dir),
+            "num_shards": len(shard_files),
+            "shards": shard_files,
+            "shard_sizes": shard_sizes,
+            "total_rows": total_rows,
+        }
+        manifest_path = os.path.join(self.output_dir, self.shard_manifest_filename)
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=True)
+        log.info(
+            f"Wrote shard manifest with {len(shard_files)} shards and {total_rows} rows to {manifest_path}."
+        )
+
     def _merge_files(self):
         """Merge all pickle files in the output directory into a single file."""
         all_files = [f for f in os.listdir(self.output_dir) if f.endswith(".pkl")]
@@ -284,6 +338,6 @@ class LocalPickleWriter(BaseBufferedWriter):
                 merged_data_tensor.cpu(),
                 os.path.join(self.output_dir, "merged_predictions_tensor.pt"),
             )
-        log.info(
-            f"Merged {len(merged_data_tensor)} rows into merged_predictions_tensor.pt. as pytorch tensor"
-        )
+            log.info(
+                f"Merged {len(merged_data_tensor)} rows into merged_predictions_tensor.pt. as pytorch tensor"
+            )

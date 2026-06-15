@@ -91,3 +91,14 @@ class OneKeyPerPredictionOutput(ModelOutput):
                 self._convert_to_list(self.predictions),
             )
         ]
+
+
+class RowListOutput(ModelOutput):
+    """Model output wrapper for predictions that are already row dictionaries."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    @property
+    def list_of_row_format(self):
+        return self.rows

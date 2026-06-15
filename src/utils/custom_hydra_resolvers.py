@@ -3,6 +3,7 @@ import operator as op
 from typing import Optional
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
+from src.utils.candidate_manifest import load_candidate_manifest_value
 
 """"
 Hydra allows for custom resolvers, which are functions that can be used to resolve values in the config.
@@ -154,6 +155,10 @@ def remove_item_from_list(input_list: ListConfig, item_to_remove: str) -> ListCo
     return ListConfig([item for item in input_list if item != item_to_remove])
 
 
+def manifest_value(manifest_path: str, key_path: str):
+    return load_candidate_manifest_value(manifest_path, key_path)
+
+
 # resolvers need to be registered to be accessible during config composition.
 # The resolver name is the function name without the type annotations.
 OmegaConf.register_new_resolver("remove_chars_from_string", remove_chars_from_string)
@@ -166,3 +171,4 @@ OmegaConf.register_new_resolver(
 )
 OmegaConf.register_new_resolver("math_eval", math_eval)
 OmegaConf.register_new_resolver("remove_item_from_list", remove_item_from_list)
+OmegaConf.register_new_resolver("manifest_value", manifest_value)

@@ -5,6 +5,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
 
 from src.data.loading.components.interfaces import (
+    RerankCandidateBatch,
     LabelFunctionOutput,
     SequentialModelInputData,
     SequentialModuleLabelData,
@@ -222,6 +223,10 @@ def collate_fn_train(
     model_input_data = SequentialModelInputData()
 
     for field_name, field_sequence in batch.items():  # type: ignore
+        if field_name == "user_id":
+            model_input_data.user_id_list = field_sequence
+            continue
+
         current_sequence = field_sequence
 
         # Remove OOV tokens if specified
@@ -293,3 +298,56 @@ def collate_fn_items(
             ] = field_value
 
     return model_input_data
+
+
+def collate_fn_rerank_candidates(
+    batch: List[Dict[str, Any]],
+    num_candidates: int,
+    num_hierarchies: int,
+    hist_itemkey_length: int = 100,
+    pad_itemkey_value: int = -1,
+    pad_sid_value: int = 0,
+) -> RerankCandidateBatch:
+    user_ids = [row["user_id"] for row in batch]
+    hist_rows = []
+    target_itemkeys = []
+    target_sids = []
+    candidate_itemkeys = []
+    candidate_sids = []
+    beam_scores = []
+    candidate_labels = []
+    label_indices = []
+
+    for row in batch:
+        hist = row["hist_itemkey"][-hist_itemkey_length:]
+        hist_pad_len = max(hist_itemkey_length - len(hist), 0)
+        hist_rows.append([pad_itemkey_value] * hist_pad_len + hist)
+
+        target_itemkeys.append(row["target_itemkey"])
+        target_sids.append(row["target_sid"])
+
+        curr_itemkeys = row["candidate_itemkey"][:num_candidates]
+        curr_sids = row["candidate_sid"][:num_candidates]
+        curr_scores = row["beam_score"][:num_candidates]
+        curr_labels = row["candidate_labels"][:num_candidates]
+
+        pad_len = max(num_candidates - len(curr_itemkeys), 0)
+        candidate_itemkeys.append(curr_itemkeys + [pad_itemkey_value] * pad_len)
+        candidate_sids.append(
+            curr_sids + [[pad_sid_value] * num_hierarchies for _ in range(pad_len)]
+        )
+        beam_scores.append(curr_scores + [-1e9] * pad_len)
+        candidate_labels.append(curr_labels + [0] * pad_len)
+        label_indices.append(row["label_index"])
+
+    return RerankCandidateBatch(
+        user_id=user_ids,
+        hist_itemkey=torch.tensor(hist_rows, dtype=torch.long),
+        target_itemkey=torch.tensor(target_itemkeys, dtype=torch.long),
+        target_sid=torch.tensor(target_sids, dtype=torch.long),
+        candidate_itemkey=torch.tensor(candidate_itemkeys, dtype=torch.long),
+        candidate_sid=torch.tensor(candidate_sids, dtype=torch.long),
+        beam_score=torch.tensor(beam_scores, dtype=torch.float32),
+        candidate_labels=torch.tensor(candidate_labels, dtype=torch.float32),
+        label_index=torch.tensor(label_indices, dtype=torch.long),
+    )

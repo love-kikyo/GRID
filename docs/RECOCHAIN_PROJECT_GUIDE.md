@@ -99,6 +99,210 @@ What is not obviously standardized in config:
 
 If this mode becomes primary, add a dedicated experiment config rather than overloading the joint-training path.
 
+Recommended direction for standardizing this mode:
+
+- treat it as a separate experiment family, e.g. `sid_rerank_small`
+- keep existing `training_task=sid` and `training_task=click` semantics unchanged
+- do not add a third branch to the current joint `training_step`
+- split the workflow into:
+  - offline SID candidate generation from a trained SID checkpoint
+  - standalone rerank model training/evaluation on cached candidates
+
+#### Proposed workflow for mode 3
+
+Stage A: SID candidate generation
+
+1. Load a trained SID checkpoint.
+2. Run beam search on evaluation/training examples without training any rerank head.
+3. Save candidate sets to local cache files for later rerank training.
+
+Recommended split-level outputs:
+
+- `training_candidate_cache/predictions_<rank>_<timestamp>.pkl`
+- `evaluation_candidate_cache/predictions_<rank>_<timestamp>.pkl`
+- `testing_candidate_cache/predictions_<rank>_<timestamp>.pkl`
+- `training_candidate_cache/shard_manifest.json`
+- `evaluation_candidate_cache/shard_manifest.json`
+- `testing_candidate_cache/shard_manifest.json`
+- `candidate_manifest.json`
+
+Stage B: standalone small reranker
+
+1. Read cached beam candidates.
+2. Train a separate lightweight ranking model on top of those candidates only.
+3. Evaluate both beam baseline and reranked results from the standalone reranker.
+
+This keeps the expensive autoregressive retrieval path and the cheap rerank path decoupled.
+
+#### Candidate cache schema
+
+The candidate generator should write one row per user/example. A practical first schema is:
+
+- `user_id`
+- `hist_itemkey`
+- `target_itemkey`
+- `target_sid`
+- `beam_candidate_sids`
+- `beam_candidate_itemkeys`
+- `beam_scores`
+- `candidate_labels`
+- `label_index`
+
+Notes:
+
+- `candidate_labels` is a binary list aligned with the beam candidates.
+- `label_index` is optional if exactly one positive candidate is guaranteed.
+- keep `beam_candidate_sids` and `beam_candidate_itemkeys` both, so rerank models can choose SID-level or item-level features.
+- first version should cache only beam candidates, not joint-model rerank logits.
+- for large-scale training, keep split outputs shard-based instead of merging to a single pickle file.
+
+#### Required new first-class configs
+
+Recommended new experiment configs:
+
+- `configs/experiment/tiger_infer_sid_candidates.yaml`
+- `configs/experiment/tiger_train_rerank_small.yaml`
+
+Recommended new launch scripts:
+
+- `run_sid_candidates.sh`
+- `run_rerank_small.sh`
+
+Recommended execution order:
+
+1. Run `run_sid_candidates_all_splits.sh` to export candidate shards for `training`, `evaluation`, and `testing`, and to generate `candidate_manifest.json`.
+2. Run `run_rerank_small.sh` to train the standalone rerank model from that manifest.
+
+Role of each launcher:
+
+- `run_sid_candidates_all_splits.sh`
+  - primary data-preparation entry for mode 3
+  - expected to be used before standalone rerank training
+- `run_sid_candidates.sh`
+  - single-split candidate export helper
+  - use it for debugging, smoke tests, or partial refresh of one split
+  - typical cases:
+    - verify candidate row schema on `testing`
+    - benchmark export throughput on one split
+    - regenerate only one split after changing export logic
+- `run_rerank_small.sh`
+  - standalone rerank training entry
+  - assumes `candidate_manifest.json` already exists
+
+Example workflow:
+
+```bash
+cd GRID
+bash run_sid_candidates_all_splits.sh
+bash run_rerank_small.sh
+```
+
+Example single-split debug workflow:
+
+```bash
+cd GRID
+bash run_sid_candidates.sh
+```
+
+Current branch status:
+
+- candidate export config now exists as `tiger_infer_sid_candidates.yaml`
+- first standalone rerank training config now exists as `tiger_train_rerank_small.yaml`
+- multi-split candidate export launcher now exists as `run_sid_candidates_all_splits.sh`
+- both launchers exist, but the rerank-small path should still be treated as a v1 scaffold until candidate-cache split handling and itemkey indexing strategy are fully validated
+
+The inference config should point to a trained SID checkpoint and a prediction writer output path.
+
+The rerank config should introduce dedicated fields such as:
+
+- `candidate_manifest_path`
+- `num_candidates`
+- `rerank_model_type`
+- `use_beam_score`
+- `use_sid_features`
+- `pretrained_sid_ckpt_path`
+- `freeze_pretrained_embeddings`
+
+Recommended manifest contents:
+
+- `splits.train`
+- `splits.val`
+- `splits.test`
+- `num_hierarchies`
+- `num_embeddings_per_hierarchy`
+- `num_candidates`
+
+Recommended split manifest contents:
+
+- `manifest_path`
+- `num_shards`
+- `shards`
+- `shard_paths`
+- `shard_lengths`
+- `total_rows`
+
+#### Required code additions
+
+Recommended new code paths:
+
+- candidate export logic in [src/models/modules/semantic_id/tiger_generation_model.py](/home/MMReco2021/liuyu/GRID/src/models/modules/semantic_id/tiger_generation_model.py:835)
+- `src/data/loading/components/dataloading/rerank_candidate_dataset.py`
+- `src/data/loading/datamodules/rerank_candidate_datamodule.py`
+- `src/models/modules/rerank/sid_rerank_small_model.py`
+
+The current `SemanticIDEncoderDecoder` should only be extended enough to support candidate export via `predict_step`.
+
+The standalone reranker should be a separate module with its own:
+
+- `training_step`
+- `eval_step`
+- `predict_step`
+- evaluator selection logic
+
+#### Rerank model scope for v1
+
+The first implementation should optimize for a stable experiment loop, not architectural completeness.
+
+Recommended v1 model:
+
+- history encoder: mean pooling or attention pooling over history item embeddings
+- candidate encoder: candidate item embedding plus optional SID embedding
+- extra dense features: beam score and simple similarity-derived features
+- scorer: a small MLP producing one click logit per candidate
+
+This is sufficient to establish the mode-3 experiment family. DIN/SIM-style attention can be added later without changing the data contract.
+
+#### Data module shape for rerank-only training
+
+Recommended first training formulation: listwise reranking.
+
+Each batch example should contain:
+
+- history features for one user/example
+- `K` candidates
+- `K` beam scores
+- `K` labels
+
+This matches the actual inference problem and simplifies rerank metric computation.
+
+#### Metric semantics for mode 3
+
+Mode 3 should behave like a rerank experiment from the metric consumer's perspective:
+
+- primary metrics should come from rerank results
+- beam metrics should still be logged as baseline
+- gain metrics should be computed as `rerank - beam`
+
+Do not bind this to `training_task=click`. If needed, the standalone rerank module should override evaluator-selection methods instead of expanding the existing task enum.
+
+#### Recommended implementation order
+
+1. Add SID candidate export inference.
+2. Add candidate-cache dataset and datamodule.
+3. Add a minimal standalone rerank model.
+4. Add dedicated train/eval configs and shell launchers.
+5. Update docs and experiment naming to make the mode first-class.
+
 ## Metric Semantics
 
 Current metric logging behavior is task-aware:

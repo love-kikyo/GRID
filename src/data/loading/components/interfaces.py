@@ -382,3 +382,41 @@ class ItemTextData(ItemData):
 
     text_tokens: Optional[torch.Tensor] = None
     text_masks: Optional[torch.Tensor] = None
+
+
+@dataclass
+class RerankCandidateDatasetConfig(BaseDatasetConfig):
+    num_candidates: int
+    num_hierarchies: int
+    candidate_cache_path: Optional[str] = None
+    candidate_cache_paths: Optional[List[str]] = None
+    candidate_cache_lengths: Optional[List[int]] = None
+    hist_itemkey_length: int = 100
+    pad_itemkey_value: int = -1
+    pad_sid_value: int = 0
+
+
+@dataclass
+class RerankCandidateDataloaderConfig(BaseDataloaderConfig):
+    dataset_class: Any
+    dataset_config: RerankCandidateDatasetConfig
+    batch_size_per_device: int
+    num_workers: int
+    collate_fn: callable  # type: ignore
+    drop_last: bool = False
+    pin_memory: bool = True
+    persistent_workers: bool = False
+    timeout: int = 0
+
+
+@dataclass
+class RerankCandidateBatch:
+    user_id: Optional[List[Union[str, int]]] = None
+    hist_itemkey: Optional[torch.Tensor] = None
+    target_itemkey: Optional[torch.Tensor] = None
+    target_sid: Optional[torch.Tensor] = None
+    candidate_itemkey: Optional[torch.Tensor] = None
+    candidate_sid: Optional[torch.Tensor] = None
+    beam_score: Optional[torch.Tensor] = None
+    candidate_labels: Optional[torch.Tensor] = None
+    label_index: Optional[torch.Tensor] = None
