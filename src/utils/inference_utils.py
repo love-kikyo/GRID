@@ -341,3 +341,161 @@ class LocalPickleWriter(BaseBufferedWriter):
             log.info(
                 f"Merged {len(merged_data_tensor)} rows into merged_predictions_tensor.pt. as pytorch tensor"
             )
+
+
+class LocalTensorShardWriter(BaseBufferedWriter):
+    """Write fixed-shape tensor shards for fast rerank-only training."""
+
+    def __init__(
+        self,
+        output_dir: str,
+        num_candidates: int,
+        num_hierarchies: int,
+        hist_itemkey_length: int = 100,
+        pad_itemkey_value: int = -1,
+        pad_sid_value: int = 0,
+        flush_frequency: int = 10000,
+        write_interval: str = "batch",
+        shard_manifest_filename: str = "shard_manifest.json",
+        **kwargs,
+    ):
+        super().__init__(
+            write_interval=write_interval,
+            flush_frequency=flush_frequency,
+            **kwargs,
+        )
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.num_candidates = num_candidates
+        self.num_hierarchies = num_hierarchies
+        self.hist_itemkey_length = hist_itemkey_length
+        self.pad_itemkey_value = pad_itemkey_value
+        self.pad_sid_value = pad_sid_value
+        self.shard_manifest_filename = shard_manifest_filename
+        self._written_shards: List[Dict[str, Union[str, int]]] = []
+
+    def _create_file_path(self) -> str:
+        return f"predictions_{self.global_rank}_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%f')[:-3]}.pt"
+
+    def _local_file_path(self, file_path: Optional[str] = None) -> str:
+        return f"{self.output_dir}/{file_path if file_path else self._create_file_path()}"
+
+    def _tensorize_rows(self, rows: List[dict]) -> Dict[str, torch.Tensor]:
+        hist_rows = []
+        target_itemkeys = []
+        target_sids = []
+        candidate_itemkeys = []
+        candidate_sids = []
+        beam_scores = []
+        candidate_labels = []
+        label_indices = []
+        user_ids = []
+
+        for row in rows:
+            hist = row["hist_itemkey"][-self.hist_itemkey_length:]
+            hist_pad_len = max(self.hist_itemkey_length - len(hist), 0)
+            hist_rows.append([self.pad_itemkey_value] * hist_pad_len + hist)
+
+            target_itemkeys.append(row["target_itemkey"])
+            target_sids.append(row["target_sid"][: self.num_hierarchies])
+
+            curr_itemkeys = row["beam_candidate_itemkeys"][: self.num_candidates]
+            curr_sids = row["beam_candidate_sids"][: self.num_candidates]
+            curr_scores = row["beam_scores"][: self.num_candidates]
+            curr_labels = row["candidate_labels"][: self.num_candidates]
+
+            pad_len = max(self.num_candidates - len(curr_itemkeys), 0)
+            candidate_itemkeys.append(
+                curr_itemkeys + [self.pad_itemkey_value] * pad_len
+            )
+            candidate_sids.append(
+                curr_sids + [[self.pad_sid_value] * self.num_hierarchies for _ in range(pad_len)]
+            )
+            beam_scores.append(curr_scores + [-1e9] * pad_len)
+            candidate_labels.append(curr_labels + [0] * pad_len)
+            label_indices.append(row["label_index"])
+            user_ids.append(int(row["user_id"]))
+
+        return {
+            "user_id": torch.tensor(user_ids, dtype=torch.long),
+            "hist_itemkey": torch.tensor(hist_rows, dtype=torch.long),
+            "target_itemkey": torch.tensor(target_itemkeys, dtype=torch.long),
+            "target_sid": torch.tensor(target_sids, dtype=torch.long),
+            "candidate_itemkey": torch.tensor(candidate_itemkeys, dtype=torch.long),
+            "candidate_sid": torch.tensor(candidate_sids, dtype=torch.long),
+            "beam_score": torch.tensor(beam_scores, dtype=torch.float32),
+            "candidate_labels": torch.tensor(candidate_labels, dtype=torch.float32),
+            "label_index": torch.tensor(label_indices, dtype=torch.long),
+        }
+
+    @retry()
+    def _flush_buffer(self):
+        file_path = self._create_file_path()
+        shard_data = self._tensorize_rows(self.rows_buffer)
+        torch.save(shard_data, self._local_file_path(file_path=file_path))
+        self._written_shards.append(
+            {
+                "file_name": file_path,
+                "num_rows": shard_data["target_itemkey"].size(0),
+            }
+        )
+        log.info(
+            f"Global Rank: {self.global_rank} wrote {shard_data['target_itemkey'].size(0)} rows to {self._local_file_path(file_path=file_path)}."
+        )
+
+    def _is_distributed(self):
+        return (
+            torch.distributed.is_available()
+            and torch.distributed.is_initialized()
+        )
+
+    def _write_rank_shard_metadata(self):
+        metadata_path = os.path.join(
+            self.output_dir,
+            f"_rank_{self.global_rank}_shards.json",
+        )
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump(self._written_shards, handle, indent=2, ensure_ascii=True)
+
+    def _write_shard_manifest(self):
+        shard_sizes = []
+        for file_name in os.listdir(self.output_dir):
+            if not (file_name.startswith("_rank_") and file_name.endswith("_shards.json")):
+                continue
+            metadata_path = os.path.join(self.output_dir, file_name)
+            with open(metadata_path, "r", encoding="utf-8") as handle:
+                shard_sizes.extend(json.load(handle))
+            os.remove(metadata_path)
+
+        shard_sizes.sort(key=lambda shard: shard["file_name"])
+        shard_files = [shard["file_name"] for shard in shard_sizes]
+        total_rows = sum(shard["num_rows"] for shard in shard_sizes)
+        manifest = {
+            "output_dir": os.path.abspath(self.output_dir),
+            "num_shards": len(shard_files),
+            "shards": shard_files,
+            "shard_sizes": shard_sizes,
+            "total_rows": total_rows,
+            "format": "tensor_pt",
+        }
+        manifest_path = os.path.join(self.output_dir, self.shard_manifest_filename)
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=True)
+        log.info(
+            f"Wrote shard manifest with {len(shard_files)} shards and {total_rows} rows to {manifest_path}."
+        )
+
+    @retry()
+    def on_predict_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+    ) -> None:
+        super().on_predict_end(trainer, pl_module)
+        self._write_rank_shard_metadata()
+
+        if trainer.global_rank is not None and self._is_distributed():
+            torch.distributed.barrier()
+
+        if self.global_rank == 0:
+            self._write_shard_manifest()

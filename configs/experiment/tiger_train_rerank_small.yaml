@@ -44,6 +44,7 @@ data_loading:
     _target_: src.data.loading.components.interfaces.RerankCandidateDataloaderConfig
     dataset_class:
       _target_: src.data.loading.components.rerank_candidate_dataset.RerankCandidateDataset
+      _partial_: true
     dataset_config:
       _target_: src.data.loading.components.interfaces.RerankCandidateDatasetConfig
       candidate_cache_paths: ${train_candidate_cache_paths}
@@ -54,7 +55,7 @@ data_loading:
       pad_itemkey_value: ${pad_itemkey_value}
       pad_sid_value: ${pad_sid_value}
     batch_size_per_device: 128
-    num_workers: 4
+    num_workers: 2
     collate_fn:
       _target_: src.data.loading.components.collate_functions.collate_fn_rerank_candidates
       _partial_: true
@@ -63,6 +64,9 @@ data_loading:
       hist_itemkey_length: ${hist_itemkey_length}
       pad_itemkey_value: ${pad_itemkey_value}
       pad_sid_value: ${pad_sid_value}
+    # Keep sequential access by default so iterable workers stream shard rows without cross-file thrashing.
+    shuffle: false
+    use_distributed_sampler: true
     drop_last: false
     pin_memory: true
     persistent_workers: true
@@ -83,6 +87,8 @@ data_loading:
     batch_size_per_device: ${data_loading.train_dataloader_config.batch_size_per_device}
     num_workers: ${data_loading.train_dataloader_config.num_workers}
     collate_fn: ${data_loading.train_dataloader_config.collate_fn}
+    shuffle: false
+    use_distributed_sampler: true
     drop_last: false
     pin_memory: true
     persistent_workers: true
@@ -103,6 +109,8 @@ data_loading:
     batch_size_per_device: ${data_loading.train_dataloader_config.batch_size_per_device}
     num_workers: ${data_loading.train_dataloader_config.num_workers}
     collate_fn: ${data_loading.train_dataloader_config.collate_fn}
+    shuffle: false
+    use_distributed_sampler: true
     drop_last: false
     pin_memory: true
     persistent_workers: false

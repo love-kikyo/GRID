@@ -1,84 +1,58 @@
-import pickle
-from bisect import bisect_right
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset, get_worker_info
 
 from src.data.loading.components.interfaces import RerankCandidateDatasetConfig
 
 
-class RerankCandidateDataset(Dataset):
-    """Map-style dataset backed by one or more SID candidate cache shards."""
+class RerankCandidateDataset(IterableDataset):
+    """Shard-aware iterable dataset backed by tensorized `.pt` shards."""
 
     def __init__(self, dataset_config: RerankCandidateDatasetConfig):
         self.dataset_config = dataset_config
         candidate_cache_paths = dataset_config.candidate_cache_paths
-        candidate_cache_lengths = dataset_config.candidate_cache_lengths
         if candidate_cache_paths is None:
             if dataset_config.candidate_cache_path is None:
                 raise ValueError("One of candidate_cache_path or candidate_cache_paths must be set.")
             candidate_cache_paths = [dataset_config.candidate_cache_path]
 
-        self.shard_paths = candidate_cache_paths
-        self.shard_lengths: List[int] = []
-        self.cumulative_lengths: List[int] = []
-        cumulative = 0
-        if candidate_cache_lengths is not None:
-            if len(candidate_cache_lengths) != len(self.shard_paths):
-                raise ValueError("candidate_cache_lengths must align with candidate_cache_paths.")
-            shard_lengths_iter = candidate_cache_lengths
+        self.shard_paths = list(candidate_cache_paths)
+        self.total_workers = 1
+        self.global_worker_id = 0
+
+    def set_distributed_params(self, total_workers: int, global_worker_id: int):
+        self.total_workers = total_workers
+        self.global_worker_id = global_worker_id
+
+    def _iter_assigned_shards(self) -> Iterable[str]:
+        worker_info = get_worker_info()
+        if worker_info is None:
+            local_worker_id = 0
+            num_local_workers = 1
         else:
-            shard_lengths_iter = []
-            for shard_path in self.shard_paths:
-                with open(shard_path, "rb") as handle:
-                    shard_rows: List[Dict] = pickle.load(handle)
-                shard_lengths_iter.append(len(shard_rows))
+            local_worker_id = worker_info.id
+            num_local_workers = worker_info.num_workers
 
-        for shard_length in shard_lengths_iter:
-            self.shard_lengths.append(shard_length)
-            cumulative += shard_length
-            self.cumulative_lengths.append(cumulative)
+        combined_worker_id = self.global_worker_id * num_local_workers + local_worker_id
+        combined_num_workers = self.total_workers * num_local_workers
 
-        self._loaded_shard_index = None
-        self._loaded_rows: List[Dict] = []
+        for shard_index in range(combined_worker_id, len(self.shard_paths), combined_num_workers):
+            yield self.shard_paths[shard_index]
 
-    def __len__(self) -> int:
-        return self.cumulative_lengths[-1] if self.cumulative_lengths else 0
-
-    def _get_row(self, index: int) -> Dict:
-        shard_index = bisect_right(self.cumulative_lengths, index)
-        shard_start = 0 if shard_index == 0 else self.cumulative_lengths[shard_index - 1]
-        row_index = index - shard_start
-
-        if self._loaded_shard_index != shard_index:
-            with open(self.shard_paths[shard_index], "rb") as handle:
-                self._loaded_rows = pickle.load(handle)
-            self._loaded_shard_index = shard_index
-
-        return self._loaded_rows[row_index]
-
-    def __getitem__(self, index: int) -> Dict[str, object]:
-        row = self._get_row(index)
-        num_candidates = self.dataset_config.num_candidates
-
-        candidate_sids = row["beam_candidate_sids"][:num_candidates]
-        candidate_itemkeys = row["beam_candidate_itemkeys"][:num_candidates]
-        beam_scores = row["beam_scores"][:num_candidates]
-        candidate_labels = row["candidate_labels"][:num_candidates]
-
-        label_index = row.get("label_index", -1)
-        if label_index >= num_candidates:
-            label_index = -1
-
-        return {
-            "user_id": row["user_id"],
-            "hist_itemkey": row["hist_itemkey"],
-            "target_itemkey": row["target_itemkey"],
-            "target_sid": row["target_sid"],
-            "candidate_itemkey": candidate_itemkeys,
-            "candidate_sid": candidate_sids,
-            "beam_score": beam_scores,
-            "candidate_labels": candidate_labels,
-            "label_index": label_index,
-        }
+    def __iter__(self):
+        for shard_path in self._iter_assigned_shards():
+            shard_data: Dict[str, torch.Tensor] = torch.load(shard_path, map_location="cpu")
+            shard_rows = shard_data["target_itemkey"].size(0)
+            for row_index in range(shard_rows):
+                yield {
+                    "user_id": shard_data["user_id"][row_index],
+                    "hist_itemkey": shard_data["hist_itemkey"][row_index],
+                    "target_itemkey": shard_data["target_itemkey"][row_index],
+                    "target_sid": shard_data["target_sid"][row_index],
+                    "candidate_itemkey": shard_data["candidate_itemkey"][row_index],
+                    "candidate_sid": shard_data["candidate_sid"][row_index],
+                    "beam_score": shard_data["beam_score"][row_index],
+                    "candidate_labels": shard_data["candidate_labels"][row_index],
+                    "label_index": shard_data["label_index"][row_index],
+                }

@@ -156,7 +156,12 @@ def remove_item_from_list(input_list: ListConfig, item_to_remove: str) -> ListCo
 
 
 def manifest_value(manifest_path: str, key_path: str):
-    return load_candidate_manifest_value(manifest_path, key_path)
+    value = load_candidate_manifest_value(manifest_path, key_path)
+    if isinstance(value, list):
+        return ListConfig(value)
+    if isinstance(value, dict):
+        return DictConfig(value)
+    return value
 
 
 # resolvers need to be registered to be accessible during config composition.

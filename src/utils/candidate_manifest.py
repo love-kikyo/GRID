@@ -36,6 +36,7 @@ def build_candidate_manifest(
         "num_hierarchies": num_hierarchies,
         "num_embeddings_per_hierarchy": num_embeddings_per_hierarchy,
         "num_candidates": top_k_for_generation,
+        "format": "tensor_pt",
         "splits": {
             "train": _load_split_manifest(train_dir),
             "val": _load_split_manifest(val_dir),

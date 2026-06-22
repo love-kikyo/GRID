@@ -2,6 +2,8 @@ from typing import Optional
 
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
+from torch.utils.data import IterableDataset
+from torch.utils.data.distributed import DistributedSampler
 
 from src.data.loading.components.interfaces import RerankCandidateDataloaderConfig
 
@@ -25,6 +27,31 @@ class RerankCandidateDataModule(LightningDataModule):
         dataset = dataloader_config.dataset_class(
             dataset_config=dataloader_config.dataset_config
         )
+        if isinstance(dataset, IterableDataset) and hasattr(self, "trainer") and self.trainer is not None:
+            dataset.set_distributed_params(
+                total_workers=self.trainer.world_size,
+                global_worker_id=self.trainer.global_rank,
+            )
+
+        sampler = None
+        shuffle = dataloader_config.shuffle
+        if (
+            not isinstance(dataset, IterableDataset)
+            and
+            dataloader_config.use_distributed_sampler
+            and hasattr(self, "trainer")
+            and self.trainer is not None
+            and self.trainer.world_size > 1
+        ):
+            sampler = DistributedSampler(
+                dataset,
+                num_replicas=self.trainer.world_size,
+                rank=self.trainer.global_rank,
+                shuffle=shuffle,
+                drop_last=drop_last,
+            )
+            shuffle = False
+
         return DataLoader(
             dataset=dataset,
             batch_size=dataloader_config.batch_size_per_device,
@@ -38,6 +65,8 @@ class RerankCandidateDataModule(LightningDataModule):
             drop_last=drop_last,
             timeout=dataloader_config.timeout,
             collate_fn=dataloader_config.collate_fn,
+            sampler=sampler,
+            shuffle=shuffle if sampler is None else False,
         )
 
     def train_dataloader(self) -> DataLoader:

@@ -403,6 +403,8 @@ class RerankCandidateDataloaderConfig(BaseDataloaderConfig):
     batch_size_per_device: int
     num_workers: int
     collate_fn: callable  # type: ignore
+    shuffle: bool = False
+    use_distributed_sampler: bool = True
     drop_last: bool = False
     pin_memory: bool = True
     persistent_workers: bool = False

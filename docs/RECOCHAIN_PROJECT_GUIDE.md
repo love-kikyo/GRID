@@ -118,9 +118,9 @@ Stage A: SID candidate generation
 
 Recommended split-level outputs:
 
-- `training_candidate_cache/predictions_<rank>_<timestamp>.pkl`
-- `evaluation_candidate_cache/predictions_<rank>_<timestamp>.pkl`
-- `testing_candidate_cache/predictions_<rank>_<timestamp>.pkl`
+- `training_candidate_cache/predictions_<rank>_<timestamp>.pt`
+- `evaluation_candidate_cache/predictions_<rank>_<timestamp>.pt`
+- `testing_candidate_cache/predictions_<rank>_<timestamp>.pt`
 - `training_candidate_cache/shard_manifest.json`
 - `evaluation_candidate_cache/shard_manifest.json`
 - `testing_candidate_cache/shard_manifest.json`
@@ -154,7 +154,8 @@ Notes:
 - `label_index` is optional if exactly one positive candidate is guaranteed.
 - keep `beam_candidate_sids` and `beam_candidate_itemkeys` both, so rerank models can choose SID-level or item-level features.
 - first version should cache only beam candidates, not joint-model rerank logits.
-- for large-scale training, keep split outputs shard-based instead of merging to a single pickle file.
+- for large-scale training, keep split outputs shard-based instead of merging to a single file.
+- current preferred shard format is tensorized `.pt` rather than `pickle(list[dict])`.
 
 #### Required new first-class configs
 
@@ -193,6 +194,7 @@ Example workflow:
 
 ```bash
 cd GRID
+# regenerate candidate shards after export-format changes
 bash run_sid_candidates_all_splits.sh
 bash run_rerank_small.sh
 ```

@@ -187,9 +187,9 @@ def pipeline_launcher(cfg: DictConfig):
         - If the configuration contains a logger, hyperparameters will be logged.
         - Ensures that loggers are finalized and profiler output is saved even if the task fails.
     """
-
+    pipeline_modules: PipelineModules | None = None
     try:
-        pipeline_modules: PipelineModules = initialize_pipeline_modules(cfg)
+        pipeline_modules = initialize_pipeline_modules(cfg)
         save_run_metadata(cfg)
         # Log hyperparameters if loggers are present
         if len(pipeline_modules.loggers) > 0:
@@ -200,4 +200,5 @@ def pipeline_launcher(cfg: DictConfig):
         raise ex
     finally:
         # We add the try catch to make sure the loggers are finalized even if the task fails.
-        finalize_loggers(pipeline_modules.trainer)
+        if pipeline_modules is not None:
+            finalize_loggers(pipeline_modules.trainer)

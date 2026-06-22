@@ -148,13 +148,16 @@ loss:
 
 callbacks:
   bq_writer: null
-  pickle_writer:
-    _target_: src.utils.inference_utils.LocalPickleWriter
+  tensor_shard_writer:
+    _target_: src.utils.inference_utils.LocalTensorShardWriter
     output_dir: ${paths.output_dir}/${candidate_output_subdir}
+    num_candidates: ${model.top_k_for_generation}
+    num_hierarchies: ${num_hierarchies}
+    hist_itemkey_length: ${hist_itemkey_length}
+    pad_itemkey_value: -1
+    pad_sid_value: 0
     flush_frequency: 10000
     write_interval: batch
-    should_merge_files_on_main: false
-    should_merge_list_of_keyed_tensors_to_single_tensor: false
 
 logger:
   csv:
