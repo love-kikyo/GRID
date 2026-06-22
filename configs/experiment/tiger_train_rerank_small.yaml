@@ -1,0 +1,21 @@
+# @package _global_
+# Separate small reranker trained on online SID beam candidates
+
+training_task: rerank_small
+
+tags:
+  - tiger-rerank-small
+
+model:
+  _target_: src.models.modules.semantic_id.separate_rerank_model.SeparateRerankModule
+  sid_teacher_ckpt_path: ???
+  reranker_embedding_dim: 128
+  reranker_hidden_dim: 256
+  reranker_num_layers: 3
+  reranker_dropout: 0.1
+  reranker_rank_embedding_dim: 16
+  reranker_num_hash_buckets: 300000
+  load_only_weights: false
+
+trainer:
+  max_steps: 120000
