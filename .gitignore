@@ -209,5 +209,5 @@ errors*.txt
 # Model weights
 flan-t5-xl/
 
-# Slurm instruction
-*.sh
+# Slurm instruction outputs or local helper shells can be ignored by pattern if needed,
+# but tracked experiment launch scripts at repo root should remain version-controlled.
