@@ -1,5 +1,6 @@
 # @package _global_
 # Separate small reranker trained on online SID beam candidates
+# Current reranker uses candidate-aware history attention plus candidate SID features
 
 training_task: rerank_small
 
@@ -15,6 +16,7 @@ model:
   reranker_dropout: 0.1
   reranker_rank_embedding_dim: 16
   reranker_num_hash_buckets: 300000
+  rerank_logit_weight: 0.5
   load_only_weights: false
 
 trainer:

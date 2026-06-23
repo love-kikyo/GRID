@@ -87,6 +87,8 @@ class SmallReranker(nn.Module):
     def __init__(
         self,
         embedding_dim: int,
+        num_hierarchies: int,
+        num_embeddings_per_hierarchy: int,
         rank_vocab_size: int,
         rank_embedding_dim: int,
         hidden_dim: int,
@@ -102,9 +104,16 @@ class SmallReranker(nn.Module):
             embedding_dim=embedding_dim,
             masking_token=masking_token,
         )
+        self.num_hierarchies = num_hierarchies
+        self.num_embeddings_per_hierarchy = num_embeddings_per_hierarchy
+        self.sid_embedding_table = nn.Embedding(
+            num_hierarchies * num_embeddings_per_hierarchy + 1,
+            embedding_dim,
+            padding_idx=0,
+        )
         self.rank_embedding = nn.Embedding(rank_vocab_size, rank_embedding_dim)
         hidden_dim_list = [hidden_dim] * max(num_layers - 1, 0)
-        input_dim = embedding_dim * 4 + rank_embedding_dim + 1
+        input_dim = embedding_dim * 7 + rank_embedding_dim + 2
         self.scorer = MLP(
             input_dim=input_dim,
             output_dim=1,
@@ -112,33 +121,63 @@ class SmallReranker(nn.Module):
             dropout=dropout,
         )
 
-    def _pool_history(self, hist_itemkey: torch.Tensor) -> torch.Tensor:
+    def _candidate_aware_user_interest(
+        self,
+        hist_itemkey: torch.Tensor,
+        cand_vec: torch.Tensor,
+    ) -> torch.Tensor:
         hist_emb = self.item_embedding_table(hist_itemkey)
-        hist_mask = (hist_itemkey != self.masking_token).float().unsqueeze(-1)
-        denom = hist_mask.sum(dim=1).clamp_min(1.0)
-        return (hist_emb * hist_mask).sum(dim=1) / denom
+        hist_mask = hist_itemkey != self.masking_token
+        attn_scores = torch.einsum("bkd,bld->bkl", cand_vec, hist_emb)
+        attn_scores = attn_scores.masked_fill(
+            ~hist_mask.unsqueeze(1),
+            torch.finfo(attn_scores.dtype).min,
+        )
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = attn_weights * hist_mask.unsqueeze(1).float()
+        denom = attn_weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        attn_weights = attn_weights / denom
+        return torch.einsum("bkl,bld->bkd", attn_weights, hist_emb)
+
+    def _encode_candidate_sid(self, candidate_sid: torch.Tensor) -> torch.Tensor:
+        device = candidate_sid.device
+        offsets = torch.arange(
+            0,
+            self.num_hierarchies * self.num_embeddings_per_hierarchy,
+            self.num_embeddings_per_hierarchy,
+            device=device,
+        )
+        sid_index = candidate_sid + offsets.view(1, 1, -1)
+        sid_emb = self.sid_embedding_table(sid_index)
+        return sid_emb.mean(dim=2)
 
     def forward(
         self,
         hist_itemkey: torch.Tensor,
         candidate_itemkey: torch.Tensor,
+        candidate_sid: torch.Tensor,
         beam_scores: torch.Tensor,
     ) -> torch.Tensor:
         batch_size, top_k = candidate_itemkey.shape
-        hist_vec = self._pool_history(hist_itemkey)
         cand_vec = self.item_embedding_table(candidate_itemkey)
-        hist_vec = hist_vec.unsqueeze(1).expand(-1, top_k, -1)
+        hist_vec = self._candidate_aware_user_interest(hist_itemkey, cand_vec)
+        sid_vec = self._encode_candidate_sid(candidate_sid)
 
         rank_ids = torch.arange(top_k, device=candidate_itemkey.device)
         rank_emb = self.rank_embedding(rank_ids).unsqueeze(0).expand(batch_size, -1, -1)
+        sid_alignment = (sid_vec * cand_vec).sum(dim=-1, keepdim=True)
 
         features = torch.cat(
             [
                 hist_vec,
                 cand_vec,
+                sid_vec,
                 hist_vec * cand_vec,
                 torch.abs(hist_vec - cand_vec),
+                sid_vec * cand_vec,
+                torch.abs(sid_vec - cand_vec),
                 beam_scores.unsqueeze(-1),
+                sid_alignment,
                 rank_emb,
             ],
             dim=-1,
@@ -157,6 +196,7 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         reranker_dropout: float,
         reranker_rank_embedding_dim: int,
         reranker_num_hash_buckets: int = 300000,
+        rerank_logit_weight: float = 1.0,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
         **kwargs,
@@ -172,8 +212,11 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         )
         self.training_task = "rerank_small"
         self.sid_teacher_ckpt_path = sid_teacher_ckpt_path
+        self.rerank_logit_weight = rerank_logit_weight
         self.reranker = SmallReranker(
             embedding_dim=reranker_embedding_dim,
+            num_hierarchies=self.num_hierarchies,
+            num_embeddings_per_hierarchy=self.num_embeddings_per_hierarchy,
             rank_vocab_size=self.top_k_for_generation,
             rank_embedding_dim=reranker_rank_embedding_dim,
             hidden_dim=reranker_hidden_dim,
@@ -268,10 +311,15 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         rerank_logits = self.reranker(
             hist_itemkey=hist_itemkey_ctx,
             candidate_itemkey=candidate_dict["candidate_itemkey"],
+            candidate_sid=candidate_dict["candidate_sid"],
             beam_scores=candidate_dict["beam_scores"],
         )
+        final_scores = (
+            candidate_dict["beam_scores"]
+            + self.rerank_logit_weight * rerank_logits
+        )
 
-        topk = torch.topk(rerank_logits, k=self.top_k_for_generation, dim=-1)
+        topk = torch.topk(final_scores, k=self.top_k_for_generation, dim=-1)
         rerank_scores = topk.values
         rerank_indices = topk.indices
         gather_index = rerank_indices.unsqueeze(-1).expand(-1, -1, self.num_hierarchies)
@@ -282,6 +330,7 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         candidate_dict.update(
             {
                 "rerank_logits": rerank_logits,
+                "final_scores": final_scores,
                 "rerank_scores": rerank_scores,
                 "rerank_indices": rerank_indices,
                 "rerank_ids": rerank_ids,
@@ -415,26 +464,6 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         super().on_validation_epoch_start()
         self.click_auc_accumulator.reset()
 
-    def on_validation_epoch_end(self) -> None:
-        self.log(
-            "val/click_auc",
-            self.click_auc_accumulator,
-            sync_dist=True,
-            prog_bar=False,
-            logger=True,
-        )
-        super().on_validation_epoch_end()
-
     def on_test_epoch_start(self):
         super().on_test_epoch_start()
         self.click_auc_accumulator.reset()
-
-    def on_test_epoch_end(self) -> None:
-        self.log(
-            "test/click_auc",
-            self.click_auc_accumulator,
-            sync_dist=True,
-            prog_bar=False,
-            logger=True,
-        )
-        super().on_test_epoch_end()

@@ -12,8 +12,13 @@ The original `README.md` still describes baseline GRID. This document is the bra
 
 - Baseline project: `GRID` from Snap Research.
 - Current branch: `taobao-dec-only-hash-similar-itemkey`.
-- Environment: keep the same Python/CUDA/runtime setup as upstream GRID.
+- Runtime environment used for this project:
+  - conda env name: `GRID`
+  - python path: `/home/MMReco2021/.conda/envs/GRID/bin/python`
+  - Python version expected by the lockfile: `3.10`
+- Environment: keep the same Python/CUDA/runtime setup as upstream GRID unless this branch explicitly documents a change.
 - Dependency source of truth: [requirements.txt](/home/MMReco2021/liuyu/GRID/requirements.txt:1)
+- `requirements.txt` was generated with a CUDA 12.4 PyTorch index; see the header comments in [requirements.txt](/home/MMReco2021/liuyu/GRID/requirements.txt:1).
 - Entry points:
   - training: [src/train.py](/home/MMReco2021/liuyu/GRID/src/train.py:1)
   - inference: [src/inference.py](/home/MMReco2021/liuyu/GRID/src/inference.py:1)
@@ -86,7 +91,23 @@ Additional model components:
 
 ### 3. SID model plus a separate small rerank model
 
-This mode is part of the experiment landscape, but it is not currently represented by a dedicated first-class config in this branch in the same way as modes 1 and 2.
+This mode is part of the experiment landscape, and is intended as a strong standalone baseline rather than as the main proposed model.
+
+Current research expectation for ranking quality on this branch:
+
+- `joint sid + rerank multitask training` > `small rerank model` > `sid-only`
+
+Interpretation of that expectation:
+
+- the joint multitask setup is the main proposed model and is expected to be strongest overall
+- the separate small reranker should still beat SID-only beam retrieval and serve as a meaningful baseline
+- the goal of this branch is to keep improving the small reranker, even if it does not surpass the joint model
+
+Design guidance for the small-reranker line:
+
+- it does not need to inherit the exact rerank formulation from the joint branch
+- it is acceptable, and encouraged, to reference stronger rerank patterns from papers or industry practice
+- candidate directions include richer user-candidate interaction features, lightweight transformer rerankers, two-tower-plus-cross features, and other classic ranking architectures, as long as they remain meaningfully smaller and more modular than the joint model
 
 What is already available in code:
 
