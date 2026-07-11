@@ -1,0 +1,5 @@
+# @package _global_
+# Rerank fusion weight sweep for joint listwise training.
+
+model:
+  rerank_logit_weight: 0.2

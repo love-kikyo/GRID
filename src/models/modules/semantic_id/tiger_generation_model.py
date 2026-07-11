@@ -177,7 +177,126 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             past_key_values.reorder_cache(replace_indices.long())
 
         return generated_ids, proba_topk, attention_mask, past_key_values
-    
+
+    def _combine_rerank_scores(
+        self,
+        beam_log_prob: torch.Tensor,
+        rerank_logits: torch.Tensor,
+        detach_beam: bool = False,
+    ) -> torch.Tensor:
+        """Combine generator prior and reranker residual logits for listwise ranking."""
+        if detach_beam:
+            beam_log_prob = beam_log_prob.detach()
+        beam_weight = getattr(self, "beam_log_prob_weight", 1.0)
+        rerank_weight = getattr(self, "rerank_logit_weight", 1.0)
+        return beam_weight * beam_log_prob + rerank_weight * rerank_logits
+
+    def _compute_listwise_rerank_loss(
+        self,
+        rerank_logits: torch.Tensor,
+        labels: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Learn a distribution over the whole beam list instead of independent
+        binary decisions for each candidate.
+        """
+        labels = labels.float()
+        positive_counts = labels.sum(dim=-1, keepdim=True)
+        valid_rows = positive_counts.squeeze(-1) > 0
+        if not torch.any(valid_rows):
+            return rerank_logits.sum() * 0.0
+
+        if getattr(self, "use_beam_score_in_rerank_loss", False) and beam_log_prob is not None:
+            scores = self._combine_rerank_scores(
+                beam_log_prob=beam_log_prob,
+                rerank_logits=rerank_logits,
+                detach_beam=True,
+            )
+        else:
+            scores = rerank_logits
+
+        target_dist = labels / positive_counts.clamp_min(1.0)
+        log_probs = F.log_softmax(scores, dim=-1)
+        per_row_loss = -(target_dist * log_probs).sum(dim=-1)
+        return per_row_loss[valid_rows].mean()
+
+    def _safe_binary_auroc(
+        self,
+        probabilities: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> torch.Tensor:
+        flat_labels = labels.reshape(-1).long()
+        flat_probs = probabilities.reshape(-1)
+        if flat_labels.numel() == 0 or flat_labels.min() == flat_labels.max():
+            return flat_probs.sum() * 0.0
+        return binary_auroc(flat_probs, flat_labels)
+
+    def _score_rerank_candidates(
+        self,
+        generated_ids: torch.Tensor,
+        input_mask: torch.Tensor,
+        past_key_values: DynamicCache,
+        hist_itemkey_for_beam: torch.Tensor,
+        target_itemkey: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size = target_itemkey.size(0)
+        num_candidates = generated_ids.size(0) // batch_size
+        if num_candidates * batch_size != generated_ids.size(0):
+            raise ValueError(
+                "generated_ids must contain the same number of candidates for each batch row"
+            )
+
+        generated_itemkey = (generated_ids * self.powers).sum(dim=-1)
+
+        hist_itemkey_expanded = hist_itemkey_for_beam.repeat_interleave(
+            num_candidates,
+            dim=0,
+        )
+        similar_itemkey = self.get_similar_itemkey(
+            target_itemkey=generated_itemkey,
+            hist_itemkey=hist_itemkey_expanded,
+        )
+        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(
+            similar_itemkey=similar_itemkey,
+        )
+
+        input_embeds = torch.concat(
+            [
+                self.embed_token(
+                    token_id=generated_ids[:, -1:],
+                    hierarchy=self.num_hierarchies - 1,
+                ),
+                self.embed_token(token_id=generated_itemkey.unsqueeze(-1)),
+                input_embeds_similar_item,
+            ],
+            dim=1,
+        )
+        segment_mask = torch.concat(
+            [
+                torch.ones(generated_ids.size(0), 2, device=self.device),
+                mask_similar_item,
+            ],
+            dim=-1,
+        )
+        full_input_mask = torch.concat([input_mask, segment_mask], dim=-1)
+
+        decoder_output = self.decoder(
+            sequence_embedding=input_embeds,
+            attention_mask=full_input_mask,
+            use_cache=False,
+            past_key_values=past_key_values,
+        )
+
+        click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)
+        click_logits = click_logits.view(batch_size, num_candidates)
+
+        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand_as(click_logits)
+        generated_itemkey_2d = generated_itemkey.view(batch_size, num_candidates)
+        click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()
+
+        return decoder_output, click_logits, click_labels
+
     def repeat_kv_cache(self, past_key_values, beam_size):
         if past_key_values is None:
             return None
@@ -204,10 +323,38 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             return past_key_values
 
         for layer in range(len(past_key_values.key_cache)):
-            past_key_values.key_cache[layer][row_indices] = replacement_past_key_values.key_cache[layer]
-            past_key_values.value_cache[layer][row_indices] = replacement_past_key_values.value_cache[layer]
+            key_target = past_key_values.key_cache[layer][row_indices]
+            value_target = past_key_values.value_cache[layer][row_indices]
+            replacement_key = replacement_past_key_values.key_cache[layer]
+            replacement_value = replacement_past_key_values.value_cache[layer]
+
+            if replacement_key.shape[1:] != key_target.shape[1:]:
+                aligned_key = key_target.new_zeros(key_target.shape)
+                copy_len = min(key_target.size(-2), replacement_key.size(-2))
+                aligned_key[..., :copy_len, :] = replacement_key[..., :copy_len, :]
+                replacement_key = aligned_key
+
+            if replacement_value.shape[1:] != value_target.shape[1:]:
+                aligned_value = value_target.new_zeros(value_target.shape)
+                copy_len = min(value_target.size(-2), replacement_value.size(-2))
+                aligned_value[..., :copy_len, :] = replacement_value[..., :copy_len, :]
+                replacement_value = aligned_value
+
+            past_key_values.key_cache[layer][row_indices] = replacement_key
+            past_key_values.value_cache[layer][row_indices] = replacement_value
 
         return past_key_values
+
+    def select_kv_cache_rows(self, past_key_values, row_indices):
+        if past_key_values is None:
+            return None
+
+        selected_cache = DynamicCache()
+        for key, value in zip(past_key_values.key_cache, past_key_values.value_cache):
+            selected_cache.key_cache.append(key.index_select(0, row_indices))
+            selected_cache.value_cache.append(value.index_select(0, row_indices))
+
+        return selected_cache
 
     def clone_kv_cache(self, past_key_values: Optional[DynamicCache]) -> Optional[DynamicCache]:
         if past_key_values is None:
@@ -375,6 +522,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         prediction_key_name: str = "user_id",
         prediction_value_name: str = "semantic_ids",
         training_task: str = "sid",
+        rerank_logit_weight: float = 1.0,
+        beam_log_prob_weight: float = 1.0,
+        use_beam_score_in_rerank_loss: bool = False,
+        use_no_hit_aux_loss: bool = False,
+        no_hit_aux_loss_weight: float = 0.05,
+        rerank_loss_weight: float = 0.1,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
         **kwargs,
@@ -411,6 +564,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         self.training_task = training_task
+        self.rerank_logit_weight = rerank_logit_weight
+        self.beam_log_prob_weight = beam_log_prob_weight
+        self.use_beam_score_in_rerank_loss = use_beam_score_in_rerank_loss
+        self.use_no_hit_aux_loss = use_no_hit_aux_loss
+        self.no_hit_aux_loss_weight = no_hit_aux_loss_weight
+        self.rerank_loss_weight = rerank_loss_weight
         self.load_only_weights = load_only_weights
         self._manual_ckpt_path = manual_ckpt_path
 
@@ -791,11 +950,15 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)  # (B * top_k)
-        click_log_prob = F.logsigmoid(click_logits)
-        self.click_log_prob_accumulator(click_log_prob.mean())
+        click_logits_2d = click_logits.view(B, self.top_k_for_generation)
+        final_score = self._combine_rerank_scores(
+            beam_log_prob=beam_log_prob,
+            rerank_logits=click_logits_2d,
+        )
+        rerank_log_prob = F.log_softmax(final_score, dim=-1)
+        self.click_log_prob_accumulator(rerank_log_prob.mean())
         self.beam_log_prob_accumulator(beam_log_prob.mean())
 
-        final_score = click_log_prob.view(B, self.top_k_for_generation) + beam_log_prob
         topk_results = torch.topk(final_score, k=self.top_k_for_generation, dim=-1)
         rerank_scores, indices_topk = topk_results.values, topk_results.indices
 
@@ -897,6 +1060,54 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             )
 
         return total_sid_loss
+
+    @torch.no_grad()
+    def _compute_target_sid_log_prob(
+        self,
+        hist_sid: torch.Tensor,
+        hist_mask: torch.Tensor,
+        target_sid: torch.Tensor,
+    ) -> torch.Tensor:
+        """Teacher-force a target SID path and return its autoregressive log-probability."""
+        if hist_sid.size(0) == 0:
+            return torch.empty(0, device=hist_sid.device)
+
+        candidate_logits, input_mask, past_key_values = self._forward_history_for_next_sid(
+            sid=hist_sid,
+            attention_mask=hist_mask,
+        )
+        target_index = target_sid[:, 0].long() - 1
+        target_log_prob = F.log_softmax(candidate_logits, dim=-1).gather(
+            1,
+            target_index.unsqueeze(1),
+        ).squeeze(1)
+
+        for hierarchy in range(1, self.num_hierarchies):
+            prev_sid = target_sid[:, hierarchy - 1:hierarchy]
+            next_mask = torch.ones(
+                target_sid.size(0),
+                1,
+                device=input_mask.device,
+                dtype=input_mask.dtype,
+            )
+            input_mask = torch.cat([input_mask, next_mask], dim=-1)
+            input_embeds = self.embed_token(token_id=prev_sid, hierarchy=hierarchy - 1)
+
+            decoder_output, past_key_values = self.decoder(
+                sequence_embedding=input_embeds,
+                attention_mask=input_mask,
+                use_cache=True,
+                past_key_values=past_key_values,
+            )
+            latest_output_representation = decoder_output[:, -1, :]
+            candidate_logits = self.decoder.sid_head[hierarchy](latest_output_representation)
+            target_index = target_sid[:, hierarchy].long() - 1
+            target_log_prob = target_log_prob + F.log_softmax(
+                candidate_logits,
+                dim=-1,
+            ).gather(1, target_index.unsqueeze(1)).squeeze(1)
+
+        return target_log_prob
 
     def _infer_for_eval(
         self,
@@ -1022,7 +1233,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         rerank_itemkey = (rerank_ids * self.powers).sum(dim=-1)  # (B, top_k)
         click_labels = (rerank_itemkey == target_itemkey.unsqueeze(1)).float()  # (B, top_k)
         click_probs = torch.sigmoid(rerank_click_logits)
-        auc = binary_auroc(click_probs.view(-1), click_labels.view(-1).long())
+        auc = self._safe_binary_auroc(click_probs, click_labels)
         self.click_auc_accumulator(auc)
 
     def training_step(
@@ -1199,7 +1410,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         # ===== Beam search to generate candidates, then compute click loss =====
-        _, loss_bce, click_metrics = self._compute_click_loss_with_beam_search(
+        _, loss_rerank, click_metrics = self._compute_click_loss_with_beam_search(
             hist_sid=hist_sid,
             hist_mask=hist_mask,
             hist_itemkey_for_beam=hist_itemkey_for_beam,
@@ -1208,13 +1419,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             batch_size=batch_size,
         )
 
-        # ===== Joint loss: sum of SID loss and click loss =====
-        total_loss = total_sid_loss + loss_bce
+        # Keep SID generation as the dominant objective; the rerank head learns a
+        # listwise residual score over natural beam hits.
+        total_loss = total_sid_loss + self.rerank_loss_weight * loss_rerank
 
         metrics = {
             "beam_log_prob": click_metrics["beam_log_prob"],
             "click_auc": click_metrics["click_auc"],
             "click_log_prob": click_metrics["click_log_prob"],
+            "rerank_hit_rate_in_beam": click_metrics["rerank_hit_rate_in_beam"],
+            "rerank_no_hit_rate": click_metrics["rerank_no_hit_rate"],
+            "rerank_aux_loss": click_metrics["rerank_aux_loss"],
             **sid_metrics,
         }
 
@@ -1253,7 +1468,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         Returns:
             decoder_output: The decoder output
-            loss_bce: BCE loss for click prediction
+            loss: listwise reranking loss over the beam candidates
             metrics: Dictionary containing click metrics
         """
         B = batch_size
@@ -1263,105 +1478,100 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             sid=hist_sid,
             attention_mask=hist_mask,
         )
-
-        # generated_ids: (B * top_k, H)
-        # beam_log_prob: (B, top_k)
-        generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
-
-        # Check which samples have no positive sample in beam
-        generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
-        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
-        has_hit = (generated_itemkey_2d == target_itemkey_expanded).any(dim=1)  # (B,)
-        no_hit_mask = ~has_hit  # (B,)
-
-        if no_hit_mask.any():
-            # For samples with no hit, randomly select a beam to replace with GT
-            num_no_hit = no_hit_mask.sum().item()
-            random_beam_indices = torch.randint(
-                0, self.top_k_for_generation, (num_no_hit,), device=generated_ids.device
-            )
-
-            # Compute indices in flattened generated_ids
-            no_hit_indices = torch.where(no_hit_mask)[0]  # (num_no_hit,)
-            replace_indices = no_hit_indices * self.top_k_for_generation + random_beam_indices
-
-            gt_generated_ids, gt_input_mask, gt_past_key_values = self._build_cache_for_given_sid(
-                hist_sid=hist_sid[no_hit_indices],
-                hist_mask=hist_mask[no_hit_indices],
-                target_sid=target_sid[no_hit_indices],
-            )
-
-            # Replace selected beams with GT SID and its aligned cache state.
-            generated_ids[replace_indices] = gt_generated_ids
-            input_mask[replace_indices] = gt_input_mask
-            past_key_values = self.replace_kv_cache_rows(
-                past_key_values=past_key_values,
-                row_indices=replace_indices.long(),
-                replacement_past_key_values=gt_past_key_values,
-            )
-
-            # Recompute generated_itemkey after replacement
-            generated_itemkey = (generated_ids * self.powers).sum(dim=-1)  # (B * top_k,)
-
-        # Build segment2 (similar items) for each candidate
-        hist_itemkey_expanded = hist_itemkey_for_beam.repeat_interleave(self.top_k_for_generation, dim=0)
-        similar_itemkey = self.get_similar_itemkey(
-            target_itemkey=generated_itemkey,
-            hist_itemkey=hist_itemkey_expanded
-        )  # (B * top_k, top_k_for_score + 1)
-
-        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
-
-        # Continue forward with segment2 and segment3
-        input_embeds = torch.concat(
-            [
-                self.embed_token(token_id=generated_ids[:, -1:], hierarchy=self.num_hierarchies - 1),
-                self.embed_token(token_id=generated_itemkey.unsqueeze(-1)),
-                input_embeds_similar_item,
-            ],
-            dim=1,
-        )
-        segment_mask = torch.concat(
-            [
-                torch.ones(B * self.top_k_for_generation, 2, device=self.device),
-                mask_similar_item,
-            ],
-            dim=-1,
-        )
-        full_input_mask = torch.concat([input_mask, segment_mask], dim=-1)
-
-        decoder_output = self.decoder(
-            sequence_embedding=input_embeds,
-            attention_mask=full_input_mask,
-            use_cache=False,
+        decoder_output, click_logits, click_labels = self._score_rerank_candidates(
+            generated_ids=generated_ids,
+            input_mask=input_mask,
             past_key_values=past_key_values,
+            hist_itemkey_for_beam=hist_itemkey_for_beam,
+            target_itemkey=target_itemkey,
         )
 
-        # Click prediction for all candidates
-        click_logits = self.decoder.click_head(decoder_output[:, -1, :]).squeeze(-1)  # (B * top_k,)
-        click_logits = click_logits.view(B, self.top_k_for_generation)  # (B, top_k)
-
-        # Create labels - correct candidate gets 1, others get 0
-        # Now GT is guaranteed to be in the candidates (either from beam or replaced)
-        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand(B, self.top_k_for_generation)
+        generated_itemkey = (generated_ids * self.powers).sum(dim=-1)
         generated_itemkey_2d = generated_itemkey.view(B, self.top_k_for_generation)
-        click_labels = (generated_itemkey_2d == target_itemkey_expanded).float()  # (B, top_k)
+        target_itemkey_expanded = target_itemkey.unsqueeze(1).expand_as(generated_itemkey_2d)
+        has_hit = (generated_itemkey_2d == target_itemkey_expanded).any(dim=1)
+        no_hit_mask = ~has_hit
 
-        # BCE loss for click prediction
-        loss_bce = self.click_loss_fn(click_logits, click_labels)
+        main_loss = self._compute_listwise_rerank_loss(
+            rerank_logits=click_logits,
+            labels=click_labels,
+            beam_log_prob=beam_log_prob,
+        )
+
+        aux_loss = click_logits.sum() * 0.0
+        if self.use_no_hit_aux_loss and no_hit_mask.any():
+            no_hit_indices = torch.where(no_hit_mask)[0]
+            gt_generated_ids, gt_input_mask, gt_past_key_values = self._build_cache_for_given_sid(
+                hist_sid=hist_sid,
+                hist_mask=hist_mask,
+                target_sid=target_sid,
+            )
+            gt_generated_ids = gt_generated_ids[no_hit_indices]
+            gt_input_mask = gt_input_mask[no_hit_indices]
+            gt_past_key_values = self.select_kv_cache_rows(
+                past_key_values=gt_past_key_values,
+                row_indices=no_hit_indices.long(),
+            )
+
+            _, gt_click_logits, _ = self._score_rerank_candidates(
+                generated_ids=gt_generated_ids,
+                input_mask=gt_input_mask,
+                past_key_values=gt_past_key_values,
+                hist_itemkey_for_beam=hist_itemkey_for_beam[no_hit_indices],
+                target_itemkey=target_itemkey[no_hit_indices],
+            )
+
+            random_beam_indices = torch.randint(
+                0,
+                self.top_k_for_generation,
+                (no_hit_indices.size(0),),
+                device=click_logits.device,
+            )
+            insert_mask = F.one_hot(
+                random_beam_indices,
+                num_classes=self.top_k_for_generation,
+            ).bool()
+            aux_click_logits = torch.where(
+                insert_mask,
+                gt_click_logits.expand(-1, self.top_k_for_generation),
+                click_logits[no_hit_indices],
+            )
+            aux_click_labels = insert_mask.to(click_logits.dtype)
+            aux_loss = self._compute_listwise_rerank_loss(
+                rerank_logits=aux_click_logits,
+                labels=aux_click_labels,
+            )
+
+        loss_listwise = main_loss + self.no_hit_aux_loss_weight * aux_loss
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
-            # AUC: treat as binary classification over all candidates
-            auc = binary_auroc(click_probs.view(-1), click_labels.view(-1).long())
+            auc = self._safe_binary_auroc(click_probs, click_labels)
 
-            # Mean click log prob for all candidates (same as eval)
-            click_log_prob = F.logsigmoid(click_logits).mean()
+            final_scores = self._combine_rerank_scores(
+                beam_log_prob=beam_log_prob,
+                rerank_logits=click_logits,
+                detach_beam=True,
+            )
+            positive_counts = click_labels.sum(dim=-1, keepdim=True)
+            valid_rows = positive_counts.squeeze(-1) > 0
+            target_dist = click_labels / positive_counts.clamp_min(1.0)
+            per_row_log_prob = (target_dist * F.log_softmax(final_scores, dim=-1)).sum(dim=-1)
+            click_log_prob = (
+                per_row_log_prob[valid_rows].mean()
+                if torch.any(valid_rows)
+                else per_row_log_prob.sum() * 0.0
+            )
+            rerank_hit_rate_in_beam = valid_rows.float().mean()
+            rerank_no_hit_rate = no_hit_mask.float().mean()
 
-        return decoder_output, loss_bce, {
+        return decoder_output, loss_listwise, {
             "click_auc": auc,
             "click_log_prob": click_log_prob,
             "beam_log_prob": beam_log_prob.mean(),
+            "rerank_hit_rate_in_beam": rerank_hit_rate_in_beam,
+            "rerank_no_hit_rate": rerank_no_hit_rate,
+            "rerank_aux_loss": aux_loss.detach(),
         }
 
     def build_sid_block_embeds(

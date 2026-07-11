@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torchmetrics.aggregation import BaseAggregator
-from torchmetrics.functional.classification import binary_auroc
 
 from src.data.loading.components.interfaces import SequentialModelInputData
 from src.models.components.network_blocks.mlp import MLP
@@ -46,6 +45,7 @@ class FrozenSIDTeacher(nn.Module):
             sid=hist_sid,
             attention_mask=hist_mask,
         )
+        beam_scores = beam_scores.clone()
 
         candidate_sid = generated_ids.view(
             batch_size, self.top_k_for_generation, self.num_hierarchies
@@ -67,7 +67,13 @@ class FrozenSIDTeacher(nn.Module):
                     size=(no_hit_indices.numel(),),
                     device=hist_sid.device,
                 )
+                gt_beam_scores = self.sid_model._compute_target_sid_log_prob(
+                    hist_sid=hist_sid[no_hit_indices],
+                    hist_mask=hist_mask[no_hit_indices],
+                    target_sid=target_sid[no_hit_indices],
+                )
                 candidate_sid[no_hit_indices, replace_indices] = target_sid[no_hit_indices]
+                beam_scores[no_hit_indices, replace_indices] = gt_beam_scores
                 candidate_itemkey = (candidate_sid * self.sid_model.powers).sum(dim=-1)
 
         if target_itemkey is None:
@@ -197,11 +203,19 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         reranker_rank_embedding_dim: int,
         reranker_num_hash_buckets: int = 300000,
         rerank_logit_weight: float = 1.0,
+        beam_log_prob_weight: float = 1.0,
+        use_beam_score_in_rerank_loss: bool = False,
+        inject_gt_for_rerank_loss: bool = False,
+        rerank_loss_weight: float = 1.0,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
         **kwargs,
     ) -> None:
         super().__init__(
+            rerank_logit_weight=rerank_logit_weight,
+            beam_log_prob_weight=beam_log_prob_weight,
+            use_beam_score_in_rerank_loss=use_beam_score_in_rerank_loss,
+            rerank_loss_weight=rerank_loss_weight,
             load_only_weights=load_only_weights,
             manual_ckpt_path=manual_ckpt_path,
             **kwargs,
@@ -212,7 +226,7 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         )
         self.training_task = "rerank_small"
         self.sid_teacher_ckpt_path = sid_teacher_ckpt_path
-        self.rerank_logit_weight = rerank_logit_weight
+        self.inject_gt_for_rerank_loss = inject_gt_for_rerank_loss
         self.reranker = SmallReranker(
             embedding_dim=reranker_embedding_dim,
             num_hierarchies=self.num_hierarchies,
@@ -314,9 +328,9 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
             candidate_sid=candidate_dict["candidate_sid"],
             beam_scores=candidate_dict["beam_scores"],
         )
-        final_scores = (
-            candidate_dict["beam_scores"]
-            + self.rerank_logit_weight * rerank_logits
+        final_scores = self._combine_rerank_scores(
+            beam_log_prob=candidate_dict["beam_scores"],
+            rerank_logits=rerank_logits,
         )
 
         topk = torch.topk(final_scores, k=self.top_k_for_generation, dim=-1)
@@ -346,7 +360,7 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         mode: ModelMode,
     ):
         batch_dict = self._split_batch(model_input)
-        ensure_gt = mode is ModelMode.TRAIN
+        ensure_gt = mode is ModelMode.TRAIN and self.inject_gt_for_rerank_loss
         result_dict = self._run_rerank(
             hist_sid=batch_dict["hist_sid"],
             hist_mask=batch_dict["hist_mask"],
@@ -373,19 +387,29 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
                 },
             }
 
-        loss = self.click_loss_fn(
-            result_dict["rerank_logits"],
-            result_dict["labels"],
+        loss = self._compute_listwise_rerank_loss(
+            rerank_logits=result_dict["rerank_logits"],
+            labels=result_dict["labels"],
+            beam_log_prob=result_dict["beam_scores"],
         )
         with torch.no_grad():
             click_probs = torch.sigmoid(result_dict["rerank_logits"])
-            auc = binary_auroc(click_probs.reshape(-1), result_dict["labels"].reshape(-1).long())
-            click_log_prob = F.logsigmoid(result_dict["rerank_logits"]).mean()
+            auc = self._safe_binary_auroc(click_probs, result_dict["labels"])
+            positive_counts = result_dict["labels"].sum(dim=-1, keepdim=True)
+            valid_rows = positive_counts.squeeze(-1) > 0
+            target_dist = result_dict["labels"] / positive_counts.clamp_min(1.0)
+            per_row_log_prob = (
+                target_dist
+                * F.log_softmax(result_dict["final_scores"], dim=-1)
+            ).sum(dim=-1)
+            click_log_prob = per_row_log_prob[valid_rows].mean() if torch.any(valid_rows) else per_row_log_prob.sum() * 0.0
+            rerank_hit_rate_in_beam = valid_rows.float().mean()
 
         metrics = {
             "beam_log_prob": result_dict["beam_scores"].mean(),
             "click_auc": auc,
             "click_log_prob": click_log_prob,
+            "rerank_hit_rate_in_beam": rerank_hit_rate_in_beam,
         }
         return result_dict["rerank_logits"], loss, metrics
 
@@ -457,7 +481,7 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         rerank_itemkey = (rerank_ids * self.powers).sum(dim=-1)
         click_labels = (rerank_itemkey == target_itemkey.unsqueeze(1)).float()
         click_probs = torch.sigmoid(rerank_click_logits)
-        auc = binary_auroc(click_probs.reshape(-1), click_labels.reshape(-1).long())
+        auc = self._safe_binary_auroc(click_probs, click_labels)
         self.click_auc_accumulator(auc)
 
     def on_validation_epoch_start(self) -> None:

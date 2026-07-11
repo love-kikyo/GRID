@@ -57,13 +57,13 @@ High-level behavior:
 
 1. Autoregressively generate semantic IDs with beam search.
 2. Use beam candidates as retrieval outputs.
-3. Use a click head to rerank beam candidates.
+3. Use a rerank/click head to score beam candidates.
 4. Optionally train SID generation only, or jointly train SID generation and click reranking.
 
 Additional model components:
 
 - `sid_head`: predicts hierarchical SID tokens.
-- `click_head`: predicts candidate click relevance for reranking.
+- `click_head`: produces a residual rerank logit for each beam candidate.
 - `item_embedding_table`: dual-hash item embedding used in similar-item context construction.
 - `powers` buffer: converts hierarchical SID digits into flattened item keys.
 
@@ -85,7 +85,11 @@ Additional model components:
 - behavior:
   - train `sid_head` and `click_head`
   - beam search produces hard negatives
-  - click head reranks beam candidates
+  - click head reranks beam candidates with a listwise softmax objective over the beam list
+  - the main rerank loss is applied on natural beam lists that already contain the ground-truth item
+  - no-hit batches can optionally add a light GT-injected auxiliary listwise loss
+  - final rerank score is `beam_log_prob_weight * beam_log_prob + rerank_logit_weight * rerank_logit`
+  - rerank fusion weight sweeps are available via `tiger_train_click_rerank02` and `tiger_train_click_rerank03`
   - validation/test primary metrics come from rerank results
   - gain metrics are logged as `rerank - beam`
 

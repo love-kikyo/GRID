@@ -207,7 +207,7 @@ Good upgrade directions:
 
 - stronger feature set based on history-candidate interactions
 - better use of beam score and beam rank
-- pairwise or listwise ranking loss in addition to pointwise BCE
+- listwise ranking loss over the beam list, rather than pointwise BCE
 - lightweight transformer or cross-feature scorer instead of only MLP
 - distillation from joint click logits, if desired
 

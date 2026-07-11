@@ -16,7 +16,11 @@ model:
   reranker_dropout: 0.1
   reranker_rank_embedding_dim: 16
   reranker_num_hash_buckets: 300000
-  rerank_logit_weight: 0.5
+  rerank_logit_weight: 0.1
+  beam_log_prob_weight: 1.0
+  use_beam_score_in_rerank_loss: false
+  inject_gt_for_rerank_loss: false
+  rerank_loss_weight: 1.0
   load_only_weights: false
 
 trainer:
