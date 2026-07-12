@@ -4,11 +4,48 @@
 
 This note summarizes how to present the current RecoChain results fairly, what additional experiments are most important for the paper, and how far the separate small reranker should be upgraded.
 
-Current observed ranking order:
+The current paper direction should be:
 
-- `joint sid + rerank multitask training` > `small rerank model` > `sid-only`
+- RecoChain is a cache-aware unified generate-and-rank framework.
+- It extends TIGER-style semantic ID generation into an autoregressive reranking stage.
+- It should not be framed as a fully differentiable end-to-end joint loss through beam selection.
+- The listwise objective is important as a ranking-consistency correction, but it is not the whole paper.
 
-This ordering is encouraging, but the paper should avoid over-claiming why `joint` wins unless the comparison dimensions are clearly separated.
+The main comparison should be:
+
+```text
+two-stage generate-then-rerank
+vs.
+unified cache-aware generate-and-rank
+```
+
+not:
+
+```text
+pointwise loss
+vs.
+listwise loss
+```
+
+The ranking loss is applied after discrete beam construction. It can train the shared decoder states used in candidate scoring and the click/rerank head, but it should not be described as directly differentiating through top-k beam selection.
+
+## Reviewer Concerns to Address
+
+The revision should directly cover these points:
+
+- missing comparison with TIGER
+- missing comparison with OneRec, if feasible under available GPU and parameter-budget constraints
+- missing comparison with TIGER plus a DIN-like or DIN-sim reranker
+- pointwise BCE is not a true ranking objective over beam candidates
+- KV-cache reuse is mentioned but not validated with efficiency experiments
+
+Mapping from concern to response:
+
+- TIGER comparison: use `RecoChain w/o rerank` / SID-only generation as the TIGER-style baseline, with naming made explicit in the paper.
+- TIGER + DIN-style comparison: make the separate reranker branch a faithful modular reranking baseline, or label it conservatively as DIN-style if it is not exact DIN.
+- Pointwise BCE concern: present listwise beam-level reranking as the corrected objective.
+- KV-cache concern: add a latency/memory table isolating ranking with and without cache reuse.
+- OneRec concern: attempt a fair run if resources permit; otherwise document resource limits and avoid pretending it was evaluated.
 
 ## Current Code-Level Reality
 
@@ -31,17 +68,20 @@ Implication:
 
 The safest and strongest claim is:
 
-- RecoChain achieves the best overall accuracy with a unified autoregressive generation-and-scoring workflow.
+- RecoChain unifies candidate generation and candidate ranking in one autoregressive computation path.
+- RecoChain reuses generation-stage KV cache for ranking, avoiding a full re-encoding of user history for each candidate.
+- RecoChain uses a beam-level listwise objective to make the ranking stage mathematically consistent.
 - Its gain is parameter-efficient, because the additional reranking parameters in the joint model are very small.
-- The gain is not free in computation, because the joint scoring path is slower than a standalone small reranker.
 
-Avoid the weaker or potentially misleading claim:
+Avoid weaker or potentially misleading claims:
 
 - "`joint` wins because unified models are always better than separate rerankers."
+- "RecoChain is fully end-to-end differentiable from ranking loss to beam generation."
+- "The main contribution is that listwise always outperforms pointwise."
 
-Instead, write the conclusion in a controlled form:
+Instead, keep the conclusion in a controlled form:
 
-- "`joint` achieves the best final accuracy under the current system design; compared with a stronger modular reranker, it uses fewer additional reranking parameters but more computation."
+- "RecoChain turns a TIGER-style generator into a unified generate-and-rank chain. The ranking stage is trained with a beam-level objective and implemented with KV-cache reuse, giving a principled and efficient alternative to external two-stage rerankers."
 
 ## Why `joint-rerank-only` Is Not the Main Fairness Experiment
 
@@ -116,9 +156,12 @@ The paper does not need every imaginable experiment. The highest-value additions
 
 Include:
 
-- `sid-only`
-- `sid + separate small rerank`
-- `joint sid + rerank multitask training`
+- `TIGER` / `RecoChain w/o rerank`
+- `TIGER + DIN-style reranker`
+- `TIGER + stronger separate reranker`, if available
+- `RecoChain-Pointwise`, as the previous formulation
+- `RecoChain-Listwise`, as the ranking-consistent formulation
+- `OneRec`, if deployment and resource constraints permit a fair run
 
 Report at least:
 
@@ -128,10 +171,70 @@ Report at least:
 - added rerank params
 - training time
 - inference time
+- peak memory
 
 This should be the main paper table.
 
-### B. Small reranker scaling study
+### B. Efficiency and KV-cache reuse table
+
+This experiment is essential because the method explicitly mentions cache reuse.
+
+Include:
+
+- RecoChain ranking with KV cache reuse
+- RecoChain ranking without KV cache reuse, if feasible
+- TIGER + external reranker with separate user-history encoding
+
+Report:
+
+- inference latency per batch or per user
+- ranking-stage latency
+- peak GPU memory
+- number of extra tokens or sequence steps processed during ranking
+
+Expected interpretation:
+
+- RecoChain is not merely "one more scorer"; it amortizes history computation through the generation cache.
+- The relevant efficiency claim is lower marginal ranking cost than rerunning a full user-candidate encoder for every candidate.
+
+Completed profiling:
+
+- branch: `profile-kv-cache-efficiency`
+- Slurm job: `GRID-ProfileKV-122453`, completed on 2026-07-12
+- script: `scripts/profile_rerank_efficiency.py`
+- launcher: `run_profile_kv_cache.sh`
+- measured setting: Taobao test split, batch size 32, `top_k_for_generation=20`, bf16 autocast, 5 warmup batches, 30 measured batches, one GPU on `aias-compute-01`
+- output files:
+  - `logs/profiles/listwise_kv_cache_profile.json`
+  - `logs/profiles/pointwise_kv_cache_profile.json`
+  - `logs/profiles/sid_beam_only_kv_cache_profile.json`
+  - `logs/profiles/separate_rerank_small_arch_profile.json`
+
+Profiling results:
+
+| model/checkpoint | variant | total ms/batch | gen ms/batch | rerank ms/batch | users/s | active params | added scorer params | peak GPU GB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| RecoChain-Listwise | beam only | 22.59 | 22.59 | 0.00 | 1416.77 | 144.18M | 1.02K click head | 1.49 |
+| RecoChain-Listwise | beam + cache rerank | 56.21 | 23.20 | 33.01 | 569.25 | 144.18M | 1.02K click head | 4.56 |
+| RecoChain-Listwise | beam + no-cache rerank | 99.57 | 23.51 | 76.06 | 321.38 | 144.18M | 1.02K click head | 4.66 |
+| RecoChain-Pointwise | beam only | 22.40 | 22.40 | 0.00 | 1428.79 | 144.18M | 1.02K click head | 1.49 |
+| RecoChain-Pointwise | beam + cache rerank | 55.99 | 23.01 | 32.97 | 571.55 | 144.18M | 1.02K click head | 4.56 |
+| RecoChain-Pointwise | beam + no-cache rerank | 99.51 | 23.48 | 76.04 | 321.56 | 144.18M | 1.02K click head | 4.66 |
+| SID / TIGER-style | beam only | 22.81 | 22.81 | 0.00 | 1403.01 | 144.18M | none | 1.49 |
+| SID + separate small reranker | beam only | 23.25 | 23.25 | 0.00 | 1376.34 | 223.41M | 79.23M reranker | 1.89 |
+| SID + separate small reranker | beam + small rerank | 25.13 | 23.12 | 2.01 | 1273.53 | 223.41M | 79.23M reranker | 1.89 |
+
+Immediate interpretation:
+
+- KV-cache reuse reduces the measured RecoChain ranking-stage latency from about `76.0 ms/batch` to about `33.0 ms/batch`, roughly `2.3x` faster for the ranking substep.
+- End-to-end generation-plus-ranking is about `1.75x` faster with cache reuse than with full recomputation.
+- Beam-only generation is stable across SID-only, pointwise, and listwise checkpoints at about `22-23 ms/batch`, so the speed comparison should not use Lightning `val_samples_per_sec` as a proxy for model-only latency.
+- The separate small reranker is much faster at the marginal ranking step, about `2.0 ms/batch`, because it is a shallow standalone scorer rather than the shared autoregressive decoder path.
+- The separate small reranker also introduces far more active reranking parameters: about `79.23M` active reranker parameters versus RecoChain's `1.02K` click-head parameters.
+- The separate-reranker profiling reconstructs the configured architecture from `tiger_train_rerank_small.yaml`; the trained reranker run directory/checkpoint `2026-06-23/22-27-36` was deleted, so this row should be used for architecture latency/parameter analysis, not as a new accuracy reproduction.
+- The cache-reuse claim is now supported by a direct ablation inside the same RecoChain scorer. The external small reranker result should be framed as a speed/parameter tradeoff: faster shallow scoring but a separate large reranker module and weaker integration with the generator.
+
+### C. Small reranker scaling study
 
 Build at least three separate reranker sizes:
 
@@ -143,6 +246,7 @@ Purpose:
 
 - test whether the separate reranker still remains below `joint` when given a stronger parameter budget
 - identify whether the current small reranker has obvious unused headroom
+- separate architectural advantage from parameter budget
 
 How to interpret outcomes:
 
@@ -150,22 +254,27 @@ How to interpret outcomes:
 - if a slightly larger reranker catches up, then the correct paper claim becomes:
   - RecoChain is better in the parameter-efficient regime
 
-### C. Joint-model ablation table
+### D. Joint-model ablation table
 
 Recommended ablations:
 
 - beam score only
 - click score only
 - beam score + click score fusion
+- pointwise BCE ranking loss
+- listwise beam-level ranking loss
+- listwise without no-hit auxiliary loss
 - remove similar-item context
 - vary `top_k_for_generation`
+- vary rerank fusion weight
 
 Purpose:
 
 - show which component actually produces the gain
 - show that the final result is not from one accidental heuristic
+- show that listwise is a ranking-consistency choice, not just an unexamined replacement for BCE
 
-### D. Stability experiment
+### E. Stability experiment
 
 Run at least 3 random seeds for the main settings.
 
@@ -179,7 +288,7 @@ Purpose:
 - show the ranking order is stable
 - reduce the chance that the result is due to variance
 
-### E. Budget-matched comparisons
+### F. Budget-matched comparisons
 
 If resources allow, include one or both:
 
@@ -208,6 +317,7 @@ Good upgrade directions:
 - stronger feature set based on history-candidate interactions
 - better use of beam score and beam rank
 - listwise ranking loss over the beam list, rather than pointwise BCE
+- a more faithful DIN-style interaction module when used as the `TIGER + DIN` baseline
 - lightweight transformer or cross-feature scorer instead of only MLP
 - distillation from joint click logits, if desired
 
@@ -221,38 +331,42 @@ Stop upgrading when:
 
 A clean narrative for the experiments section is:
 
-1. `sid-only` establishes the generative retrieval baseline.
-2. `small rerank model` shows that a strong modular post-ranker improves over retrieval-only decoding.
-3. `joint` delivers the best overall ranking accuracy.
-4. The `joint` gain is notable because it uses very few added scoring parameters.
-5. The `joint` gain is not free, because it incurs higher computation than the standalone small reranker.
+1. TIGER-style semantic ID generation establishes the generative retrieval baseline.
+2. External rerankers such as DIN-style modules establish the conventional two-stage generate-then-rerank path.
+3. RecoChain uses the same autoregressive decoder to continue from generation into ranking.
+4. The listwise beam-level objective makes this ranking stage consistent with the candidate list structure.
+5. KV-cache reuse explains why the ranking stage is computationally different from a normal external reranker.
 
-This narrative is much more defensible than saying the joint model wins simply because it is larger.
+This narrative is more defensible than saying the joint model wins simply because it is larger or because listwise loss alone is stronger.
 
 ## Suggested Reviewer-Facing Conclusion
 
 If the future experiments support the current trend, the conclusion can be written as:
 
-- RecoChain unifies candidate generation and ranking score estimation within a single autoregressive workflow.
-- Compared with a standalone modular reranker, RecoChain achieves the best ranking accuracy while introducing only a minimal additional scoring head.
-- The tradeoff is increased computation, not increased reranking parameter count.
+- RecoChain unifies candidate generation and ranking score estimation within a cache-aware autoregressive workflow.
+- Compared with external two-stage rerankers, RecoChain reuses the generator's hidden context and KV cache for candidate scoring.
+- The revised listwise objective directly optimizes a distribution over the beam list, addressing the limitation of pointwise BCE.
+- The method is not claimed to be differentiable through beam selection; instead, it provides a principled ranking stage over generated candidates.
 
 ## Minimal Experiment Priority Order
 
 If time is limited, prioritize in this order:
 
-1. Main comparison table with efficiency columns
-2. Small reranker scaling study
-3. Joint ablation table
-4. Multi-seed stability
-5. Budget-matched fairness experiment
+1. Main comparison table against TIGER and TIGER + DIN-style reranking
+2. KV-cache efficiency table
+3. Joint ablation table, especially pointwise vs listwise and score fusion
+4. Small reranker scaling study
+5. Multi-seed stability
+6. OneRec if deployment is feasible
+7. Budget-matched fairness experiment
 
 ## Practical Bottom Line
 
 For the current paper, the key message should be:
 
-- `joint` is not a bigger reranker in parameter count
-- `joint` is a more unified and more compute-intensive scoring workflow
-- it beats a parameter-heavier modular reranker anyway
+- RecoChain is not primarily an end-to-end loss contribution.
+- RecoChain is a unified, cache-aware generate-and-rank architecture.
+- Listwise ranking is the correct objective for the beam-level reranking stage.
+- The paper should be defended through TIGER / DIN-style / RecoChain comparisons plus KV-cache efficiency evidence.
 
-That is already a meaningful and publishable experimental story if the additional evidence above is filled in.
+That is the most coherent and defensible experimental story to build around from the current codebase.

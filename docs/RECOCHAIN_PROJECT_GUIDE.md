@@ -4,9 +4,37 @@
 
 This repository is no longer a plain upstream GRID checkout. The current working branch is a modified research codebase centered on:
 
-**RecoChain: Unified Generative Retrieval and Ranking**
+**RecoChain: Cache-Aware Unified Generative Retrieval and Ranking**
 
 The original `README.md` still describes baseline GRID. This document is the branch-specific reference for future sessions.
+
+Cross-branch working memory lives outside this repository at `/home/MMReco2021/liuyu/RECOCHAIN_NOTES.md`, so it remains visible after switching git branches.
+
+## Research Positioning
+
+The current research direction should be understood as a unified generate-and-rank framework, not as a fully differentiable end-to-end loss paper.
+
+Core claim:
+
+- RecoChain extends TIGER-style semantic ID generation into a cache-aware autoregressive ranking workflow.
+- The same decoder first generates beam candidates, then continues scoring those candidates by reusing the generation-stage KV cache.
+- The reranking head should be interpreted as a residual ranking scorer over a beam list, not as an independent second prediction of the ground-truth item probability.
+- The listwise objective is a ranking-consistency fix: given a generated beam list, learn a normalized ranking distribution over candidates.
+
+Important non-claims:
+
+- Do not claim that the ranking loss is fully differentiable through top-k beam selection.
+- Do not frame the paper as primarily a pointwise-vs-listwise loss paper.
+- Do not rely on "joint loss is end-to-end" as the main innovation, because the beam construction step remains discrete.
+
+The intended paper story is:
+
+```text
+TIGER-style semantic ID generation
+        -> beam candidates
+        -> same autoregressive decoder continues candidate scoring
+        -> KV-cache-aware listwise reranking
+```
 
 ## Baseline and Environment
 
@@ -57,8 +85,9 @@ High-level behavior:
 
 1. Autoregressively generate semantic IDs with beam search.
 2. Use beam candidates as retrieval outputs.
-3. Use a rerank/click head to score beam candidates.
-4. Optionally train SID generation only, or jointly train SID generation and click reranking.
+3. Reuse the beam-search KV cache and continue the same decoder path to score candidates.
+4. Use a rerank/click head as a residual ranking scorer over the beam list.
+5. Optionally train SID generation only, or jointly train SID generation and click reranking.
 
 Additional model components:
 
@@ -66,6 +95,15 @@ Additional model components:
 - `click_head`: produces a residual rerank logit for each beam candidate.
 - `item_embedding_table`: dual-hash item embedding used in similar-item context construction.
 - `powers` buffer: converts hierarchical SID digits into flattened item keys.
+
+Recommended scoring interpretation:
+
+```text
+score(i | u, B) = beam_log_prob_weight * log P_gen(i | u)
+                + rerank_logit_weight * r_click(u, i, B)
+```
+
+Here `B` is the generated beam list. `r_click` is not treated as a standalone calibrated click probability in the main formulation; it is a residual utility used to reorder candidates within `B`.
 
 ## Supported Experimental Modes
 
@@ -97,15 +135,11 @@ Additional model components:
 
 This mode is part of the experiment landscape, and is intended as a strong standalone baseline rather than as the main proposed model.
 
-Current research expectation for ranking quality on this branch:
+Research role:
 
-- `joint sid + rerank multitask training` > `small rerank model` > `sid-only`
-
-Interpretation of that expectation:
-
-- the joint multitask setup is the main proposed model and is expected to be strongest overall
-- the separate small reranker should still beat SID-only beam retrieval and serve as a meaningful baseline
-- the goal of this branch is to keep improving the small reranker, even if it does not surpass the joint model
+- this line represents the modular two-stage reranking family
+- it should serve as a serious baseline against the unified RecoChain path
+- it should not be turned into another shared autoregressive scorer, otherwise the method boundary becomes unclear
 
 Design guidance for the small-reranker line:
 
@@ -187,6 +221,36 @@ python -m src.train "experiment=[tiger_train_flat,tiger_train_click]" \
     num_embeddings_per_hierarchy=4096
 ```
 
+### KV-cache efficiency profiling
+
+From [run_profile_kv_cache.sh](/home/MMReco2021/liuyu/GRID/run_profile_kv_cache.sh:1):
+
+```bash
+sbatch run_profile_kv_cache.sh
+```
+
+The launcher runs [scripts/profile_rerank_efficiency.py](/home/MMReco2021/liuyu/GRID/scripts/profile_rerank_efficiency.py:1) on fixed test batches and reports model-forward latency only. It is separate from Lightning validation/test loops, so it should be used for paper efficiency claims instead of `perf/val_samples_per_sec`.
+
+Current profiling outputs:
+
+- `logs/profiles/listwise_kv_cache_profile.json`
+- `logs/profiles/pointwise_kv_cache_profile.json`
+- `logs/profiles/sid_beam_only_kv_cache_profile.json`
+- `logs/profiles/separate_rerank_small_arch_profile.json`
+
+For `--profile-mode recochain`, the main cache ablation compares:
+
+- `beam_only`: semantic-ID beam generation only
+- `rerank_cache`: beam generation plus RecoChain reranking with generation-stage KV cache reuse
+- `rerank_no_cache`: same beam candidates, but reranking recomputes the full history/candidate prefix
+
+For `--profile-mode separate_rerank`, the measured path compares:
+
+- `beam_only`: frozen SID teacher beam generation only
+- `separate_rerank`: frozen SID teacher beam generation plus the standalone small reranker scorer
+
+The separate-reranker profiling can be run without a trained reranker checkpoint to measure architecture latency and parameter counts. Accuracy reproduction still requires the trained checkpoint.
+
 ## Important Training Config Defaults
 
 Current defaults in [configs/experiment/tiger_train_flat.yaml](/home/MMReco2021/liuyu/GRID/configs/experiment/tiger_train_flat.yaml:1):
@@ -235,3 +299,4 @@ Relevant code:
 - The training path is clearly aligned to the decoder-only LLaMA-based RecoChain branch.
 - [configs/experiment/tiger_inference_flat.yaml](/home/MMReco2021/liuyu/GRID/configs/experiment/tiger_inference_flat.yaml:1) still contains upstream-style T5 encoder-decoder settings and should be revalidated before using it as the official RecoChain inference entry.
 - If a separate rerank-small-model workflow becomes important, it should get its own explicit experiment config and launcher script.
+- If the paper discusses joint training, describe it as joint training after discrete beam construction, not as a fully differentiable end-to-end objective through candidate generation.
