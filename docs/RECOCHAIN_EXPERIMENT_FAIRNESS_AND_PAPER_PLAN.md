@@ -175,6 +175,17 @@ Report at least:
 
 This should be the main paper table.
 
+Current reproducible separate-reranker baseline:
+
+- run dir: `logs/train/runs/2026-07-12/23-28-36`
+- Slurm job: `GRID-RerankSmall-122455`
+- checkpoint: `logs/train/runs/2026-07-12/23-28-36/checkpoints/checkpoint_000_020000.ckpt`
+- best validation checkpoint step: `20000`
+- validation: R@5 `0.23633`, N@5 `0.23045`, R@10 `0.24078`, N@10 `0.23190`
+- test: R@5 `0.23696`, N@5 `0.23187`, R@10 `0.24018`, N@10 `0.23291`
+- test gain over beam: R@5 `+0.00349`, N@5 `+0.00217`, R@10 `+0.00217`, N@10 `+0.00174`
+- test click AUC: `0.70072`
+
 ### B. Efficiency and KV-cache reuse table
 
 This experiment is essential because the method explicitly mentions cache reuse.
@@ -208,7 +219,7 @@ Completed profiling:
   - `logs/profiles/listwise_kv_cache_profile.json`
   - `logs/profiles/pointwise_kv_cache_profile.json`
   - `logs/profiles/sid_beam_only_kv_cache_profile.json`
-  - `logs/profiles/separate_rerank_small_arch_profile.json`
+  - `logs/profiles/separate_rerank_small_trained_profile.json`
 
 Profiling results:
 
@@ -221,17 +232,17 @@ Profiling results:
 | RecoChain-Pointwise | beam + cache rerank | 55.99 | 23.01 | 32.97 | 571.55 | 144.18M | 1.02K click head | 4.56 |
 | RecoChain-Pointwise | beam + no-cache rerank | 99.51 | 23.48 | 76.04 | 321.56 | 144.18M | 1.02K click head | 4.66 |
 | SID / TIGER-style | beam only | 22.81 | 22.81 | 0.00 | 1403.01 | 144.18M | none | 1.49 |
-| SID + separate small reranker | beam only | 23.25 | 23.25 | 0.00 | 1376.34 | 223.41M | 79.23M reranker | 1.89 |
-| SID + separate small reranker | beam + small rerank | 25.13 | 23.12 | 2.01 | 1273.53 | 223.41M | 79.23M reranker | 1.89 |
+| SID + separate small reranker | beam only | 22.91 | 22.91 | 0.00 | 1396.60 | 223.41M | 79.23M reranker | 1.89 |
+| SID + separate small reranker | beam + small rerank | 24.94 | 23.13 | 1.81 | 1282.95 | 223.41M | 79.23M reranker | 1.89 |
 
 Immediate interpretation:
 
 - KV-cache reuse reduces the measured RecoChain ranking-stage latency from about `76.0 ms/batch` to about `33.0 ms/batch`, roughly `2.3x` faster for the ranking substep.
 - End-to-end generation-plus-ranking is about `1.75x` faster with cache reuse than with full recomputation.
 - Beam-only generation is stable across SID-only, pointwise, and listwise checkpoints at about `22-23 ms/batch`, so the speed comparison should not use Lightning `val_samples_per_sec` as a proxy for model-only latency.
-- The separate small reranker is much faster at the marginal ranking step, about `2.0 ms/batch`, because it is a shallow standalone scorer rather than the shared autoregressive decoder path.
+- The separate small reranker is much faster at the marginal ranking step, about `1.8 ms/batch`, because it is a shallow standalone scorer rather than the shared autoregressive decoder path.
 - The separate small reranker also introduces far more active reranking parameters: about `79.23M` active reranker parameters versus RecoChain's `1.02K` click-head parameters.
-- The separate-reranker profiling reconstructs the configured architecture from `tiger_train_rerank_small.yaml`; the trained reranker run directory/checkpoint `2026-06-23/22-27-36` was deleted, so this row should be used for architecture latency/parameter analysis, not as a new accuracy reproduction.
+- The separate-reranker profiling now uses the reproduced trained checkpoint `logs/train/runs/2026-07-12/23-28-36/checkpoints/checkpoint_000_020000.ckpt`.
 - The cache-reuse claim is now supported by a direct ablation inside the same RecoChain scorer. The external small reranker result should be framed as a speed/parameter tradeoff: faster shallow scoring but a separate large reranker module and weaker integration with the generator.
 
 ### C. Small reranker scaling study

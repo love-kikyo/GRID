@@ -41,6 +41,12 @@ profile_run() {
 profile_separate_rerank() {
     local name="$1"
     local sid_run_dir="$2"
+    local reranker_ckpt="${3:-}"
+
+    local reranker_args=()
+    if [[ -n "${reranker_ckpt}" ]]; then
+        reranker_args=(--reranker-ckpt "${reranker_ckpt}")
+    fi
 
     /home/MMReco2021/.conda/envs/GRID/bin/python scripts/profile_rerank_efficiency.py \
         --profile-mode separate_rerank \
@@ -50,6 +56,7 @@ profile_separate_rerank() {
         --separate-rerank-config configs/experiment/tiger_train_rerank_small.yaml \
         --output "logs/profiles/${name}_profile.json" \
         --csv-output "logs/profiles/${name}_profile_batches.csv" \
+        "${reranker_args[@]}" \
         --variants beam_only separate_rerank \
         --warmup-batches 5 \
         --measure-batches 30 \
@@ -63,4 +70,7 @@ profile_separate_rerank() {
 profile_run "listwise" "logs/train/runs/2026-07-11/15-47-00" "beam_only rerank_cache rerank_no_cache"
 profile_run "pointwise" "logs/train/runs/2026-06-26/17-00-10" "beam_only rerank_cache rerank_no_cache"
 profile_run "sid_beam_only" "logs/train/runs/2026-06-12/16-29-32" "beam_only"
-profile_separate_rerank "separate_rerank_small_arch" "logs/train/runs/2026-06-12/16-29-32"
+profile_separate_rerank \
+    "separate_rerank_small_trained" \
+    "logs/train/runs/2026-06-12/16-29-32" \
+    "logs/train/runs/2026-07-12/23-28-36/checkpoints/checkpoint_000_020000.ckpt"

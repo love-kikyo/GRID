@@ -236,7 +236,7 @@ Current profiling outputs:
 - `logs/profiles/listwise_kv_cache_profile.json`
 - `logs/profiles/pointwise_kv_cache_profile.json`
 - `logs/profiles/sid_beam_only_kv_cache_profile.json`
-- `logs/profiles/separate_rerank_small_arch_profile.json`
+- `logs/profiles/separate_rerank_small_trained_profile.json`
 
 For `--profile-mode recochain`, the main cache ablation compares:
 
@@ -249,7 +249,7 @@ For `--profile-mode separate_rerank`, the measured path compares:
 - `beam_only`: frozen SID teacher beam generation only
 - `separate_rerank`: frozen SID teacher beam generation plus the standalone small reranker scorer
 
-The separate-reranker profiling can be run without a trained reranker checkpoint to measure architecture latency and parameter counts. Accuracy reproduction still requires the trained checkpoint.
+The current separate-reranker profiling uses the trained checkpoint at `logs/train/runs/2026-07-12/23-28-36/checkpoints/checkpoint_000_020000.ckpt`.
 
 ## Important Training Config Defaults
 
