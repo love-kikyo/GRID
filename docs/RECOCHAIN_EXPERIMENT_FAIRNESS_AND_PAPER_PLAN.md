@@ -175,6 +175,21 @@ Report at least:
 
 This should be the main paper table.
 
+Current main-comparison draft:
+
+| model | run | test R@5 | test N@5 | test R@10 | test N@10 | active params | added rerank params | latency ms/batch | peak GPU GB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| TIGER / SID-only | `2026-06-12/16-29-32` | 0.23378 | 0.22981 | 0.23751 | 0.23102 | 144.18M | none | 22.81 | 1.49 |
+| TIGER + separate small reranker | `2026-07-12/23-28-36` | 0.23696 | 0.23187 | 0.24018 | 0.23291 | 223.41M | 79.23M | 24.94 | 1.89 |
+| RecoChain-Pointwise | `2026-06-26/17-00-10` | 0.24247 | 0.23619 | 0.24337 | 0.23649 | 144.18M | 1.02K click head | 55.99 | 4.56 |
+| RecoChain-Listwise | `2026-07-11/15-47-00` | 0.24117 | 0.23422 | 0.24496 | 0.23547 | 144.18M | 1.02K click head | 56.21 | 4.56 |
+
+Recommended use:
+
+- Main paper table should include TIGER / SID-only, TIGER + separate small reranker, and RecoChain-Listwise.
+- RecoChain-Pointwise should be presented as an ablation/previous objective, because it is empirically competitive but less ranking-consistent.
+- Separate-medium should be kept in the scaling/appendix table, not the main comparison table.
+
 Current reproducible separate-reranker baseline:
 
 - run dir: `logs/train/runs/2026-07-12/23-28-36`
