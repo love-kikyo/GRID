@@ -18,7 +18,7 @@ export MPLCONFIGDIR=/tmp/matplotlib-${USER}-${JOB_ID}
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
 
-python -m src.train "experiment=[tiger_train_flat,tiger_train_rerank_medium]" \
+/home/MMReco2021/.conda/envs/GRID/bin/python -m src.train "experiment=[tiger_train_flat,tiger_train_rerank_medium]" \
     data_dir=./data/taobao \
     semantic_id_path=./data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy \
     num_hierarchies=4 \
