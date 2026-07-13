@@ -1,0 +1,27 @@
+# @package _global_
+# Medium separate reranker for scaling the modular reranking baseline.
+# Keeps the SID teacher frozen and only increases standalone reranker capacity.
+
+training_task: rerank_small
+
+tags:
+  - tiger-rerank-medium
+
+model:
+  _target_: src.models.modules.semantic_id.separate_rerank_model.SeparateRerankModule
+  sid_teacher_ckpt_path: ???
+  reranker_embedding_dim: 192
+  reranker_hidden_dim: 512
+  reranker_num_layers: 4
+  reranker_dropout: 0.1
+  reranker_rank_embedding_dim: 32
+  reranker_num_hash_buckets: 300000
+  rerank_logit_weight: 0.1
+  beam_log_prob_weight: 1.0
+  use_beam_score_in_rerank_loss: false
+  inject_gt_for_rerank_loss: false
+  rerank_loss_weight: 1.0
+  load_only_weights: false
+
+trainer:
+  max_steps: 120000
