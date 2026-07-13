@@ -278,6 +278,14 @@ Interpretation:
 - The medium scorer is larger, but most separate-reranker parameters still come from embedding tables, so this particular scaling does not meaningfully change the representation bottleneck.
 - The next separate-reranker attempt should change ranking formulation or feature interaction, not merely increase MLP width/depth.
 
+Decision after medium scaling:
+
+- Stop blind capacity scaling for the separate reranker for now.
+- Use the reproduced small reranker as the main `TIGER + DIN-style / separate reranker` baseline.
+- Use the medium result as supporting evidence that simply increasing standalone reranker capacity does not close the gap to RecoChain.
+- Do not optimize the modular reranker indefinitely; the goal is a credible baseline, not a new standalone reranking paper.
+- Return experimental priority to the RecoChain main line: final comparison table, listwise stability, and reviewer-facing efficiency/parameter analysis.
+
 ### D. Joint-model ablation table
 
 Recommended ablations:
