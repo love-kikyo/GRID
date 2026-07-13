@@ -265,6 +265,19 @@ How to interpret outcomes:
 - if a slightly larger reranker catches up, then the correct paper claim becomes:
   - RecoChain is better in the parameter-efficient regime
 
+Initial completed scaling:
+
+| model | run dir | best val R@5 | test R@5 | test N@5 | test R@10 | test N@10 | reranker params | scorer params | total ms/batch |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| separate small | `2026-07-12/23-28-36` | 0.24733 | 0.23696 | 0.23187 | 0.24018 | 0.23291 | 79.23M | 0.30M | 24.94 |
+| separate medium | `2026-07-13/09-57-41` | 0.24663 | 0.23673 | 0.23177 | 0.24000 | 0.23283 | 81.23M | 1.23M | 24.87 |
+
+Interpretation:
+
+- The first medium reranker did not improve accuracy over the reproduced small baseline.
+- The medium scorer is larger, but most separate-reranker parameters still come from embedding tables, so this particular scaling does not meaningfully change the representation bottleneck.
+- The next separate-reranker attempt should change ranking formulation or feature interaction, not merely increase MLP width/depth.
+
 ### D. Joint-model ablation table
 
 Recommended ablations:

@@ -237,6 +237,7 @@ Current profiling outputs:
 - `logs/profiles/pointwise_kv_cache_profile.json`
 - `logs/profiles/sid_beam_only_kv_cache_profile.json`
 - `logs/profiles/separate_rerank_small_trained_profile.json`
+- `logs/profiles/separate_rerank_medium_trained_profile.json`
 
 For `--profile-mode recochain`, the main cache ablation compares:
 
