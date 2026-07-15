@@ -40,6 +40,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         top_k_for_generation: int,
         top_k_for_score: int,
         active_top_k_for_score: Optional[int],
+        exclude_target_from_context: bool,
+        use_similarity_score_embedding: bool,
         padding_token: int,
         masking_token: int,
         **kwargs,
@@ -80,6 +82,8 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         self.top_k_for_generation = top_k_for_generation
         self.top_k_for_score = top_k_for_score
         self.active_top_k_for_score = active_top_k_for_score
+        self.exclude_target_from_context = exclude_target_from_context
+        self.use_similarity_score_embedding = use_similarity_score_embedding
         self.batch_start_time = None
         self.prev_batch_end_time = None
         self.total_val_time = 0
@@ -255,12 +259,13 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             num_candidates,
             dim=0,
         )
-        similar_itemkey = self.get_similar_itemkey(
+        similar_itemkey, similar_score = self.get_similar_itemkey(
             target_itemkey=generated_itemkey,
             hist_itemkey=hist_itemkey_expanded,
         )
         input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(
             similar_itemkey=similar_itemkey,
+            similar_score=similar_score,
         )
 
         input_embeds = torch.concat(
@@ -516,6 +521,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         top_k_for_generation: int = 20,
         top_k_for_score: int = 10,
         active_top_k_for_score: Optional[int] = None,
+        exclude_target_from_context: bool = False,
+        use_similarity_score_embedding: bool = False,
         codebooks: torch.Tensor = None,
         embedding_dim: int = None,
         num_hierarchies: int = None,
@@ -563,6 +570,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             top_k_for_generation=top_k_for_generation,
             top_k_for_score=top_k_for_score,
             active_top_k_for_score=active_top_k_for_score,
+            exclude_target_from_context=exclude_target_from_context,
+            use_similarity_score_embedding=use_similarity_score_embedding,
             should_check_prefix=should_check_prefix,
             **kwargs,
         )
@@ -635,6 +644,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         self.segment_embedding_table = nn.Embedding(3, self.embedding_dim)
+        self.similarity_score_projection = (
+            nn.Linear(1, self.embedding_dim, bias=False)
+            if self.use_similarity_score_embedding
+            else None
+        )
 
         # the key value names for the prediction output
         self.prediction_key_name = prediction_key_name
@@ -932,8 +946,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         target_itemkey = (generated_ids * self.powers).sum(dim=-1)
         hist_itemkey = hist_itemkey.repeat_interleave(self.top_k_for_generation, dim=0)
 
-        similar_itemkey = self.get_similar_itemkey(target_itemkey=target_itemkey, hist_itemkey=hist_itemkey)
-        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(similar_itemkey=similar_itemkey)
+        similar_itemkey, similar_score = self.get_similar_itemkey(target_itemkey=target_itemkey, hist_itemkey=hist_itemkey)
+        input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(
+            similar_itemkey=similar_itemkey,
+            similar_score=similar_score,
+        )
 
         input_embeds = torch.concat(
             [
@@ -1629,6 +1646,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     def build_similar_item_embeds(
         self,
         similar_itemkey: torch.Tensor,
+        similar_score: Optional[torch.Tensor] = None,
     ):
         B, S = similar_itemkey.shape
         device = similar_itemkey.device
@@ -1641,6 +1659,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         inputs_embeds = similar_item_embeds
         mask = similar_item_mask
+
+        if self.similarity_score_projection is not None:
+            if similar_score is None:
+                similar_score = torch.zeros(B, S, device=device, dtype=inputs_embeds.dtype)
+            else:
+                similar_score = similar_score.to(device=device, dtype=inputs_embeds.dtype)
+            similar_score = similar_score.masked_fill(~similar_item_mask, 0.0)
+            inputs_embeds = inputs_embeds + self.similarity_score_projection(
+                similar_score.unsqueeze(-1)
+            )
         
         s1 = torch.ones(B, L2 - 1, dtype=torch.long, device=device)
         s2 = torch.full((B, 1), 2, dtype=torch.long, device=device)
@@ -1683,7 +1711,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         """
         if self.top_k_for_score == 0:
             # Only return candidate itself (for segment 2), no retrieved items
-            return target_itemkey.unsqueeze(-1)
+            return target_itemkey.unsqueeze(-1), torch.ones(
+                target_itemkey.size(0),
+                1,
+                device=target_itemkey.device,
+                dtype=torch.float32,
+            )
 
         # Use on-device hash embeddings here to avoid CPU-side SCL lookup IO.
         target_emb = self.item_embedding_table(target_itemkey.unsqueeze(-1)).squeeze(1)  # (B * num_beam, dim)
@@ -1697,15 +1730,22 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )  # (B * num_beam, num_items)
 
         pad_mask = hist_itemkey == self.masking_token
+        if self.exclude_target_from_context:
+            pad_mask = pad_mask | (hist_itemkey == target_itemkey.unsqueeze(-1))
         sim = sim.masked_fill(pad_mask, -1e9)
 
-        topk_idx = torch.topk(sim, k=self.top_k_for_score, dim=-1).indices
+        topk_results = torch.topk(sim, k=self.top_k_for_score, dim=-1)
+        topk_idx = topk_results.indices
+        topk_score = topk_results.values
 
         similar_itemkey = torch.gather(
             hist_itemkey,
             dim=1,
             index=topk_idx
         )
+        valid_topk = topk_score > -1e8
+        similar_itemkey = similar_itemkey.masked_fill(~valid_topk, self.masking_token)
+        topk_score = topk_score.masked_fill(~valid_topk, 0.0)
 
         active_top_k = self.active_top_k_for_score
         if active_top_k is not None:
@@ -1723,10 +1763,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                     ~keep_mask.unsqueeze(0),
                     self.masking_token,
                 )
+                topk_score = topk_score.masked_fill(~keep_mask.unsqueeze(0), 0.0)
 
-        return torch.cat(
-            [similar_itemkey, target_itemkey.unsqueeze(-1)],
-            dim=-1
+        return (
+            torch.cat([similar_itemkey, target_itemkey.unsqueeze(-1)], dim=-1),
+            torch.cat(
+                [
+                    topk_score,
+                    torch.ones_like(target_itemkey, dtype=topk_score.dtype).unsqueeze(-1),
+                ],
+                dim=-1,
+            ),
         )
 
 class SemanticIDDecoderModule(torch.nn.Module):

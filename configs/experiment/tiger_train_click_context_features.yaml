@@ -1,0 +1,15 @@
+# @package _global_
+# Explore listwise reranking with cleaner candidate-aware context.
+# - exclude_target_from_context prevents the generated candidate itself from
+#   appearing again in the retrieved historical context.
+# - use_similarity_score_embedding injects the retrieval cosine score as a
+#   scalar feature into each retrieved context token embedding.
+
+model:
+  exclude_target_from_context: true
+  use_similarity_score_embedding: true
+
+tags:
+  - tiger-joint-stage
+  - listwise-context-features
+
