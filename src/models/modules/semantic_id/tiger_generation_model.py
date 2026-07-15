@@ -39,6 +39,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         should_check_prefix: bool,
         top_k_for_generation: int,
         top_k_for_score: int,
+        active_top_k_for_score: Optional[int],
         padding_token: int,
         masking_token: int,
         **kwargs,
@@ -78,6 +79,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
 
         self.top_k_for_generation = top_k_for_generation
         self.top_k_for_score = top_k_for_score
+        self.active_top_k_for_score = active_top_k_for_score
         self.batch_start_time = None
         self.prev_batch_end_time = None
         self.total_val_time = 0
@@ -513,6 +515,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self,
         top_k_for_generation: int = 20,
         top_k_for_score: int = 10,
+        active_top_k_for_score: Optional[int] = None,
         codebooks: torch.Tensor = None,
         embedding_dim: int = None,
         num_hierarchies: int = None,
@@ -559,6 +562,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             embedding_dim=embedding_dim,
             top_k_for_generation=top_k_for_generation,
             top_k_for_score=top_k_for_score,
+            active_top_k_for_score=active_top_k_for_score,
             should_check_prefix=should_check_prefix,
             **kwargs,
         )
@@ -1630,8 +1634,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         device = similar_itemkey.device
 
         item_table = self.get_embedding_table(table_name="item")
-        similar_item_embeds = item_table(similar_itemkey)
         similar_item_mask = similar_itemkey != self.masking_token
+        safe_itemkey = similar_itemkey.masked_fill(~similar_item_mask, 0)
+        similar_item_embeds = item_table(safe_itemkey)
         L2 = similar_item_embeds.size(1)
 
         inputs_embeds = similar_item_embeds
@@ -1701,6 +1706,23 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             dim=1,
             index=topk_idx
         )
+
+        active_top_k = self.active_top_k_for_score
+        if active_top_k is not None:
+            if active_top_k < 0 or active_top_k > self.top_k_for_score:
+                raise ValueError(
+                    "active_top_k_for_score must be in [0, top_k_for_score], "
+                    f"got {active_top_k} with top_k_for_score={self.top_k_for_score}"
+                )
+            if active_top_k < self.top_k_for_score:
+                keep_mask = (
+                    torch.arange(self.top_k_for_score, device=similar_itemkey.device)
+                    < active_top_k
+                )
+                similar_itemkey = similar_itemkey.masked_fill(
+                    ~keep_mask.unsqueeze(0),
+                    self.masking_token,
+                )
 
         return torch.cat(
             [similar_itemkey, target_itemkey.unsqueeze(-1)],

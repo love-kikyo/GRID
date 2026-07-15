@@ -145,6 +145,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument(
+        "--top-k-for-generation",
+        type=int,
+        default=None,
+        help=(
+            "Optional evaluation/profiling-time override for model.top_k_for_generation. "
+            "Use mainly with recochain/SID checkpoints; trained separate rerankers may "
+            "have rank-embedding shapes tied to their original beam size."
+        ),
+    )
+    parser.add_argument(
+        "--top-k-for-score",
+        type=int,
+        default=None,
+        help=(
+            "Optional evaluation/profiling-time override for model.top_k_for_score. "
+            "This controls how many similar historical items are retrieved for "
+            "candidate-aware reranking context."
+        ),
+    )
+    parser.add_argument(
+        "--active-top-k-for-score",
+        type=int,
+        default=None,
+        help=(
+            "Optional mask-based active context length. Keep model.top_k_for_score "
+            "as the fixed maximum number of historical-context slots, but mask "
+            "retrieved items after this active length so the candidate token "
+            "position stays fixed."
+        ),
+    )
+    parser.add_argument(
         "--split",
         choices=["val", "test"],
         default="test",
@@ -787,6 +818,19 @@ def main() -> None:
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
 
     cfg = load_config(run_dir, args, sid_teacher_ckpt=sid_teacher_ckpt)
+    if "active_top_k_for_score" not in cfg.model:
+        cfg.model.active_top_k_for_score = None
+    if args.top_k_for_generation is not None:
+        if args.profile_mode == "separate_rerank" and reranker_ckpt_path is not None:
+            print(
+                "[profile] WARNING: overriding top_k_for_generation for a trained "
+                "separate reranker can mismatch rank-embedding checkpoint shapes."
+            )
+        cfg.model.top_k_for_generation = args.top_k_for_generation
+    if args.top_k_for_score is not None:
+        cfg.model.top_k_for_score = args.top_k_for_score
+    if args.active_top_k_for_score is not None:
+        cfg.model.active_top_k_for_score = args.active_top_k_for_score
     configure_dataloader(cfg, args)
 
     print(f"[profile] Root: {ROOT}")
@@ -798,6 +842,9 @@ def main() -> None:
         print(f"[profile] Separate reranker checkpoint: {reranker_ckpt_path or 'None'}")
     print(f"[profile] Device: {device}")
     print(f"[profile] Variants: {args.variants}")
+    print(f"[profile] top_k_for_generation: {cfg.model.top_k_for_generation}")
+    print(f"[profile] top_k_for_score: {cfg.model.top_k_for_score}")
+    print(f"[profile] active_top_k_for_score: {cfg.model.active_top_k_for_score}")
 
     model = instantiate_model(
         cfg=cfg,
@@ -861,6 +908,13 @@ def main() -> None:
         "amp": args.amp,
         "warmup_batches": args.warmup_batches,
         "measure_batches": args.measure_batches,
+        "top_k_for_generation": int(cfg.model.top_k_for_generation),
+        "top_k_for_score": int(cfg.model.top_k_for_score),
+        "active_top_k_for_score": (
+            int(cfg.model.active_top_k_for_score)
+            if cfg.model.active_top_k_for_score is not None
+            else None
+        ),
         "parameter_summary": parameter_summary,
         "summaries": [asdict(summary) for summary in summaries],
     }
