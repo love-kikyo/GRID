@@ -822,8 +822,8 @@ def main() -> None:
         cfg.model.active_top_k_for_score = None
     if "exclude_target_from_context" not in cfg.model:
         cfg.model.exclude_target_from_context = False
-    if "use_similarity_score_embedding" not in cfg.model:
-        cfg.model.use_similarity_score_embedding = False
+    if "use_context_distance_embedding" not in cfg.model:
+        cfg.model.use_context_distance_embedding = False
     if args.top_k_for_generation is not None:
         if args.profile_mode == "separate_rerank" and reranker_ckpt_path is not None:
             print(
