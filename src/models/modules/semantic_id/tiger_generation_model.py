@@ -245,6 +245,7 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         past_key_values: DynamicCache,
         hist_itemkey_for_beam: torch.Tensor,
         target_itemkey: torch.Tensor,
+        excluded_itemkey_for_beam: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size = target_itemkey.size(0)
         num_candidates = generated_ids.size(0) // batch_size
@@ -259,9 +260,15 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             num_candidates,
             dim=0,
         )
+        excluded_itemkey_expanded = (
+            excluded_itemkey_for_beam.repeat_interleave(num_candidates, dim=0)
+            if excluded_itemkey_for_beam is not None
+            else None
+        )
         similar_itemkey, context_distance = self.get_similar_itemkey(
             target_itemkey=generated_itemkey,
             hist_itemkey=hist_itemkey_expanded,
+            excluded_itemkey=excluded_itemkey_expanded,
         )
         input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(
             similar_itemkey=similar_itemkey,
@@ -932,6 +939,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         past_key_values: DynamicCache,
         hist_itemkey: torch.Tensor,
         batch_size: int,
+        excluded_itemkey: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Rerank beam candidates using click prediction.
@@ -955,8 +963,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         B = batch_size
         target_itemkey = (generated_ids * self.powers).sum(dim=-1)
         hist_itemkey = hist_itemkey.repeat_interleave(self.top_k_for_generation, dim=0)
+        excluded_itemkey = (
+            excluded_itemkey.repeat_interleave(self.top_k_for_generation, dim=0)
+            if excluded_itemkey is not None
+            else None
+        )
 
-        similar_itemkey, context_distance = self.get_similar_itemkey(target_itemkey=target_itemkey, hist_itemkey=hist_itemkey)
+        similar_itemkey, context_distance = self.get_similar_itemkey(
+            target_itemkey=target_itemkey,
+            hist_itemkey=hist_itemkey,
+            excluded_itemkey=excluded_itemkey,
+        )
         input_embeds_similar_item, mask_similar_item = self.build_similar_item_embeds(
             similar_itemkey=similar_itemkey,
             context_distance=context_distance,
@@ -1022,6 +1039,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             Dictionary containing beam search results and reranked results
         """
         B, S = sid.shape
+        prompt_itemkey = self._get_prompt_itemkey_from_sid(
+            sid=sid,
+            attention_mask=attention_mask,
+        )
 
         # Step 1: Beam search to generate semantic IDs
         generated_ids, beam_log_prob, input_mask, past_key_values = self._beam_search_semantic_ids(
@@ -1040,6 +1061,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=past_key_values,
             hist_itemkey=hist_itemkey,
             batch_size=B,
+            excluded_itemkey=prompt_itemkey,
         )
 
         return {
@@ -1164,6 +1186,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=self.clone_kv_cache(past_key_values),
             batch_size=batch_size,
         )
+        prompt_itemkey = self._get_prompt_itemkey_from_sid(
+            sid=hist_sid,
+            attention_mask=hist_mask,
+        )
 
         beam_ids = generated_ids.view(batch_size, self.top_k_for_generation, -1)
         rerank_ids, rerank_scores, rerank_click_logits = self._rerank_with_click_prediction(
@@ -1173,6 +1199,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=beam_past_key_values,
             hist_itemkey=hist_itemkey,
             batch_size=batch_size,
+            excluded_itemkey=prompt_itemkey,
         )
 
         return {
@@ -1503,6 +1530,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             metrics: Dictionary containing click metrics
         """
         B = batch_size
+        prompt_itemkey = self._get_prompt_itemkey_from_sid(
+            sid=hist_sid,
+            attention_mask=hist_mask,
+        )
 
         # Beam search to generate candidates
         generated_ids, beam_log_prob, input_mask, past_key_values = self._beam_search_semantic_ids(
@@ -1515,6 +1546,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             past_key_values=past_key_values,
             hist_itemkey_for_beam=hist_itemkey_for_beam,
             target_itemkey=target_itemkey,
+            excluded_itemkey_for_beam=prompt_itemkey,
         )
 
         generated_itemkey = (generated_ids * self.powers).sum(dim=-1)
@@ -1550,6 +1582,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 past_key_values=gt_past_key_values,
                 hist_itemkey_for_beam=hist_itemkey_for_beam[no_hit_indices],
                 target_itemkey=target_itemkey[no_hit_indices],
+                excluded_itemkey_for_beam=prompt_itemkey[no_hit_indices],
             )
 
             random_beam_indices = torch.randint(
@@ -1653,6 +1686,19 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         return inputs_embeds, mask
 
+    def _get_prompt_itemkey_from_sid(
+        self,
+        sid: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return itemkeys already present in the autoregressive SID prompt."""
+        B = sid.size(0)
+        sid_blk = sid.view(B, -1, self.num_hierarchies)
+        mask_blk = attention_mask.view(B, -1, self.num_hierarchies)
+        itemkey = (sid_blk * self.powers).sum(dim=-1)
+        valid_item = mask_blk.all(dim=-1)
+        return itemkey.masked_fill(~valid_item, self.masking_token)
+
     def build_similar_item_embeds(
         self,
         similar_itemkey: torch.Tensor,
@@ -1714,10 +1760,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         return emb + segment_emb
 
-    def get_similar_itemkey(self, target_itemkey, hist_itemkey):
+    def get_similar_itemkey(
+        self,
+        target_itemkey: torch.Tensor,
+        hist_itemkey: torch.Tensor,
+        excluded_itemkey: Optional[torch.Tensor] = None,
+    ):
         """
         target_itemkey.shape = (B * num_beam)
         hist_itemkey.shape = (B * num_beam, num_items)
+        excluded_itemkey.shape = (B * num_beam, num_excluded)
         """
         if self.top_k_for_score == 0:
             # Only return candidate itself (for segment 2), no retrieved items
@@ -1742,6 +1794,11 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         pad_mask = hist_itemkey == self.masking_token
         if self.exclude_target_from_context:
             pad_mask = pad_mask | (hist_itemkey == target_itemkey.unsqueeze(-1))
+            if excluded_itemkey is not None:
+                valid_excluded = excluded_itemkey != self.masking_token
+                prefix_duplicate = hist_itemkey.unsqueeze(-1) == excluded_itemkey.unsqueeze(1)
+                prefix_duplicate = prefix_duplicate & valid_excluded.unsqueeze(1)
+                pad_mask = pad_mask | prefix_duplicate.any(dim=-1)
         sim = sim.masked_fill(pad_mask, -1e9)
 
         topk_results = torch.topk(sim, k=self.top_k_for_score, dim=-1)
