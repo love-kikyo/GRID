@@ -125,7 +125,7 @@ L_pair = softplus(-(score_pos - score_neg))
 
 建议按以下顺序推进：
 
-1. Pairwise over `click_logits`, `K=20`, hard negative top1。
+1. Pairwise over `click_logits`, `K=20`, hard negative top1。（已实现）
 2. Pairwise over `click_logits`, `K=20`, top3 hard negatives。
 3. Pairwise over final score, `K=20`, hard negative top1。
 4. `K=2` pairwise 仅作为 diagnostic ablation。
@@ -136,6 +136,36 @@ L = L_pairwise + lambda * L_BCE
 ```
 
 其中 `lambda` 先测 `0.1` 和 `0.2`。
+
+## 当前实现
+
+当前分支已实现第一组实验：
+
+```text
+model.rerank_loss_type=pairwise
+model.pairwise_num_negatives=1
+model.use_beam_score_in_rerank_loss=false
+```
+
+对应配置：
+
+```text
+configs/experiment/tiger_train_pairwise.yaml
+```
+
+启动脚本：
+
+```bash
+sbatch run_click_pairwise.sh
+```
+
+训练时仍生成 `top_k_for_generation=20` 个候选。若 beam 内有 GT，则选 GT 作为 positive，并按 `beam_log_prob` 从非 GT 候选里选择 hard negative top1：
+
+```text
+L_pair = softplus(-(click_pos - click_neg))
+```
+
+no-hit 行继续复用当前 auxiliary 逻辑：teacher-force GT，插入候选列表，再用相同 pairwise loss 训练。
 
 ## 需要记录的指标
 
@@ -148,6 +178,13 @@ L = L_pairwise + lambda * L_BCE
 - pairwise accuracy over final score
 - hit-in-beam rate
 - no-hit auxiliary ratio
+
+当前实现已在线记录：
+
+- `train/rerank_pairwise_acc`
+- `train/rerank_positive_rank`
+- `train/rerank_final_pairwise_acc`
+- `train/rerank_final_positive_rank`
 
 这些指标可以区分：
 

@@ -280,6 +280,8 @@ model:
   use_beam_score_in_rerank_loss: false
   use_no_hit_aux_loss: true
   no_hit_aux_loss_weight: 0.5
+  rerank_loss_type: listwise
+  pairwise_num_negatives: 1
   rerank_loss_weight: 0.1
 
 # =============================================================================

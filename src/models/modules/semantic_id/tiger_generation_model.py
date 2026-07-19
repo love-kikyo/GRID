@@ -221,6 +221,112 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         per_row_loss = -(target_dist * log_probs).sum(dim=-1)
         return per_row_loss[valid_rows].mean()
 
+    def _get_rerank_loss_scores(
+        self,
+        rerank_logits: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if getattr(self, "use_beam_score_in_rerank_loss", False) and beam_log_prob is not None:
+            return self._combine_rerank_scores(
+                beam_log_prob=beam_log_prob,
+                rerank_logits=rerank_logits,
+                detach_beam=True,
+            )
+        return rerank_logits
+
+    def _compute_pairwise_rerank_loss(
+        self,
+        rerank_logits: torch.Tensor,
+        labels: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Pair each positive beam candidate with hard negative beam candidates.
+        By default the loss is over click logits; setting
+        use_beam_score_in_rerank_loss=True switches it to final-score pairs.
+        """
+        labels = labels.float()
+        positive_mask = labels > 0
+        negative_mask = ~positive_mask
+        valid_rows = positive_mask.any(dim=-1) & negative_mask.any(dim=-1)
+        if not torch.any(valid_rows):
+            return rerank_logits.sum() * 0.0
+
+        scores = self._get_rerank_loss_scores(
+            rerank_logits=rerank_logits,
+            beam_log_prob=beam_log_prob,
+        )
+        pos_scores = scores.masked_fill(~positive_mask, -1e9).max(dim=-1).values
+
+        if beam_log_prob is not None:
+            negative_rank_scores = beam_log_prob.detach()
+        else:
+            negative_rank_scores = scores.detach()
+        negative_rank_scores = negative_rank_scores.masked_fill(~negative_mask, -1e9)
+        num_negatives = max(1, min(self.pairwise_num_negatives, scores.size(1)))
+        negative_indices = torch.topk(
+            negative_rank_scores,
+            k=num_negatives,
+            dim=-1,
+        ).indices
+        neg_scores = torch.gather(scores, dim=1, index=negative_indices)
+        neg_valid = torch.gather(negative_mask, dim=1, index=negative_indices)
+        row_valid = valid_rows.unsqueeze(-1) & neg_valid
+        if not torch.any(row_valid):
+            return rerank_logits.sum() * 0.0
+
+        pair_loss = F.softplus(-(pos_scores.unsqueeze(-1) - neg_scores))
+        return pair_loss[row_valid].mean()
+
+    def _compute_rerank_loss(
+        self,
+        rerank_logits: torch.Tensor,
+        labels: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.rerank_loss_type == "listwise":
+            return self._compute_listwise_rerank_loss(
+                rerank_logits=rerank_logits,
+                labels=labels,
+                beam_log_prob=beam_log_prob,
+            )
+        if self.rerank_loss_type == "pairwise":
+            return self._compute_pairwise_rerank_loss(
+                rerank_logits=rerank_logits,
+                labels=labels,
+                beam_log_prob=beam_log_prob,
+            )
+        raise ValueError(f"Unsupported rerank_loss_type: {self.rerank_loss_type}")
+
+    def _compute_pairwise_diagnostics(
+        self,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        positive_mask = labels > 0
+        negative_mask = ~positive_mask
+        valid_rows = positive_mask.any(dim=-1) & negative_mask.any(dim=-1)
+        if not torch.any(valid_rows):
+            zero = scores.sum() * 0.0
+            return zero, zero
+
+        pos_scores = scores.masked_fill(~positive_mask, -1e9).max(dim=-1).values
+        if beam_log_prob is not None:
+            negative_rank_scores = beam_log_prob.detach()
+        else:
+            negative_rank_scores = scores.detach()
+        negative_rank_scores = negative_rank_scores.masked_fill(~negative_mask, -1e9)
+        hard_negative_indices = negative_rank_scores.argmax(dim=-1)
+        hard_negative_scores = torch.gather(
+            scores,
+            dim=1,
+            index=hard_negative_indices.unsqueeze(-1),
+        ).squeeze(-1)
+        pairwise_acc = (pos_scores > hard_negative_scores).float()[valid_rows].mean()
+        positive_rank = ((scores > pos_scores.unsqueeze(-1)).sum(dim=-1) + 1).float()
+        return pairwise_acc, positive_rank[valid_rows].mean()
+
     def _safe_binary_auroc(
         self,
         probabilities: torch.Tensor,
@@ -527,6 +633,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         use_beam_score_in_rerank_loss: bool = False,
         use_no_hit_aux_loss: bool = False,
         no_hit_aux_loss_weight: float = 0.05,
+        rerank_loss_type: str = "listwise",
+        pairwise_num_negatives: int = 1,
         rerank_loss_weight: float = 0.1,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
@@ -569,6 +677,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.use_beam_score_in_rerank_loss = use_beam_score_in_rerank_loss
         self.use_no_hit_aux_loss = use_no_hit_aux_loss
         self.no_hit_aux_loss_weight = no_hit_aux_loss_weight
+        self.rerank_loss_type = rerank_loss_type
+        self.pairwise_num_negatives = pairwise_num_negatives
         self.rerank_loss_weight = rerank_loss_weight
         self.load_only_weights = load_only_weights
         self._manual_ckpt_path = manual_ckpt_path
@@ -1430,6 +1540,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             "rerank_hit_rate_in_beam": click_metrics["rerank_hit_rate_in_beam"],
             "rerank_no_hit_rate": click_metrics["rerank_no_hit_rate"],
             "rerank_aux_loss": click_metrics["rerank_aux_loss"],
+            "rerank_pairwise_acc": click_metrics["rerank_pairwise_acc"],
+            "rerank_positive_rank": click_metrics["rerank_positive_rank"],
+            "rerank_final_pairwise_acc": click_metrics["rerank_final_pairwise_acc"],
+            "rerank_final_positive_rank": click_metrics["rerank_final_positive_rank"],
             **sid_metrics,
         }
 
@@ -1492,7 +1606,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         has_hit = (generated_itemkey_2d == target_itemkey_expanded).any(dim=1)
         no_hit_mask = ~has_hit
 
-        main_loss = self._compute_listwise_rerank_loss(
+        main_loss = self._compute_rerank_loss(
             rerank_logits=click_logits,
             labels=click_labels,
             beam_log_prob=beam_log_prob,
@@ -1537,12 +1651,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 click_logits[no_hit_indices],
             )
             aux_click_labels = insert_mask.to(click_logits.dtype)
-            aux_loss = self._compute_listwise_rerank_loss(
+            aux_loss = self._compute_rerank_loss(
                 rerank_logits=aux_click_logits,
                 labels=aux_click_labels,
             )
 
-        loss_listwise = main_loss + self.no_hit_aux_loss_weight * aux_loss
+        loss_rerank = main_loss + self.no_hit_aux_loss_weight * aux_loss
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
@@ -1552,6 +1666,16 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 beam_log_prob=beam_log_prob,
                 rerank_logits=click_logits,
                 detach_beam=True,
+            )
+            pairwise_acc, positive_rank = self._compute_pairwise_diagnostics(
+                scores=click_logits,
+                labels=click_labels,
+                beam_log_prob=beam_log_prob,
+            )
+            final_pairwise_acc, final_positive_rank = self._compute_pairwise_diagnostics(
+                scores=final_scores,
+                labels=click_labels,
+                beam_log_prob=beam_log_prob,
             )
             positive_counts = click_labels.sum(dim=-1, keepdim=True)
             valid_rows = positive_counts.squeeze(-1) > 0
@@ -1565,13 +1689,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             rerank_hit_rate_in_beam = valid_rows.float().mean()
             rerank_no_hit_rate = no_hit_mask.float().mean()
 
-        return decoder_output, loss_listwise, {
+        return decoder_output, loss_rerank, {
             "click_auc": auc,
             "click_log_prob": click_log_prob,
             "beam_log_prob": beam_log_prob.mean(),
             "rerank_hit_rate_in_beam": rerank_hit_rate_in_beam,
             "rerank_no_hit_rate": rerank_no_hit_rate,
             "rerank_aux_loss": aux_loss.detach(),
+            "rerank_pairwise_acc": pairwise_acc,
+            "rerank_positive_rank": positive_rank,
+            "rerank_final_pairwise_acc": final_pairwise_acc,
+            "rerank_final_positive_rank": final_positive_rank,
         }
 
     def build_sid_block_embeds(

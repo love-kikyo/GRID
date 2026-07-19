@@ -1,0 +1,13 @@
+# @package _global_
+# Pairwise ranking objective for RecoChain click-head exploration.
+# Generates the normal beam list and trains click logits with hard-negative
+# pairwise preference loss.
+
+model:
+  rerank_loss_type: pairwise
+  pairwise_num_negatives: 1
+  use_beam_score_in_rerank_loss: false
+
+tags:
+  - tiger-joint-stage
+  - pairwise-click-logit
