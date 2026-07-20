@@ -126,7 +126,7 @@ L_pair = softplus(-(score_pos - score_neg))
 建议按以下顺序推进：
 
 1. Pairwise over `click_logits`, `K=20`, hard negative top1。（已实现）
-2. Pairwise over `click_logits`, `K=20`, top3 hard negatives。
+2. Pairwise over `click_logits`, `K=20`, top3 hard negatives + BCE calibration。（已实现）
 3. Pairwise over final score, `K=20`, hard negative top1。
 4. `K=2` pairwise 仅作为 diagnostic ablation。
 5. 若纯 pairwise 不够，测试 hybrid：
@@ -139,7 +139,7 @@ L = L_pairwise + lambda * L_BCE
 
 ## 当前实现
 
-当前分支已实现第一组实验：
+当前分支已实现第一组纯 pairwise 实验：
 
 ```text
 model.rerank_loss_type=pairwise
@@ -167,6 +167,36 @@ L_pair = softplus(-(click_pos - click_neg))
 
 no-hit 行继续复用当前 auxiliary 逻辑：teacher-force GT，插入候选列表，再用相同 pairwise loss 训练。
 
+当前分支也已实现 hybrid 实验：
+
+```text
+model.rerank_loss_type=pairwise
+model.pairwise_num_negatives=3
+model.use_beam_score_in_rerank_loss=false
+model.no_hit_aux_loss_weight=0.1
+model.bce_aux_loss_weight=0.1
+```
+
+对应配置：
+
+```text
+configs/experiment/tiger_train_pairwise_hybrid.yaml
+```
+
+启动脚本：
+
+```bash
+sbatch run_click_pairwise_hybrid.sh
+```
+
+Hybrid loss：
+
+```text
+L = L_pairwise(click_logits) + no_hit_weight * L_no_hit_aux + 0.1 * L_BCE(click_logits)
+```
+
+这个版本用于验证当前判断：纯 pairwise/listwise 的 ranking 信号太稀疏，需要 lightweight BCE calibration 保持 click logit 的全局方向。
+
 ## 需要记录的指标
 
 除了现有 recall / ndcg / click AUC，建议新增或离线统计：
@@ -185,6 +215,7 @@ no-hit 行继续复用当前 auxiliary 逻辑：teacher-force GT，插入候选�
 - `train/rerank_positive_rank`
 - `train/rerank_final_pairwise_acc`
 - `train/rerank_final_positive_rank`
+- `train/rerank_bce_aux_loss`
 
 这些指标可以区分：
 

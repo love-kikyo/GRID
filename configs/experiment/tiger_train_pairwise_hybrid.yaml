@@ -1,0 +1,14 @@
+# @package _global_
+# Pairwise ranking with lightweight BCE calibration.
+
+model:
+  rerank_loss_type: pairwise
+  pairwise_num_negatives: 3
+  use_beam_score_in_rerank_loss: false
+  no_hit_aux_loss_weight: 0.1
+  bce_aux_loss_weight: 0.1
+
+tags:
+  - tiger-joint-stage
+  - pairwise-click-logit
+  - bce-calibration

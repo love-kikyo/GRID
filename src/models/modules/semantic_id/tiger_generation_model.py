@@ -298,6 +298,16 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
             )
         raise ValueError(f"Unsupported rerank_loss_type: {self.rerank_loss_type}")
 
+    def _compute_bce_calibration_loss(
+        self,
+        rerank_logits: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> torch.Tensor:
+        return F.binary_cross_entropy_with_logits(
+            rerank_logits,
+            labels.float(),
+        )
+
     def _compute_pairwise_diagnostics(
         self,
         scores: torch.Tensor,
@@ -635,6 +645,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         no_hit_aux_loss_weight: float = 0.05,
         rerank_loss_type: str = "listwise",
         pairwise_num_negatives: int = 1,
+        bce_aux_loss_weight: float = 0.0,
         rerank_loss_weight: float = 0.1,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
@@ -679,6 +690,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.no_hit_aux_loss_weight = no_hit_aux_loss_weight
         self.rerank_loss_type = rerank_loss_type
         self.pairwise_num_negatives = pairwise_num_negatives
+        self.bce_aux_loss_weight = bce_aux_loss_weight
         self.rerank_loss_weight = rerank_loss_weight
         self.load_only_weights = load_only_weights
         self._manual_ckpt_path = manual_ckpt_path
@@ -1544,6 +1556,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             "rerank_positive_rank": click_metrics["rerank_positive_rank"],
             "rerank_final_pairwise_acc": click_metrics["rerank_final_pairwise_acc"],
             "rerank_final_positive_rank": click_metrics["rerank_final_positive_rank"],
+            "rerank_bce_aux_loss": click_metrics["rerank_bce_aux_loss"],
             **sid_metrics,
         }
 
@@ -1613,6 +1626,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         aux_loss = click_logits.sum() * 0.0
+        bce_aux_loss = self._compute_bce_calibration_loss(
+            rerank_logits=click_logits,
+            labels=click_labels,
+        )
         if self.use_no_hit_aux_loss and no_hit_mask.any():
             no_hit_indices = torch.where(no_hit_mask)[0]
             gt_generated_ids, gt_input_mask, gt_past_key_values = self._build_cache_for_given_sid(
@@ -1655,8 +1672,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 rerank_logits=aux_click_logits,
                 labels=aux_click_labels,
             )
+            aux_bce_loss = self._compute_bce_calibration_loss(
+                rerank_logits=aux_click_logits,
+                labels=aux_click_labels,
+            )
+            bce_aux_loss = bce_aux_loss + self.no_hit_aux_loss_weight * aux_bce_loss
 
-        loss_rerank = main_loss + self.no_hit_aux_loss_weight * aux_loss
+        loss_rerank = (
+            main_loss
+            + self.no_hit_aux_loss_weight * aux_loss
+            + self.bce_aux_loss_weight * bce_aux_loss
+        )
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
@@ -1700,6 +1726,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             "rerank_positive_rank": positive_rank,
             "rerank_final_pairwise_acc": final_pairwise_acc,
             "rerank_final_positive_rank": final_positive_rank,
+            "rerank_bce_aux_loss": bce_aux_loss.detach(),
         }
 
     def build_sid_block_embeds(
