@@ -237,3 +237,74 @@ L = L_pairwise(click_logits) + no_hit_weight * L_no_hit_aux + 0.1 * L_BCE(click_
 如果 pairwise 仍不如 listwise/pointwise：
 
 > The current click head and candidate-aware prompt are more suitable for calibrated residual scoring than pure pairwise preference learning; pairwise/listwise results are retained as ranking-objective ablations.
+
+## 实验结果记录
+
+更新时间：2026-07-22。
+
+### 参考实验
+
+| Run | 训练目标 | Test Recall@5 | Test NDCG@5 | Recall@5 Gain | NDCG@5 Gain | Click AUC | 结论 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `2026-06-26/17-00-10` | Pointwise BCE | 0.242472 | 0.236194 | 0.007272 | 0.005582 | 0.688450 | 当前最强经验参考。 |
+| `2026-07-11/15-47-00` | Listwise over click logits | 0.241169 | 0.234219 | 0.003284 | 0.002162 | 0.599137 | 理论形式更像 beam-level ranking，但略低于 pointwise。 |
+| `2026-07-20/03-51-34` | Pure pairwise, top1 hard negative | 0.235947 | 0.231266 | 0.001225 | 0.000844 | 0.361195 | 明显失败，click logit 排序/校准均不稳定。 |
+
+注：`2026-07-11/15-47-00` 在部分讨论中被口头作为 pointwise 对照提及，但从配置看它是当前 listwise 路径下的稳定参考；严格的 pointwise BCE 参考仍使用 `2026-06-26/17-00-10`。
+
+### Pairwise Hybrid
+
+Run：`2026-07-21/05-58-48`
+
+配置：
+
+```text
+model.rerank_loss_type=pairwise
+model.pairwise_num_negatives=3
+model.use_beam_score_in_rerank_loss=false
+model.no_hit_aux_loss_weight=0.1
+model.bce_aux_loss_weight=0.1
+model.rerank_loss_weight=0.1
+```
+
+截至本次检查，该任务 `123164` 仍处于 `RUNNING` 状态，因此还没有最终 test 行。CSV 中已写出的 validation 结果如下：
+
+| Step | Val Recall@5 | Val NDCG@5 | Recall@5 Gain | NDCG@5 Gain | Val Click AUC |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 29,999 | 0.233562 | 0.230645 | 0.000569 | 0.001170 | 0.679480 |
+| 54,999 | 0.236144 | 0.232116 | 0.001981 | 0.001473 | 0.699662 |
+| 59,999 | 0.238569 | 0.234721 | 0.001113 | 0.001040 | 0.706263 |
+| 69,999 | 0.238694 | 0.233925 | 0.001075 | 0.000935 | 0.702958 |
+| 74,999 | 0.234987 | 0.232047 | 0.001400 | 0.000987 | 0.699016 |
+
+观察：
+
+- 加入 `0.1 * BCE(click_logits)` 后，click AUC 从 pure pairwise 的明显异常值恢复到约 `0.70`，说明 BCE calibration 对 click logit 的全局方向是必要的。
+- 但 rerank gain 仍偏小，当前可见 validation `Recall@5 Gain` 约 `0.001-0.002`，低于稳定 listwise 和 pointwise BCE。
+- Pure pairwise 的最终 test AUC 只有 `0.361195`，说明单纯优化局部 pair preference 会让 click head 失去可解释的全局概率/残差分数语义。
+- Pairwise hybrid 虽然修复了 AUC，但没有证明 pairwise 相对比较能更好转化为 full-beam reranking；局部 hard negative 信号和最终 top-k list 排序之间仍存在错位。
+
+### 当前判断
+
+Pairwise 分支目前更像一个诊断性负结果，而不是主线候选：
+
+```text
+pure pairwise: click signal collapse
+pairwise + BCE calibration: AUC recovered, but top-k gain remains weak
+pointwise BCE: empirical strongest
+listwise: ranking formulation cleaner, performance close to pointwise
+```
+
+因此下一步不建议继续在 pairwise 上扩大搜索空间。更值得回到 listwise 路径，测试：
+
+```text
+L = L_listwise(click_logits) + lambda * L_BCE(click_logits)
+```
+
+建议保持：
+
+```text
+use_beam_score_in_rerank_loss=false
+```
+
+也就是 ranking loss 仍只约束 click logits，让 click head 学 residual ranking signal；beam score 继续只在推理阶段作为 generator prior 融合。之前 `joint final score` 和当前 pairwise 失败都提示：把 `beam_log_score + click_logit` 直接放进 ranking loss，容易让 click head 被 generator prior 吸收或压制，导致 AUC 和 gain 同时走低。
