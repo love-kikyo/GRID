@@ -527,6 +527,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         use_beam_score_in_rerank_loss: bool = False,
         use_no_hit_aux_loss: bool = False,
         no_hit_aux_loss_weight: float = 0.05,
+        bce_aux_loss_weight: float = 0.0,
         rerank_loss_weight: float = 0.1,
         load_only_weights: bool = False,
         manual_ckpt_path: Optional[str] = None,
@@ -569,6 +570,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         self.use_beam_score_in_rerank_loss = use_beam_score_in_rerank_loss
         self.use_no_hit_aux_loss = use_no_hit_aux_loss
         self.no_hit_aux_loss_weight = no_hit_aux_loss_weight
+        self.bce_aux_loss_weight = bce_aux_loss_weight
         self.rerank_loss_weight = rerank_loss_weight
         self.load_only_weights = load_only_weights
         self._manual_ckpt_path = manual_ckpt_path
@@ -1497,6 +1499,10 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             labels=click_labels,
             beam_log_prob=beam_log_prob,
         )
+        bce_aux_loss = F.binary_cross_entropy_with_logits(
+            click_logits,
+            click_labels.float(),
+        )
 
         aux_loss = click_logits.sum() * 0.0
         if self.use_no_hit_aux_loss and no_hit_mask.any():
@@ -1541,8 +1547,17 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 rerank_logits=aux_click_logits,
                 labels=aux_click_labels,
             )
+            aux_bce_loss = F.binary_cross_entropy_with_logits(
+                aux_click_logits,
+                aux_click_labels.float(),
+            )
+            bce_aux_loss = bce_aux_loss + self.no_hit_aux_loss_weight * aux_bce_loss
 
-        loss_listwise = main_loss + self.no_hit_aux_loss_weight * aux_loss
+        loss_listwise = (
+            main_loss
+            + self.no_hit_aux_loss_weight * aux_loss
+            + self.bce_aux_loss_weight * bce_aux_loss
+        )
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
@@ -1572,6 +1587,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             "rerank_hit_rate_in_beam": rerank_hit_rate_in_beam,
             "rerank_no_hit_rate": rerank_no_hit_rate,
             "rerank_aux_loss": aux_loss.detach(),
+            "rerank_bce_aux_loss": bce_aux_loss.detach(),
         }
 
     def build_sid_block_embeds(

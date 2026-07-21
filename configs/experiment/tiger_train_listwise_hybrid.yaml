@@ -1,0 +1,15 @@
+# @package _global_
+# Listwise beam-level ranking with a lightweight BCE calibration term.
+# Usage: python src/train.py experiment=[tiger_train_flat,tiger_train_click,tiger_train_listwise_hybrid]
+
+model:
+  use_beam_score_in_rerank_loss: false
+  use_no_hit_aux_loss: true
+  no_hit_aux_loss_weight: 0.5
+  bce_aux_loss_weight: 0.1
+  rerank_loss_weight: 0.1
+
+tags:
+  - tiger-joint-stage
+  - listwise-click-logit
+  - bce-calibration

@@ -171,14 +171,56 @@ else:
 
 ### Hybrid Loss
 
-如果 pairwise/listwise 仍不如 pointwise，下一步应测试 hybrid：
+Pairwise 分支结果显示：pure pairwise 会让 click AUC 明显塌陷，而加入轻量 BCE calibration 后 AUC 可以恢复，但 rerank gain 仍偏弱。
+因此当前 listwise 分支优先测试 listwise hybrid：
 
 ```text
-L = L_rank + lambda * L_BCE
+L = L_listwise(click_logits) + no_hit_weight * L_no_hit_aux + lambda * L_BCE(click_logits)
 ```
 
-其中 `L_rank` 可以是 listwise 或 pairwise，`lambda` 建议先从 0.1 / 0.2 测起。
-这样可以保留 ranking formulation，同时利用 BCE 提供 dense calibration。
+其中 listwise 主损失仍只作用在 `click_logits` 上：
+
+```text
+use_beam_score_in_rerank_loss=false
+```
+
+也就是训练阶段不直接把 `beam_log_prob + 0.1 * click_logits` 放入 ranking loss，避免 generator prior 过强导致 click head 梯度被压制；推理阶段仍使用：
+
+```text
+final_score = beam_log_prob + 0.1 * click_logits
+```
+
+当前已实现配置：
+
+```text
+configs/experiment/tiger_train_listwise_hybrid.yaml
+```
+
+启动脚本：
+
+```bash
+sbatch run_click_listwise_hybrid.sh
+```
+
+第一组参数：
+
+```text
+model.no_hit_aux_loss_weight=0.5
+model.bce_aux_loss_weight=0.1
+model.rerank_loss_weight=0.1
+```
+
+如果 `lambda=0.1` 的 AUC 恢复但 gain 仍不够，下一组优先测试：
+
+```bash
+sbatch run_click_listwise_hybrid.sh model.bce_aux_loss_weight=0.2
+```
+
+预期判断：
+
+- 若 AUC 接近 pointwise，且 gain 高于纯 listwise，说明 BCE calibration 是 listwise 缺失的关键监督。
+- 若 AUC 恢复但 gain 仍低，说明问题不只是校准，而是 listwise softmax 的单正样本监督和 final rerank 融合仍存在错位。
+- 若 gain 下降，说明 BCE 项压过 ranking objective，需要降低到 `0.05` 或只对 no-hit auxiliary 之外的自然 beam 使用更小权重。
 
 ### Diagnostics
 
