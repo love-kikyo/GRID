@@ -137,6 +137,17 @@ class UnboundedSequenceIterable(BaseDataset, IterableDataset):
         if self.dataset_to_iterate is None:
             # If it has not been set up, it means it is a forkserver worker. We need to set it up.
             self.setup()
+        # A rank can own fewer files than its DataLoader has subprocesses (for
+        # example, two validation shards with eight workers per rank).  In that
+        # case PyTorch still starts every worker, but the strided assignment in
+        # get_list_of_worker_files() legitimately leaves some workers empty.
+        # Let those workers finish cleanly before a format-specific iterator
+        # tries to infer a schema from an empty file list.  This must also be
+        # handled here, rather than only in TFRecordIterator, because a training
+        # worker with no files would otherwise spin forever in the repeat loop.
+        if not self.data_iterator.list_of_file_paths:
+            self.dataset_to_iterate = None
+            return
         # If the dataset is for training, we want to keep iterating over the dataset infinitely.
         # On a streaming dataset, we will always be on Epoch 0.
         finished_iteration = False

@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import abc
 from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 
 import torch
 import transformers
 from torch.utils.data import IterableDataset
 
-from src.data.loading.components.iterators import RawDataIterator
+if TYPE_CHECKING:
+    from src.data.loading.components.iterators import RawDataIterator
 
 
 class BaseDatasetConfig:
