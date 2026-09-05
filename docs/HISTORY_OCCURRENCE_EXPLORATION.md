@@ -238,5 +238,7 @@ semantic_itemkey_collision_audit
 
 - 新分支已创建。
 - 统计定义与风险边界已确定。
-- 尚未实现分析脚本，也尚未运行统计。
-- 下一步应先完成 dataset-only 模式，核对两种历史口径和 semantic itemkey 碰撞，再接 checkpoint inference。
+- 已实现 `scripts/analyze_history_occurrence.py`：支持 dataset-only 与 checkpoint prediction 两种模式。
+- 已实现两种历史口径的一致性断言、semantic itemkey 碰撞审计、预测重复率和按 GT recurrence 分组的推荐指标。
+- 已提供 `run_history_occurrence.sh`，可依次运行全 split dataset 统计和正式模型的 test prediction；两阶段共用碰撞审计缓存。脚本不再含旧 run/checkpoint 默认值，必须显式传入正式 run、checkpoint 与 training preflight，并校验 `history-last-user-v1` 数据身份。
+- 尚未启动正式全量统计。应等待正式模型完成后执行 `sbatch run_history_occurrence.sh all RUN_DIR CHECKPOINT PREFLIGHT ANALYSIS_RUN_NAME`，再检查对应的 `logs/analysis/history_occurrence/ANALYSIS_RUN_NAME/` 结果。
