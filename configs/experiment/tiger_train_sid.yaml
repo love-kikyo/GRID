@@ -1,5 +1,5 @@
 # @package _global_
-# Train sid_head only for 300k steps
+# Train sid_head with the same 120k horizon as the cosine scheduler.
 
 training_task: sid
 
@@ -7,4 +7,4 @@ tags:
   - tiger-sid-stage
 
 trainer:
-  max_steps: 300000
+  max_steps: 120000
