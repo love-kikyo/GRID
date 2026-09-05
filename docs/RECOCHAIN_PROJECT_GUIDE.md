@@ -72,6 +72,10 @@ Key files:
 - run metadata capture: [src/utils/logging_utils.py](/home/MMReco2021/liuyu/GRID/src/utils/logging_utils.py:1)
 - restart logic: [src/utils/restart_job.py](/home/MMReco2021/liuyu/GRID/src/utils/restart_job.py:1)
 
+Slurm 多卡训练必须让 task 数与 GPU 数一致。仅设置 `--gres=gpu:3`、同时保留 `--ntasks=1` 会使 Lightning 的 `SLURMEnvironment` 固定为 `world_size=1`，实际只训练一张卡。`history-last-user-v1` 的四个正式 launcher 使用单节点三个 task，并以 `srun` 建立 3-rank NCCL DDP；启动前还会硬校验 `SLURM_NTASKS=SLURM_NTASKS_PER_NODE=3`。30 GiB 拓扑 smoke `131904` 建立了三 rank，但退出时主机内存不足；60 GiB 等配置复验 `131905` 已 `COMPLETED (0:0)`。旧 job `120429` 及第一次新数据 SID job `131899` 都是 `world_size=1`，不可作为三卡运行引用。
+
+evaluation 的 shard 数还必须与 rank 内 DataLoader worker 数配套。job `131906` 正常训练至首次 validation，却因每 rank 仅有 2 个 validation shard、配置了 8 个 workers，导致空 worker 在 TFRecord schema 推断时报 `StopIteration`，未产生有效 checkpoint。当前 launcher 将 validation/test 限制为 2/3 workers per rank，加载器本身也允许空 worker 正常结束；修复后的正式 SID teacher 为 `131908`。
+
 ## Model Summary
 
 Current primary training model:
@@ -123,9 +127,10 @@ Here `B` is the generated beam list. `r_click` is not treated as a standalone ca
 - behavior:
   - train `sid_head` and `click_head`
   - beam search produces hard negatives
-  - click head reranks beam candidates with a listwise softmax objective over the beam list
+  - main configuration: click head reranks candidates with listwise softmax CE over the beam list
+  - controlled ablation: pointwise BCE uses the same valid natural-beam rows and the same no-hit construction
   - the main rerank loss is applied on natural beam lists that already contain the ground-truth item
-  - no-hit batches can optionally add a light GT-injected auxiliary listwise loss
+  - no-hit batches can optionally add a light GT-injected auxiliary loss using the configured objective
   - final rerank score is `beam_log_prob_weight * beam_log_prob + rerank_logit_weight * rerank_logit`
   - rerank fusion weight sweeps are available via `tiger_train_click_rerank02` and `tiger_train_click_rerank03`
   - validation/test primary metrics come from rerank results
@@ -182,7 +187,8 @@ Current experiments use the Taobao multi-modal recommendation dataset family:
 
 Repository-local convention seen in run scripts:
 
-- dataset root: `./data/taobao`
+- legacy dataset root: `./data/taobao` (protocol-mismatched; do not use for new results)
+- frozen dataset root: `./data/taobao_history_last_user_v1`
 - semantic ID file example: `./data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy`
 
 Expected split layout in training config:
@@ -199,26 +205,21 @@ These paths are wired in:
 
 ### SID stage
 
-From [run_sid.sh](/home/MMReco2021/liuyu/GRID/run_sid.sh:1):
+The protocol-locked launcher is
+[run_sid_history_last_user_v1.sh](/home/MMReco2021/liuyu/GRID/run_sid_history_last_user_v1.sh:1):
 
 ```bash
-python -m src.train "experiment=[tiger_train_flat,tiger_train_sid]" \
-    data_dir=./data/taobao \
-    semantic_id_path=./data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy \
-    num_hierarchies=4 \
-    num_embeddings_per_hierarchy=4096
+sbatch run_sid_history_last_user_v1.sh
 ```
 
 ### Joint stage
 
-From [run_click.sh](/home/MMReco2021/liuyu/GRID/run_click.sh:1):
+The joint stage must name the generator-only teacher explicitly. The launcher
+also refuses to start until the full data audit passes:
 
 ```bash
-python -m src.train "experiment=[tiger_train_flat,tiger_train_click]" \
-    data_dir=./data/taobao \
-    semantic_id_path=./data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy \
-    num_hierarchies=4 \
-    num_embeddings_per_hierarchy=4096
+sbatch run_click_listwise_history_last_user_v1.sh /absolute/path/to/teacher.ckpt 42
+sbatch run_click_pointwise_history_last_user_v1.sh /absolute/path/to/teacher.ckpt 42
 ```
 
 ### KV-cache efficiency profiling
