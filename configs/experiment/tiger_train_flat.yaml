@@ -269,6 +269,7 @@ model:
   num_embeddings_per_hierarchy: ${num_embeddings_per_hierarchy}
   num_user_bins: null
   training_task: ${training_task}
+  rerank_objective: listwise
   load_only_weights: false
   codebooks: ${data_loading.train_dataloader_config.dataloader.dataset_config.semantic_id_map}
   padding_token: ${data_loading.train_dataloader_config.dataloader.padding_token}
@@ -291,8 +292,8 @@ loss:
     sid_loss:
       _target_: torch.nn.CrossEntropyLoss
       ignore_index: ${sub:${data_loading.train_dataloader_config.dataloader.padding_token},1}
-    # Kept for BaseModule compatibility. Rerank training uses model-internal
-    # listwise softmax CE over the beam list.
+    # Used by the controlled pointwise ablation. The main configuration uses
+    # model-internal listwise softmax CE over the beam list.
     click_loss:
       _target_: torch.nn.BCEWithLogitsLoss
 

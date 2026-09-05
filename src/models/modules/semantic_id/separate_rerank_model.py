@@ -360,14 +360,16 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         mode: ModelMode,
     ):
         batch_dict = self._split_batch(model_input)
-        ensure_gt = mode is ModelMode.TRAIN and self.inject_gt_for_rerank_loss
         result_dict = self._run_rerank(
             hist_sid=batch_dict["hist_sid"],
             hist_mask=batch_dict["hist_mask"],
             hist_itemkey_ctx=batch_dict["hist_itemkey_ctx"],
             target_sid=batch_dict["target_sid"],
             target_itemkey=batch_dict["target_itemkey"],
-            ensure_gt_in_candidates=ensure_gt,
+            # Always retain the natural teacher beam here.  If it misses the
+            # target, a separate GT-injected list is built below for the
+            # training-only auxiliary loss; inference candidates never change.
+            ensure_gt_in_candidates=False,
         )
 
         if mode is ModelMode.INFER:
@@ -387,16 +389,66 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
                 },
             }
 
-        loss = self._compute_listwise_rerank_loss(
+        main_loss = self._compute_listwise_rerank_loss(
             rerank_logits=result_dict["rerank_logits"],
             labels=result_dict["labels"],
             beam_log_prob=result_dict["beam_scores"],
         )
+
+        positive_counts = result_dict["labels"].sum(dim=-1, keepdim=True)
+        valid_rows = positive_counts.squeeze(-1) > 0
+        no_hit_mask = ~valid_rows
+        aux_loss = result_dict["rerank_logits"].sum() * 0.0
+
+        # Match RecoChain's no-hit supervision so that the separate-reranker
+        # comparison isolates model sharing rather than candidate construction.
+        # The natural beam above remains untouched and is the only inference
+        # candidate set.
+        if self.use_no_hit_aux_loss and no_hit_mask.any():
+            no_hit_indices = torch.where(no_hit_mask)[0]
+            aux_candidate_sid = result_dict["candidate_sid"][no_hit_indices].clone()
+            aux_candidate_itemkey = result_dict["candidate_itemkey"][no_hit_indices].clone()
+            aux_beam_scores = result_dict["beam_scores"][no_hit_indices].clone()
+            insert_indices = torch.randint(
+                low=0,
+                high=self.top_k_for_generation,
+                size=(no_hit_indices.numel(),),
+                device=aux_candidate_sid.device,
+            )
+            aux_rows = torch.arange(no_hit_indices.numel(), device=aux_candidate_sid.device)
+
+            aux_candidate_sid[aux_rows, insert_indices] = batch_dict["target_sid"][no_hit_indices]
+            aux_candidate_itemkey[aux_rows, insert_indices] = batch_dict["target_itemkey"][no_hit_indices]
+            if self.teacher is None:
+                raise RuntimeError("Teacher model has not been initialized. Call setup() first.")
+            with torch.no_grad():
+                gt_beam_scores = self.teacher.sid_model._compute_target_sid_log_prob(
+                    hist_sid=batch_dict["hist_sid"][no_hit_indices],
+                    hist_mask=batch_dict["hist_mask"][no_hit_indices],
+                    target_sid=batch_dict["target_sid"][no_hit_indices],
+                )
+            aux_beam_scores[aux_rows, insert_indices] = gt_beam_scores
+
+            aux_logits = self.reranker(
+                hist_itemkey=batch_dict["hist_itemkey_ctx"][no_hit_indices],
+                candidate_itemkey=aux_candidate_itemkey,
+                candidate_sid=aux_candidate_sid,
+                beam_scores=aux_beam_scores,
+            )
+            aux_labels = F.one_hot(
+                insert_indices,
+                num_classes=self.top_k_for_generation,
+            ).to(aux_logits.dtype)
+            aux_loss = self._compute_listwise_rerank_loss(
+                rerank_logits=aux_logits,
+                labels=aux_labels,
+                beam_log_prob=aux_beam_scores,
+            )
+
+        loss = main_loss + self.no_hit_aux_loss_weight * aux_loss
         with torch.no_grad():
             click_probs = torch.sigmoid(result_dict["rerank_logits"])
             auc = self._safe_binary_auroc(click_probs, result_dict["labels"])
-            positive_counts = result_dict["labels"].sum(dim=-1, keepdim=True)
-            valid_rows = positive_counts.squeeze(-1) > 0
             target_dist = result_dict["labels"] / positive_counts.clamp_min(1.0)
             per_row_log_prob = (
                 target_dist
@@ -410,6 +462,8 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
             "click_auc": auc,
             "click_log_prob": click_log_prob,
             "rerank_hit_rate_in_beam": rerank_hit_rate_in_beam,
+            "rerank_no_hit_rate": no_hit_mask.float().mean(),
+            "rerank_aux_loss": aux_loss.detach(),
         }
         return result_dict["rerank_logits"], loss, metrics
 

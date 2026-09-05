@@ -1,0 +1,8 @@
+# @package _global_
+# Controlled loss ablation: identical beam/no-hit construction, pointwise BCE.
+
+model:
+  rerank_objective: pointwise
+
+tags:
+  - recochain-pointwise

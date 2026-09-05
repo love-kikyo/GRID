@@ -223,6 +223,31 @@ class SemanticIDGenerativeRecommender(TransformerBaseModule):
         per_row_loss = -(target_dist * log_probs).sum(dim=-1)
         return per_row_loss[valid_rows].mean()
 
+    def _compute_rerank_training_loss(
+        self,
+        rerank_logits: torch.Tensor,
+        labels: torch.Tensor,
+        beam_log_prob: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Dispatch the controlled reranking-objective ablation.
+
+        Both objectives operate on the same supervised candidate lists. Rows
+        without a natural target hit are ignored here and receive supervision
+        through the same GT-injected auxiliary list below.
+        """
+        if self.rerank_objective == "listwise":
+            return self._compute_listwise_rerank_loss(
+                rerank_logits=rerank_logits,
+                labels=labels,
+                beam_log_prob=beam_log_prob,
+            )
+
+        labels = labels.float()
+        valid_rows = labels.sum(dim=-1) > 0
+        if not torch.any(valid_rows):
+            return rerank_logits.sum() * 0.0
+        return self.click_loss_fn(rerank_logits[valid_rows], labels[valid_rows])
+
     def _safe_binary_auroc(
         self,
         probabilities: torch.Tensor,
@@ -525,6 +550,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         prediction_key_name: str = "user_id",
         prediction_value_name: str = "semantic_ids",
         training_task: str = "sid",
+        rerank_objective: str = "listwise",
         rerank_logit_weight: float = 1.0,
         beam_log_prob_weight: float = 1.0,
         use_beam_score_in_rerank_loss: bool = False,
@@ -547,7 +573,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         embedding_dim (Optional[int]): the dimension of the embeddings.
         should_check_prefix (bool): whether to check if the prefix is valid.
         manual_ckpt_path (Optional[str]): Path to checkpoint for manual weight loading.
-            When load_only_weights=True and manual_ckpt_path is set, weights are loaded
+            Required when load_only_weights=True during fitting. Weights are loaded
             manually in setup() to avoid Lightning's automatic state restoration.
         """
         if isinstance(codebooks, np.ndarray):
@@ -568,6 +594,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         )
 
         self.training_task = training_task
+        if rerank_objective not in {"listwise", "pointwise"}:
+            raise ValueError(
+                "rerank_objective must be either 'listwise' or 'pointwise', "
+                f"got {rerank_objective!r}"
+            )
+        self.rerank_objective = rerank_objective
         self.rerank_logit_weight = rerank_logit_weight
         self.beam_log_prob_weight = beam_log_prob_weight
         self.use_beam_score_in_rerank_loss = use_beam_score_in_rerank_loss
@@ -643,9 +675,15 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     def setup(self, stage=None):
         if stage == "fit":
             self._set_trainable_params()
-            # Manually load weights if load_only_weights is True and ckpt_path is set
-            # This avoids Lightning's automatic state restoration
-            if self.load_only_weights and hasattr(self, '_manual_ckpt_path') and self._manual_ckpt_path:
+            # This mode starts a new optimization run from an explicitly named
+            # checkpoint.  Silently continuing from random initialization makes
+            # the staged comparison invalid, so the checkpoint is mandatory.
+            if self.load_only_weights:
+                if not self._manual_ckpt_path:
+                    raise ValueError(
+                        "model.load_only_weights=true requires an explicit "
+                        "model.manual_ckpt_path"
+                    )
                 self._load_weights_only()
 
     def _load_weights_only(self):
@@ -653,8 +691,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         import os
         ckpt_path = self._manual_ckpt_path
         if not os.path.exists(ckpt_path):
-            logging.warning(f"Checkpoint not found: {ckpt_path}")
-            return
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
         logging.info(f"[load_only_weights] Loading model weights from: {ckpt_path}")
         checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False)
@@ -1397,7 +1434,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Stage 2: Joint training of click_head and sid_head.
-        Both heads are trained together for 90k steps.
+        Both heads are trained over the horizon configured by the trainer.
         """
         target_itemkey = hist_itemkey[:, -1]
         # Extract target SID (last block of the sequence)
@@ -1423,8 +1460,8 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             batch_size=batch_size,
         )
 
-        # Keep SID generation as the dominant objective; the rerank head learns a
-        # listwise residual score over natural beam hits.
+        # Keep SID generation as the dominant objective; the rerank head learns
+        # a residual score over natural beam hits.
         total_loss = total_sid_loss + self.rerank_loss_weight * loss_rerank
 
         metrics = {
@@ -1447,9 +1484,9 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         seq_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Stage 2: SID (Semantic ID) generation training.
-        Only sid_head is trained for additional 30k steps from joint checkpoint.
-        The checkpoint is loaded with full trainer state for LR continuity.
+        Generator-only Semantic-ID training stage.
+
+        The click head is frozen by ``_set_trainable_params``.
         """
         sid_output, total_sid_loss, metrics = self._compute_sid_loss_from_full_sequence(
             sid=sid,
@@ -1472,7 +1509,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
 
         Returns:
             decoder_output: The decoder output
-            loss: listwise reranking loss over the beam candidates
+            loss: configured reranking loss over the beam candidates
             metrics: Dictionary containing click metrics
         """
         B = batch_size
@@ -1496,7 +1533,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
         has_hit = (generated_itemkey_2d == target_itemkey_expanded).any(dim=1)
         no_hit_mask = ~has_hit
 
-        main_loss = self._compute_listwise_rerank_loss(
+        main_loss = self._compute_rerank_training_loss(
             rerank_logits=click_logits,
             labels=click_labels,
             beam_log_prob=beam_log_prob,
@@ -1541,12 +1578,12 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
                 click_logits[no_hit_indices],
             )
             aux_click_labels = insert_mask.to(click_logits.dtype)
-            aux_loss = self._compute_listwise_rerank_loss(
+            aux_loss = self._compute_rerank_training_loss(
                 rerank_logits=aux_click_logits,
                 labels=aux_click_labels,
             )
 
-        loss_listwise = main_loss + self.no_hit_aux_loss_weight * aux_loss
+        loss_rerank = main_loss + self.no_hit_aux_loss_weight * aux_loss
 
         with torch.no_grad():
             click_probs = torch.sigmoid(click_logits)
@@ -1569,7 +1606,7 @@ class SemanticIDEncoderDecoder(SemanticIDGenerativeRecommender):
             rerank_hit_rate_in_beam = valid_rows.float().mean()
             rerank_no_hit_rate = no_hit_mask.float().mean()
 
-        return decoder_output, loss_listwise, {
+        return decoder_output, loss_rerank, {
             "click_auc": auc,
             "click_log_prob": click_log_prob,
             "beam_log_prob": beam_log_prob.mean(),

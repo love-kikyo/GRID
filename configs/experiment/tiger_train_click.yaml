@@ -1,5 +1,5 @@
 # @package _global_
-# Joint training of click_head and sid_head for 300k steps
+# Joint training of click_head and sid_head with the scheduler-aligned horizon.
 # Usage: python src/train.py experiment=tiger_train_flat,tiger_train_click
 
 training_task: click
@@ -7,9 +7,12 @@ training_task: click
 # Override model.load_only_weights to enable manual weight loading
 model:
   load_only_weights: true
+  # Required for training; may stay null when loading a completed run only for
+  # evaluation. The model raises before fitting if this path is absent.
+  manual_ckpt_path: null
 
 tags:
   - tiger-joint-stage
 
 trainer:
-  max_steps: 300000
+  max_steps: 120000

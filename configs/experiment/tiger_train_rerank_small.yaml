@@ -19,7 +19,10 @@ model:
   rerank_logit_weight: 0.1
   beam_log_prob_weight: 1.0
   use_beam_score_in_rerank_loss: false
-  inject_gt_for_rerank_loss: false
+  # Match the joint model: natural-beam main loss plus a training-only
+  # GT-injected auxiliary list for no-hit rows. Inference remains natural-beam only.
+  use_no_hit_aux_loss: true
+  no_hit_aux_loss_weight: 0.5
   rerank_loss_weight: 1.0
   load_only_weights: false
 
