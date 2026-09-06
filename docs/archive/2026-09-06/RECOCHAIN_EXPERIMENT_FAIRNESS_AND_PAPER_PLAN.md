@@ -1,3 +1,5 @@
+> 历史快照（归档于 2026-09-06）：以下原文仅供追溯，可能含过期状态、旧数据结果或已纠正表述。当前入口见 [文档导航](../../README.md)。原文中的相对路径按归档前目录理解。
+
 # RecoChain Experiment Fairness and Paper Plan
 
 ## Goal
