@@ -110,6 +110,11 @@ class UnboundedSequenceIterable(BaseDataset, IterableDataset):
     def setup(self):
         # We update each worker's data iterator with the files just for that worker.
         self.data_iterator.update_list_of_file_paths(self.get_list_of_worker_files())
+        # Empty workers must not shuffle or initialize a format-specific
+        # iterator: either operation may eagerly inspect the first file.
+        if not self.data_iterator.list_of_file_paths:
+            self.dataset_to_iterate = None
+            return
         self.data_iterator = (
             # here we use global_dataloader_worker_id as the seed for shuffling
             # this doesn't matter for the case where workers have non-overlapping files
