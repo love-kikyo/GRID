@@ -1,11 +1,14 @@
 # Run 台账
 
-最后核验：2026-09-06 13:46（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-06 14:12（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 132024 | 09-06 14:11 | CPU 综合回归，含新导出测试 | RUNNING；代码 55dd60f，无正式训练 |
+| 132023 | 09-06 14:11 | 131908 teacher 的 test 导出 smoke | RUNNING；2 batches，代码 55dd60f |
+| 132022 | 09-06 14:11 | 131908 teacher 的 validation 导出 smoke | RUNNING；2 batches，代码 55dd60f |
 | 132021 | 09-06 13:31 | CPU 综合测试，无正式训练 | COMPLETED，1m46s；38 passed，smoke 审计及 listwise/pointwise 配置解析通过 |
 | 131910 | 09-06 00:01 | CPU 综合测试，无正式训练 | FAILED；28 passed、1 failed，空 worker 提前初始化迭代器 |
 | 131909 | 未开始 | 待运行的综合测试 | CANCELLED；被后续测试替代，无模型产物 |
@@ -67,4 +70,6 @@ Teacher 日志也打印 `rerank_*` / `click_auc`，但重排 head 未训练；�
 
 131908 preflight 记录的 `dataloading.py` SHA256 为 `82f949bc8d08684788746b13824d0dcf6de078e47dfd02e73d0a07db0c7e262f`；修复后的当前文件为 `eb26bd1f4bae1581480d48196940b7a7a7d53fed5344443bead0e49277a1b1e6`。修复将空 worker 返回提前到 iterator 初始化前；其余 131908 preflight 源文件本次核验未变。
 
-当前导出器严格比较源码哈希，因此直接使用旧 preflight 会被拒绝。这不是已确认的 checkpoint 损坏；后续应保留原记录，通过明确兼容说明和真实 smoke 验证处理，不能覆盖 preflight 或关闭校验来假装版本一致。
+默认导出仍严格比较源码哈希。提交 55dd60f 增加显式、精确哈希的兼容记录：[131908 记录](../configs/evaluation/teacher_131908_source_compatibility.json)，绑定原 preflight SHA256 `869939827019f2950aee726e6ba9b89548d2903c0ece2dcdd28d5a2327007003`。仅允许上面这次已审查的空 worker 修复；不接受其他源码 / manifest 变化，不覆盖旧 preflight，例外记录与哈希随导出 metadata 保存。
+
+导出修复 0c0c445 将 user ID 与原 sequence collator 分开处理；单元测试确认输入张量 / mask 不变，支持 datamodule 参数传递。相关定向回归 37 passed。真实 smoke 任务为 132022 / 132023，输出标签 `sid_seed42_131908_{val,test}_smoke_v1`；不代表全量评估。

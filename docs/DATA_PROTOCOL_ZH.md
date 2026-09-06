@@ -26,7 +26,7 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 | --- | --- | --- | --- |
 | Train | `training` | 6,573,674 | 33 |
 | Validation | `evaluation` | 347,416 | 2 |
-| Test | `test` | 2,061,101 | 11 |
+| Test | `testing` | 2,061,101 | 11 |
 
 全量构建 / 审计任务为 131857，审计 `status=passed`、`partial_run=false`。检查包括字段一致、长度至少 2、各目的 split 内用户唯一、train/validation 用户互斥、manifest 一致；记录的 item row 范围为 0–35,458,466。
 

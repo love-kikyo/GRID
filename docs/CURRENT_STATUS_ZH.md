@@ -1,10 +1,10 @@
 # 当前状态
 
-核验时间：2026-09-06 13:46，Asia/Shanghai。此页是状态快照，不是实时监控。
+核验时间：2026-09-06 14:12，Asia/Shanghai。此页是状态快照，不是实时监控。
 
 ## 一句话结论
 
-队列为空；新协议上的 SID 生成器 teacher 已训练完成，空 worker 修复后的综合测试已通过。新协议的 joint listwise、joint pointwise、separate reranker 尚未完成正式训练，实验没有整体收尾。
+正在做新 teacher 的逐样本导出 smoke 和 CPU 回归测试（132022–132024），不是正式重训。SID teacher 已完成；joint listwise、joint pointwise、separate reranker 尚未完成新协议正式训练，实验没有整体收尾。
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
@@ -27,8 +27,8 @@
 
 先完成“新 teacher 的下游初始化与真实导出 smoke 验收”，见 [计划第 1 阶段](EXPERIMENT_PLAN_ZH.md)。目前不能直接把测试通过理解为可以批量提交所有正式任务：
 
-1. teacher 训练时的 dataloader 源码哈希与当前修复版不同；严格导出检查会拒绝该差异，需要保留原始记录并明确兼容处理。
-2. 导出需要稳定的 user ID；训练配置默认不保留 user ID，真实新 checkpoint 导出路径仍需验证。
+1. 已补精确哈希、绑定原 preflight 的显式兼容记录；默认仍严格检查。真实验收进行中。
+2. 已修复导出端 user ID 保留，定向测试确认模型输入不变；真实新 checkpoint 导出进行中。
 3. 全量 validation / test 必须核对样本数、唯一用户数和数据版本，不能用训练时的截断指标代替。
 
-本次只检查状态和整理文档；没有新增训练任务，也没有修改论文正文或训练代码。
+当前只推进小规模验收；没有启动正式重训，也没有修改论文正文。
