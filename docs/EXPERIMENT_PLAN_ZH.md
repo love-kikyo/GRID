@@ -10,15 +10,17 @@
 - [x] 实现下游训练入口、逐样本导出、融合选权、配对分析和历史出现分析工具。
 - [ ] 在新协议、新 checkpoint 上完成这些工具的真实端到端验收。工具已实现不等于实验已完成。
 
-## 1. 下一个小阶段：teacher 与下游链路验收
+## 1. 当前阶段：teacher 与下游链路验收
 
-先做本阶段，不同时铺开所有重训或消融。
+加载 / 导出 smoke 已通过（2026-09-06），本阶段还差过滤后 train/test 边界审计。验收证据只在 [Run 台账](RUN_LEDGER_ZH.md) 维护，不同时铺开正式重训或消融。
 
-1. 固定 131908 的 best checkpoint，记录 checkpoint 哈希、训练配置、数据 preflight 和执行代码版本；保留历史源码指纹，不修改原始 preflight。
-2. 处理空 worker 修复引入的训练 / 导出源码哈希差异：审查兼容性并保留独立记录；当前严格导出器尚无已验收的放行路径。
-3. 用新 teacher 分别做 listwise、pointwise、separate 的真实权重加载、少量训练 / 验证和 DDP smoke，检查冻结参数及梯度是否符合设计。现有 Hydra 配置解析未覆盖这些行为。
-4. 做新 checkpoint 的少量逐样本导出 smoke。核验 user ID 的保留与配对、样本顺序 / 去重、beam / rerank 输出、配置和哈希绑定。
-5. 补核验过滤后 train/test 用户交集，以及重叠用户历史 / 目标的边界，明确是否存在同一样本跨 split 重复；这与既有 train/validation 互斥审计不是一回事。
+- [x] 固定 131908 best checkpoint 的哈希、配置与 preflight；原始 preflight 未改动。
+- [x] 显式记录空 worker 修复的精确前后源码哈希，绑定原 preflight；兼容检查与真实导出通过，默认仍严格拒绝其他变化。
+- [x] Listwise、pointwise、separate 的真实加载、2-step / 3-GPU 训练与验证通过；逐参数检查 teacher，核验预期梯度与冻结行为。
+- [x] Teacher 的 validation / test 各 64 条真实导出通过：user ID 唯一，模型输入一致性单测通过，候选与分数结构正确，配置 / checkpoint / 哈希绑定完整。
+- [ ] 下一步：补核验过滤后 train/test 用户交集、重叠用户历史 / 目标边界及跨 split 完全重复样本；这与既有 train/validation 互斥审计不是一回事。
+
+全量跨模型用户配对与实际遍历完整性仍在第 3 阶段验收，不能由上面的 smoke 推断。
 
 验收：真实日志、明确的通过 / 失败记录和完整 provenance；发现问题则单独修复并提交，不跳过校验。此阶段完成后再确定正式重训的提交顺序。
 
