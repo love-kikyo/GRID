@@ -76,6 +76,10 @@ Slurm 多卡训练必须让 task 数与 GPU 数一致。仅设置 `--gres=gpu:3`
 
 evaluation 的 shard 数还必须与 rank 内 DataLoader worker 数配套。job `131906` 正常训练至首次 validation，却因每 rank 仅有 2 个 validation shard、配置了 8 个 workers，导致空 worker 在 TFRecord schema 推断时报 `StopIteration`，未产生有效 checkpoint。当前 launcher 将 validation/test 限制为 2/3 workers per rank，加载器本身也允许空 worker 正常结束；修复后的正式 SID teacher 为 `131908`。
 
+2026-09-06 回归修复：综合测试 `131910` 为 `28 passed, 1 failed`；空 worker 检查位于 `setup()` 之后，无法阻止 eager iterator 初始化。提交 `1cbf5ba` 在文件分配后、shuffle/迭代器初始化前直接结束空 worker；增加训练/验证、逐行/逐批、重复迭代与非空 worker 输出的覆盖。登录节点以 `USE_TF=0` 运行聚焦测试得到 `10 passed`（常规导入会触发本机 TensorFlow `Illegal instruction`）。计算节点综合复验 `132021` 使用原环境，于 2026-09-06 13:33:10 CST 以 `COMPLETED (0:0)` 结束，耗时 `00:01:46`：`38 passed`、smoke 数据 partial audit passed、listwise/pointwise Hydra 配置解析均通过。证据为 `logs/data_build/retraining_controls_132021.out`；Hydra 的 `--cfg job --resolve` 只解析配置，不加载其中的历史 teacher 或启动训练。
+
+版本追溯：已有 teacher `131908` 在此修复前已完成，保留 `checkpoint_000_090000.ckpt`。其原始 preflight 的 dataloader SHA-256 为 `82f949bc8d08684788746b13824d0dcf6de078e47dfd02e73d0a07db0c7e262f`；修复后为 `eb26bd1f4bae1581480d48196940b7a7a7d53fed5344443bead0e49277a1b1e6`。原始训练 preflight 必须保留。当前 exporter 严格比较训练与导出源码哈希，因此直接用修复后的源码导出旧 teacher 会被拒绝；正式导出前仍需单独处理并记录该兼容性差异，不能把新 preflight 冒充原始训练证据。这不阻止后续模型显式加载该 teacher 作为初始化 checkpoint，并生成各自的新训练 preflight。
+
 ## Model Summary
 
 Current primary training model:
