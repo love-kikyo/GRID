@@ -4,6 +4,7 @@
 #   sbatch run_export_paired_evaluation.sh \
 #     METHOD_TAG SPLIT RUN_DIR CHECKPOINT TRAINING_PREFLIGHT
 # Optional environment variables:
+#   SOURCE_COMPATIBILITY=/abs/reviewed_source_transition.json (default: strict matching)
 #   MAX_BATCHES=2 OUTPUT_TAG=_smoke sbatch run_export_paired_evaluation.sh \
 #     listwise_seed42 test /abs/run /abs/model.ckpt /abs/preflight.json
 
@@ -82,6 +83,9 @@ export SOURCE_GIT_COMMIT
 EXTRA_ARGS=()
 if [[ -n "${MAX_BATCHES}" ]]; then
     EXTRA_ARGS+=(--max-batches "${MAX_BATCHES}")
+fi
+if [[ -n "${SOURCE_COMPATIBILITY:-}" ]]; then
+    EXTRA_ARGS+=(--source-compatibility "${SOURCE_COMPATIBILITY}")
 fi
 
 "${PYTHON_BIN}" scripts/export_paired_evaluation.py \

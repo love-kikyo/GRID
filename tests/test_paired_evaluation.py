@@ -283,7 +283,8 @@ def test_selected_variant_requires_matching_validation_export(tmp_path):
     assert comparison["metrics"]["recall@1"]["challenger_mean"] == 1.0
 
 
-def test_export_provenance_locks_manifests_and_training_sources(tmp_path):
+@pytest.fixture
+def provenance_case(tmp_path):
     data_root = tmp_path / "data"
     data_root.mkdir()
     manifest_paths = {
@@ -337,6 +338,11 @@ def test_export_provenance_locks_manifests_and_training_sources(tmp_path):
         }
     )
 
+    return cfg, data_root, preflight_path, preflight
+
+
+def test_export_provenance_locks_manifests_and_training_sources(provenance_case):
+    cfg, data_root, preflight_path, preflight = provenance_case
     provenance, expected = validate_provenance(
         cfg,
         split="val",
@@ -357,3 +363,53 @@ def test_export_provenance_locks_manifests_and_training_sources(tmp_path):
             expected_protocol="history-last-user-v1",
             training_preflight=preflight_path,
         )
+
+
+@pytest.mark.parametrize("case", ["accepted", "no_record", "wrong_preflight", "wrong_old_hash",
+                                  "wrong_new_hash", "other_source", "unused", "duplicate", "manifest"])
+def test_export_source_compatibility_is_narrow_and_recorded(provenance_case, tmp_path, case):
+    cfg, data_root, preflight_path, preflight = provenance_case
+    source = preflight["source_files"][0]
+    current_hash = source["sha256"]
+    source["sha256"] = "a" * 64
+    preflight_path.write_text(json.dumps(preflight))
+    change = {
+        "path": "src/data/loading/components/dataloading.py",
+        "training_sha256": "a" * 64,
+        "evaluation_sha256": current_hash,
+        "reason": "Reviewed test transition", "change_commit": "test-commit",
+    }
+    record = {"schema_version": 1, "training_preflight_sha256": file_sha256(preflight_path),
+              "changes": [change]}
+    if case == "wrong_preflight":
+        record["training_preflight_sha256"] = "b" * 64
+    elif case == "wrong_old_hash":
+        change["training_sha256"] = "b" * 64
+    elif case == "wrong_new_hash":
+        change["evaluation_sha256"] = "b" * 64
+    elif case == "other_source":
+        preflight["source_files"][1]["sha256"] = "b" * 64
+    elif case == "unused":
+        source["sha256"] = current_hash
+    elif case == "duplicate":
+        record["changes"].append(dict(change))
+    elif case == "manifest":
+        preflight["source_manifests"]["audit"]["sha256"] = "b" * 64
+    preflight_path.write_text(json.dumps(preflight))
+    if case != "wrong_preflight":
+        record["training_preflight_sha256"] = file_sha256(preflight_path)
+    record_path = tmp_path / "compatibility.json"
+    record_path.write_text(json.dumps(record))
+    kwargs = dict(cfg=cfg, split="val", expected_data_root=data_root,
+                  expected_protocol="history-last-user-v1", training_preflight=preflight_path,
+                  source_compatibility=None if case == "no_record" else record_path)
+    if case != "accepted":
+        with pytest.raises(ValueError):
+            validate_provenance(**kwargs)
+    else:
+        result, expected = validate_provenance(**kwargs)
+        assert expected == 3
+        assert result["source_compatibility"]["changes"] == [change]
+        assert result["source_compatibility"]["sha256"] == file_sha256(record_path)
+        assert result["training_preflight"]["sha256"] == file_sha256(preflight_path)
+        assert json.loads(preflight_path.read_text())["source_files"][0]["sha256"] == "a" * 64

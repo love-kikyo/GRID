@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "training_preflight_sha256": "869939827019f2950aee726e6ba9b89548d2903c0ece2dcdd28d5a2327007003",
+  "changes": [
+    {
+      "path": "src/data/loading/components/dataloading.py",
+      "training_sha256": "82f949bc8d08684788746b13824d0dcf6de078e47dfd02e73d0a07db0c7e262f",
+      "evaluation_sha256": "eb26bd1f4bae1581480d48196940b7a7a7d53fed5344443bead0e49277a1b1e6",
+      "change_commit": "1cbf5baeb94bc356ffa0fc5c7379cdf349fa85af",
+      "reason": "Reviewed five-line early return before initializing an empty worker iterator. Nonempty file assignment, preprocessing and yielded examples are unchanged. The existing __iter__ empty-worker return remains. No model weights, SID mapping or dataset manifests are changed.",
+      "regression_evidence": "tests/test_dataloading_empty_worker.py: 10 cases covering empty train/eval row/batch workers and repeated nonempty evaluation; compute job 132021 passed the complete 38-test suite. Real teacher export smoke is recorded separately in docs/RUN_LEDGER_ZH.md."
+    }
+  ]
+}

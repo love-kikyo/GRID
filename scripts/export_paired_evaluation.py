@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--training-preflight", type=Path, required=True)
+    parser.add_argument("--source-compatibility", type=Path, default=None,
+                        help="Explicit, preflight-bound record of reviewed source hash transitions")
     parser.add_argument("--expected-data-root", type=Path, required=True)
     parser.add_argument("--expected-protocol", required=True)
     parser.add_argument("--split", choices=("val", "test"), default="test")
@@ -325,12 +327,46 @@ def load_json(path: Path) -> Dict[str, Any]:
     return payload
 
 
+def load_source_compatibility(path: Optional[Path], preflight: Path) -> Dict[str, Any]:
+    """Load explicit exact-hash exceptions; never infer compatibility from Git."""
+    if path is None:
+        return {}
+    path = path.expanduser().resolve()
+    record = load_json(path)
+    if record.get("schema_version") != 1:
+        raise ValueError("Unsupported source compatibility schema")
+    if record.get("training_preflight_sha256") != file_sha256(preflight):
+        raise ValueError("Source compatibility record is bound to a different preflight")
+    changes = record.get("changes")
+    if not isinstance(changes, list) or not changes:
+        raise ValueError("Source compatibility record must contain reviewed changes")
+    seen = set()
+    for change in changes:
+        relative = Path(change["path"])
+        resolved = (ROOT / relative).resolve()
+        if relative.is_absolute() or not resolved.is_relative_to(ROOT.resolve()):
+            raise ValueError("Compatibility paths must stay inside the repository")
+        if str(resolved) in seen:
+            raise ValueError("Duplicate source compatibility path")
+        seen.add(str(resolved))
+        if not change.get("reason") or not change.get("change_commit"):
+            raise ValueError("Source compatibility requires a review reason and change commit")
+        for key in ("training_sha256", "evaluation_sha256"):
+            value = change.get(key, "")
+            if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+                raise ValueError("Source compatibility requires exact SHA256 values")
+        if change["training_sha256"] == change["evaluation_sha256"]:
+            raise ValueError("Source compatibility must describe a changed source")
+    return {**record, "path": str(path), "sha256": file_sha256(path)}
+
+
 def validate_provenance(
     cfg: Any,
     split: str,
     expected_data_root: Path,
     expected_protocol: str,
     training_preflight: Path,
+    source_compatibility: Optional[Path] = None,
 ) -> Tuple[Dict[str, Any], int]:
     """Refuse exports whose run, preflight, or manifests do not match."""
     data_root = Path(str(cfg.data_dir)).expanduser().resolve()
@@ -386,6 +422,12 @@ def validate_provenance(
         str(Path(entry["path"]).resolve()): entry
         for entry in preflight.get("source_files", [])
     }
+    compatibility = load_source_compatibility(source_compatibility, training_preflight)
+    reviewed_changes = {
+        str((ROOT / change["path"]).resolve()): change
+        for change in compatibility.get("changes", [])
+    }
+    applied_changes = []
     verified_training_sources = {}
     for path in required_training_sources:
         resolved = path.resolve()
@@ -394,8 +436,14 @@ def validate_provenance(
             raise ValueError(f"Training preflight lacks required source file: {resolved}")
         current_hash = file_sha256(resolved)
         if entry.get("sha256") != current_hash:
-            raise ValueError(f"Training source changed since preflight: {resolved}")
+            change = reviewed_changes.get(str(resolved))
+            if (change is None or change["training_sha256"] != entry.get("sha256")
+                    or change["evaluation_sha256"] != current_hash):
+                raise ValueError(f"Training source changed since preflight: {resolved}")
+            applied_changes.append(change)
         verified_training_sources[str(resolved)] = current_hash
+    if len(applied_changes) != len(reviewed_changes):
+        raise ValueError("Unused source compatibility changes; use a record for this exact run")
 
     initialization = preflight.get("initialization_checkpoint")
     configured_teacher = OmegaConf.select(cfg, "model.sid_teacher_ckpt_path")
@@ -436,6 +484,7 @@ def validate_provenance(
             "status": preflight["status"],
         },
         "verified_training_sources": verified_training_sources,
+        "source_compatibility": compatibility or None,
         "initialization_checkpoint": initialization,
     }
     return provenance, expected_samples
@@ -537,6 +586,7 @@ def main() -> None:
         expected_data_root=args.expected_data_root,
         expected_protocol=args.expected_protocol,
         training_preflight=args.training_preflight,
+        source_compatibility=args.source_compatibility,
     )
     configure_dataloader(cfg, args.split, args.batch_size, args.num_workers)
 
@@ -645,6 +695,7 @@ def main() -> None:
         "split": args.split,
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
+        "keep_user_id": True,
         "top_k_for_generation": int(model.top_k_for_generation),
         "num_hierarchies": int(model.num_hierarchies),
         "num_embeddings_per_hierarchy": int(model.num_embeddings_per_hierarchy),
