@@ -74,6 +74,38 @@ def configure_dataloader(cfg: Any, split: str, batch_size: int, num_workers: int
     dataloader_cfg.drop_last = False
     dataloader_cfg.should_shuffle_rows = False
     dataloader_cfg.assign_all_files_per_worker = False
+    dataloader_cfg.dataset_config.keep_user_id = True
+    # Keep IDs outside the model's sequence collator: collate_fn_train rejects
+    # extra fields, and IDs must never be padded, masked, or treated as input.
+    if dataloader_cfg.collate_fn._target_ != "scripts.export_paired_evaluation.collate_with_user_ids":
+        sequence_collate = OmegaConf.to_container(dataloader_cfg.collate_fn, resolve=True)
+        dataloader_cfg.collate_fn = {
+            "_target_": "scripts.export_paired_evaluation.collate_with_user_ids",
+            "_partial_": True,
+            "sequence_collate": sequence_collate,
+            "user_id_field": dataloader_cfg.dataset_config.user_id_field,
+        }
+
+
+def collate_with_user_ids(batch: Any, sequence_collate: Any, user_id_field: str, **kwargs: Any) -> Any:
+    """Preserve row identity without changing the original sequence collator."""
+    if isinstance(batch, list):
+        values = [row[user_id_field] for row in batch]
+        sequence_batch = [
+            {key: value for key, value in row.items() if key != user_id_field}
+            for row in batch
+        ]
+    else:
+        values = batch[user_id_field]
+        sequence_batch = {key: value for key, value in batch.items() if key != user_id_field}
+    user_ids = torch.stack([torch.as_tensor(value).reshape(()) for value in values])
+    if user_ids.dtype not in (torch.int32, torch.int64):
+        raise ValueError("User IDs must be scalar integers")
+    model_input = sequence_collate(sequence_batch, **kwargs)
+    if len(user_ids) != model_input.transformed_sequences["sequence_data"].shape[0]:
+        raise ValueError("Sequence collator changed the number of examples")
+    model_input.user_id_list = user_ids.long()
+    return model_input
 
 
 def instantiate_datamodule(cfg: Any) -> Any:

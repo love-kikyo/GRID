@@ -25,6 +25,7 @@ export PYTHONUNBUFFERED=1
   tests/test_dataloading_empty_worker.py \
   tests/test_history_occurrence_analysis.py \
   tests/test_paired_evaluation.py \
+  tests/test_export_user_identity.py \
   tests/test_verify_taobao_training_data.py \
   tests/test_rerank_objective.py
 
