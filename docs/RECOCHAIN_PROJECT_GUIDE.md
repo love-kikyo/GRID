@@ -29,6 +29,7 @@
 | 负责什么 | 入口 |
 | --- | --- |
 | 数据构建 / 审计 | [build](../scripts/build_taobao_next_item_dataset.py)、[audit](../scripts/audit_taobao_next_item_dataset.py)、[训练 preflight](../scripts/verify_taobao_training_data.py) |
+| 跨 split 用户 / 样本边界 | [boundary audit](../scripts/audit_taobao_split_boundary.py)；只读冻结数据，结果与处理规则见 [数据协议](DATA_PROTOCOL_ZH.md) |
 | 文件 / rank / worker 分配 | [dataloading.py](../src/data/loading/components/dataloading.py) |
 | 输入、目标与用户 ID 组织 | [collate_functions.py](../src/data/loading/components/collate_functions.py)、[pre_processing.py](../src/data/loading/components/pre_processing.py) |
 | SID 与 joint 模型 | [tiger_generation_model.py](../src/models/modules/semantic_id/tiger_generation_model.py) |

@@ -1,12 +1,15 @@
 # Run 台账
 
-最后核验：2026-09-07 00:22（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-07 00:36（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132048 | 09-07 00:21 | 首次 CPU 全量跨 split 边界审计，无模型训练 | RUNNING；14 项新工具测试与 128 条 / split 读取通过；代码 b838070 |
+| 132051 | 待开始 | 正式 separate-small，seed 42，3 GPU | PENDING；afterok:132050，冻结 teacher，仅训练独立 reranker |
+| 132050 | 待开始 | 正式 joint pointwise，seed 42，3 GPU | PENDING；afterok:132049 |
+| 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | RUNNING；日志 step 214、loss 有限、无重启；尚未到首次验证 |
+| 132048 | 09-07 00:21 | 首次 CPU 全量跨 split 边界审计，无模型训练 | COMPLETED，7m08s；14 项新工具测试通过；完整计数有重复发现，代码 b838070 |
 | 132027 | 09-06 14:20 | Separate 3-GPU staged smoke | COMPLETED，1m00s；冻结 teacher 前后一致，2 optimizer steps，代码 7ae9bb4 |
 | 132026 | 09-06 14:19 | Joint pointwise 3-GPU staged smoke | COMPLETED，59s；3 rank 验收通过，2 optimizer steps，代码 7ae9bb4 |
 | 132025 | 09-06 14:17 | Joint listwise 3-GPU staged smoke | COMPLETED，1m07s；3 rank 的初始化 / 梯度 / 验证检查通过；不是正式重训 |
@@ -29,6 +32,16 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前正式重训：132049–132051
+
+提交时工作树干净，源码提交 `36e78c57a7f977a2c00d77a1aa5417f34379ed2a`；三个方法依赖的模型 / 配置与已通过的 DDP smoke 指纹一致。完整命令、依赖和 teacher / 审计指纹见 [启动记录](../logs/training_launch/seed42_2026-09-07.json)。
+
+共同设置：teacher 为 131908 的 `checkpoint_000_090000.ckpt`，seed 42，3-rank DDP，max optimizer steps 120000，按 validation early stopping 选优。保留训练脚本的原预算，不使用两步 smoke 的限制。Pointwise 和 separate 依赖前一任务成功，使用 `kill-on-invalid-dep=yes`，前序失败时不会留下永久不可运行的下游依赖。
+
+132049 已通过 [训练 preflight](../logs/training_preflight/listwise_seed42_132049.json)，teacher SHA256 与启动记录一致；三个 rank 都有成功加载权重日志，实际 `world_size=3`、无重启。初始训练指标已写入 [CSV](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/csv/metrics.csv)，最新记录 step 214，loss 有限；尚不能判断收敛或验证效果。[标准输出](../logs/slurm/GRID-List-HLastV1-132049.out) / [stderr](../logs/slurm/GRID-List-HLastV1-132049.err)。
+
+边界审计 [132048 全量报告](../logs/analysis/split_boundary/boundary_132048.json) 的 SHA256 为 `2bb805d4d3305037cae0528c8e5b9c22ca6fbac46eea29915aa2d7b15542c4a6`。精确重复计数、为何可继续训练、以及必须执行的去重复评估规则仅在 [数据协议](DATA_PROTOCOL_ZH.md) 维护。审计是完成了测量，不是证明 test 没有重复。
 
 ## 131908：唯一已完成的新协议正式模型
 

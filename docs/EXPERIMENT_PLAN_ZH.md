@@ -12,21 +12,23 @@
 - [x] 实现下游训练入口、逐样本导出、融合选权、配对分析和历史出现分析工具。
 - [ ] 在新协议、新 checkpoint 上完成这些工具的真实端到端验收。工具已实现不等于实验已完成。
 
-## 1. 当前阶段：teacher 与下游链路验收
+## 1. 已完成：teacher 与下游链路验收
 
-加载 / 导出 smoke 已通过（2026-09-06），本阶段还差过滤后 train/test 边界审计。验收证据只在 [Run 台账](RUN_LEDGER_ZH.md) 维护，不同时铺开正式重训或消融。
+加载 / 导出 smoke 于 2026-09-06 通过；跨 split 边界审计于 2026-09-07 完成。审计发现 test 重复，处理安排转入第 3 阶段；不更改已冻结训练集。验收证据见 [Run 台账](RUN_LEDGER_ZH.md)。
 
 - [x] 固定 131908 best checkpoint 的哈希、配置与 preflight；原始 preflight 未改动。
 - [x] 显式记录空 worker 修复的精确前后源码哈希，绑定原 preflight；兼容检查与真实导出通过，默认仍严格拒绝其他变化。
 - [x] Listwise、pointwise、separate 的真实加载、2-step / 3-GPU 训练与验证通过；逐参数检查 teacher，核验预期梯度与冻结行为。
 - [x] Teacher 的 validation / test 各 64 条真实导出通过：user ID 唯一，模型输入一致性单测通过，候选与分数结构正确，配置 / checkpoint / 哈希绑定完整。
-- [ ] 下一步：补核验过滤后 train/test 用户交集、重叠用户历史 / 目标边界及跨 split 完全重复样本；这与既有 train/validation 互斥审计不是一回事。
+- [x] 全量核验 train/test、validation/test 用户交集和相同用户的完整 / 生成器视角重复样本；结果与限制见 [数据协议](DATA_PROTOCOL_ZH.md)。
 
 全量跨模型用户配对与实际遍历完整性仍在第 3 阶段验收，不能由上面的 smoke 推断。
 
 验收：真实日志、明确的通过 / 失败记录和完整 provenance；发现问题则单独修复并提交，不跳过校验。此阶段完成后再确定正式重训的提交顺序。
 
-## 2. 核心受控重训
+## 2. 当前阶段：核心受控重训
+
+已提交 seed 42：listwise 132049 → pointwise 132050 → separate-small 132051；前一任务成功后下一任务运行，各使用 3 GPU，不重新训练 teacher。启动命令、源码版本、数据审计及 checkpoint 绑定见 [启动记录](../logs/training_launch/seed42_2026-09-07.json)。
 
 | 方法 | 初始化 / 可训练部分 | 在比较中回答什么 |
 | --- | --- | --- |
@@ -45,6 +47,7 @@
 
 ## 3. 全量评估与统计
 
+- [ ] 先按 [已固定的数据规则](DATA_PROTOCOL_ZH.md) 生成完整 test 去重复名单 / 掩码及哈希；所有方法共用，同时报告原始全量与去重复对照，不根据结果选择样本或只报告较好的一组。
 - [ ] Generator-only 以及各 reranker 独立全量导出，validation 347,416、test 2,061,101 条，核对唯一用户和跨模型配对一致性。
 - [ ] 只在 validation 选择融合权重；每种方法使用相同搜索规则，锁定后一次用于 test。旧数据的 beta 不继承。
 - [ ] 对逐用户 Recall / NDCG@5、@10 做配对差值与置信区间，明确 beam-only、rerank-only、选权后结果；多 seed 波动与逐用户统计分别呈现。
