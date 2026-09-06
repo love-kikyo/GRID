@@ -43,6 +43,7 @@
 | 用途 | 脚本 |
 | --- | --- |
 | 综合测试 | [run_test_retraining_controls.sh](../run_test_retraining_controls.sh) |
+| 下游 teacher 初始化 / 梯度 / DDP 两步验收 | [staged smoke](../run_smoke_staged_history_last_user_v1.sh)；逐 rank 检查，不保存正式 checkpoint |
 | SID 3-GPU smoke / 正式训练 | [smoke](../run_smoke_sid_ddp_history_last_user_v1.sh)、[train](../run_sid_history_last_user_v1.sh) |
 | Joint listwise / pointwise | [listwise](../run_click_listwise_history_last_user_v1.sh)、[pointwise](../run_click_pointwise_history_last_user_v1.sh) |
 | Separate-small | [separate](../run_rerank_small_history_last_user_v1.sh) |
@@ -50,3 +51,5 @@
 | 历史出现分析 | [history occurrence](../run_history_occurrence.sh) |
 
 环境沿用 `/home/MMReco2021/.conda/envs/GRID/bin/python`。训练与较重测试在 Slurm 计算节点执行，不在登录节点直接跑训练。正式 launcher 使用 3 GPU DDP；需检查实际 world size，不能仅以申请了 3 GPU 判断用满三卡。
+
+导出器默认要求源码指纹与训练 preflight 一致。只有经过审查的精确哈希差异才可显式传入 `SOURCE_COMPATIBILITY=/abs/record.json`；兼容记录必须绑定原 preflight，不能作为通用跳过开关。131908 的特定记录与真实验收见 [Run 台账](RUN_LEDGER_ZH.md)。

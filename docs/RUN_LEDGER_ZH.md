@@ -6,9 +6,12 @@
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132024 | 09-06 14:11 | CPU 综合回归，含新导出测试 | RUNNING；代码 55dd60f，无正式训练 |
-| 132023 | 09-06 14:11 | 131908 teacher 的 test 导出 smoke | RUNNING；2 batches，代码 55dd60f |
-| 132022 | 09-06 14:11 | 131908 teacher 的 validation 导出 smoke | RUNNING；2 batches，代码 55dd60f |
+| 132027 | 09-06 提交 | Separate 3-GPU staged smoke | 等待 132026 成功后运行；2 optimizer steps，代码 7ae9bb4 |
+| 132026 | 09-06 提交 | Joint pointwise 3-GPU staged smoke | 已提交；2 optimizer steps，代码 7ae9bb4 |
+| 132025 | 09-06 14:17 | Joint listwise 3-GPU staged smoke | COMPLETED，1m07s；3 rank 的初始化 / 梯度 / 验证检查通过；不是正式重训 |
+| 132024 | 09-06 14:11 | CPU 综合回归，含新导出测试 | COMPLETED，1m20s；52 passed，代码 55dd60f |
+| 132023 | 09-06 14:11 | 131908 teacher 的 test 导出 smoke | COMPLETED，43s；64 条，代码 55dd60f |
+| 132022 | 09-06 14:11 | 131908 teacher 的 validation 导出 smoke | COMPLETED，43s；64 条，代码 55dd60f |
 | 132021 | 09-06 13:31 | CPU 综合测试，无正式训练 | COMPLETED，1m46s；38 passed，smoke 审计及 listwise/pointwise 配置解析通过 |
 | 131910 | 09-06 00:01 | CPU 综合测试，无正式训练 | FAILED；28 passed、1 failed，空 worker 提前初始化迭代器 |
 | 131909 | 未开始 | 待运行的综合测试 | CANCELLED；被后续测试替代，无模型产物 |
@@ -73,3 +76,5 @@ Teacher 日志也打印 `rerank_*` / `click_auc`，但重排 head 未训练；�
 默认导出仍严格比较源码哈希。提交 55dd60f 增加显式、精确哈希的兼容记录：[131908 记录](../configs/evaluation/teacher_131908_source_compatibility.json)，绑定原 preflight SHA256 `869939827019f2950aee726e6ba9b89548d2903c0ece2dcdd28d5a2327007003`。仅允许上面这次已审查的空 worker 修复；不接受其他源码 / manifest 变化，不覆盖旧 preflight，例外记录与哈希随导出 metadata 保存。
 
 导出修复 0c0c445 将 user ID 与原 sequence collator 分开处理；单元测试确认输入张量 / mask 不变，支持 datamodule 参数传递。相关定向回归 37 passed。真实 smoke 任务为 132022 / 132023，输出标签 `sid_seed42_131908_{val,test}_smoke_v1`；不代表全量评估。
+
+两个真实导出均加载 `missing=0, unexpected=0`；每份 64 个唯一 int64 user ID，beam shape `[64,20,4]`，分数有限，beam/rerank 是同一候选集的排列。共同 checkpoint SHA256：`0cdb246af381e15988acd4116509c2d0c8e162b5db704438d450012ed4c69664`。证据：[val metadata](../logs/analysis/paired_evaluation/sid_seed42_131908_val_smoke_v1.json)、[test metadata](../logs/analysis/paired_evaluation/sid_seed42_131908_test_smoke_v1.json)、[52 项回归输出](../logs/data_build/retraining_controls_132024.out)。
