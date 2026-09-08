@@ -1,14 +1,14 @@
 # Run 台账
 
-最后核验：2026-09-07 00:36（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-08 10:00（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
 | 132051 | 待开始 | 正式 separate-small，seed 42，3 GPU | PENDING；afterok:132050，冻结 teacher，仅训练独立 reranker |
-| 132050 | 待开始 | 正式 joint pointwise，seed 42，3 GPU | PENDING；afterok:132049 |
-| 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | RUNNING；日志 step 214、loss 有限、无重启；尚未到首次验证 |
+| 132050 | 09-08 09:26 | 正式 joint pointwise，seed 42，3 GPU | RUNNING；日志 step 2039，loss 有限，3 rank、无重启；尚未首次验证 |
+| 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | COMPLETED，32h55m25s；训练产物验收通过，best step 100000；全量评估待做 |
 | 132048 | 09-07 00:21 | 首次 CPU 全量跨 split 边界审计，无模型训练 | COMPLETED，7m08s；14 项新工具测试通过；完整计数有重复发现，代码 b838070 |
 | 132027 | 09-06 14:20 | Separate 3-GPU staged smoke | COMPLETED，1m00s；冻结 teacher 前后一致，2 optimizer steps，代码 7ae9bb4 |
 | 132026 | 09-06 14:19 | Joint pointwise 3-GPU staged smoke | COMPLETED，59s；3 rank 验收通过，2 optimizer steps，代码 7ae9bb4 |
@@ -39,11 +39,45 @@
 
 共同设置：teacher 为 131908 的 `checkpoint_000_090000.ckpt`，seed 42，3-rank DDP，max optimizer steps 120000，按 validation early stopping 选优。保留训练脚本的原预算，不使用两步 smoke 的限制。Pointwise 和 separate 依赖前一任务成功，使用 `kill-on-invalid-dep=yes`，前序失败时不会留下永久不可运行的下游依赖。
 
-132049 已通过 [训练 preflight](../logs/training_preflight/listwise_seed42_132049.json)，teacher SHA256 与启动记录一致；三个 rank 都有成功加载权重日志，实际 `world_size=3`、无重启。初始训练指标已写入 [CSV](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/csv/metrics.csv)，最新记录 step 214，loss 有限；尚不能判断收敛或验证效果。[标准输出](../logs/slurm/GRID-List-HLastV1-132049.out) / [stderr](../logs/slurm/GRID-List-HLastV1-132049.err)。
+132049 已完成，验收见下节。132050 于 09-08 09:26:43 自动接续启动；[preflight](../logs/training_preflight/pointwise_seed42_132050.json) 通过且 teacher SHA256 与启动记录一致，实际 `world_size=3`、无重启；核验时 [CSV](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/csv/metrics.csv) 最新 step 2039、train/loss 13.080742，已记录数值均有限，尚未首次验证。132051 仍等待 132050 成功，不是已经开始训练。
 
 边界审计 [132048 全量报告](../logs/analysis/split_boundary/boundary_132048.json) 的 SHA256 为 `2bb805d4d3305037cae0528c8e5b9c22ca6fbac46eea29915aa2d7b15542c4a6`。精确重复计数、为何可继续训练、以及必须执行的去重复评估规则仅在 [数据协议](DATA_PROTOCOL_ZH.md) 维护。审计是完成了测量，不是证明 test 没有重复。
 
-## 131908：唯一已完成的新协议正式模型
+## 132049：listwise 正式训练产物验收通过
+
+验收范围是正式训练、产物可追溯及训练自带测试；不代表全量评估或论文效果验收通过。本次只读核验日志 / 配置 / CSV / 指纹，没有重复训练、smoke 或启动新评估任务。
+
+| 核验项 | 结果 |
+| --- | --- |
+| 作业退出 | 09-08 09:26:43 结束；主作业及全部 Slurm steps 为 COMPLETED / 0:0，耗时 32h55m25s |
+| 真实训练 | `training_task=click`、`rerank_objective=listwise`，SID + listwise 联合训练；不是 SID-only 或 smoke |
+| 初始化 / 分布式 | 三个 rank 均成功加载共同 teacher 权重并从 step 0 开始；world size 3，无重启 |
+| 指纹 | preflight 通过；验收时重新计算的 7 个源码 / 配置 / launcher 与 3 个数据清单 / 审计 JSON 哈希全部匹配；未重新扫描全部 TFRecords |
+| 停止原因 | 达到 max optimizer steps 120000；不是 early stopping。最优之后仅 4 次验证未改善，尚未达到 patience 5 |
+| 选优 | 监控融合重排 `val/recall@5`；24 次验证中 step 100000 最佳，值 0.2850142419 |
+| 最终测试 | stderr 明确记录重新加载 `checkpoint_000_100000.ckpt` 后测试；不是使用最终 step 120000 权重 |
+| 数值 / 异常 | CSV 共 24025 行，含 24 次 validation 和 1 次 test；所有非空数值均有限；未检出 traceback、OOM、CUDA / NCCL 致命错误 |
+
+Best checkpoint 的训练日志指标如下，均为 0–1 标度：
+
+| Split / 排序方式 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | --- | --- | --- | --- |
+| Validation / beam-only | 0.282477 | 0.288758 | 0.260033 | 0.262077 |
+| Validation / 融合重排 | 0.285014 | 0.290865 | 0.262006 | 0.263909 |
+| Test / beam-only | 0.277564 | 0.283769 | 0.255874 | 0.257891 |
+| Test / 融合重排 | 0.280016 | 0.285772 | 0.257739 | 0.259614 |
+
+这里 `rerank_*` 及主指标使用 `1.0 × beam_log_prob + 0.1 × rerank_logits` 排序，不是 rerank-only，也不是完成 validation 搜索后的最优融合权重。同一 checkpoint 的 test 重排相对 beam-only，Recall@5 增加 **0.2452 个百分点**、NDCG@5 增加 **0.1864 个百分点**；是描述性正向结果，尚无全量配对置信区间。`click_auc` 是候选标签上的辅助指标，不是曝光 CTR AUC。
+
+CSV 最优 validation 的 `step=99999` 对应保存时 global step 100000；最终 test 行的 `step=120000` 不代表测试了该步权重。validation / test 仍有每 rank 5000 / 10000 batches 上限，validation 的 2 个 shard 在 3 rank 下还涉及重复分配；以上数字不能直接进入论文全量主表。完整唯一用户导出、固定 test 去重复对照及跨模型统计均待完成。
+
+证据与产物：
+
+- [Best checkpoint](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/checkpoints/checkpoint_000_100000.ckpt)：5,701,613,500 bytes；SHA256 `8c452c412b3a35575516449fd312a06d59b19a3b69d0d40e88320076166e31ad`。验收时 ZIP 目录可读取；实际模型加载证据来自训练结束后的成功测试日志，本次未另做参数逐值 / 全归档 CRC 校验。
+- [运行配置](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/.hydra/config.yaml)、[指标 CSV](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/csv/metrics.csv)、[重启记录](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/metadata/restart_metadata.json)、[preflight](../logs/training_preflight/listwise_seed42_132049.json)。
+- [标准输出](../logs/slurm/GRID-List-HLastV1-132049.out)、[含停止原因与 best 权重重载记录的 stderr](../logs/slurm/GRID-List-HLastV1-132049.err)。
+
+## 131908：已完成的 SID teacher
 
 模型是修改版 GRID 的 TIGER-style、decoder-only LLaMA SID 生成器：2 层、hidden size 1024、16 attention heads、4 层 SID、每层码本容量 4096、beam size 20。不是原版 TIGER 复现，也不是已经训练好重排阶段的 RecoChain。
 
@@ -103,6 +137,6 @@ Teacher 日志也打印 `rerank_*` / `click_auc`，但重排 head 未训练；�
 | Pointwise | 同上，重排目标为 pointwise | [报告目录](../logs/stage_smoke/pointwise_132026) | [指纹](../logs/training_preflight/stage_smoke_pointwise_132026.json) |
 | Separate | 仅 reranker 可训练且有有限非零梯度；teacher 无梯度、训练后参数逐值不变 | [报告目录](../logs/stage_smoke/separate_132027) | [指纹](../logs/training_preflight/stage_smoke_separate_132027.json) |
 
-这证明了加载和少量优化 / 验证链路可运行，不证明模型收敛、长时间运行稳定性、全量配对或论文效果。报告中的验证数字只供 smoke 检查，不进入主表。尚未做正式重训、全量评估或过滤后 train/test 重叠审计。
+这证明了加载和少量优化 / 验证链路可运行，不证明模型收敛、长时间运行稳定性、全量配对或论文效果。报告中的验证数字只供 smoke 检查，不进入主表。后续正式重训与全量边界审计见本页前文；全量模型评估仍待做。
 
 收尾定向回归：user identity、paired evaluation、staged smoke、empty worker 四组共 41 passed（登录节点 `USE_TF=0`）；此前计算节点综合回归 132024 为 52 passed，尚不包含随后新增的 staged smoke 四项单测。两组有重叠，不相加计数。

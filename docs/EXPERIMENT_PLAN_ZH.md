@@ -30,6 +30,10 @@
 
 已提交 seed 42：listwise 132049 → pointwise 132050 → separate-small 132051；前一任务成功后下一任务运行，各使用 3 GPU，不重新训练 teacher。启动命令、源码版本、数据审计及 checkpoint 绑定见 [启动记录](../logs/training_launch/seed42_2026-09-07.json)。
 
+- [x] Listwise 正式训练产物验收：run、best checkpoint、配置 / preflight、选优及测试日志已核验；不等于第 3 阶段全量评估完成。
+- [ ] Pointwise 正式训练与产物验收。
+- [ ] Separate-small 正式训练与产物验收。
+
 | 方法 | 初始化 / 可训练部分 | 在比较中回答什么 |
 | --- | --- | --- |
 | Generator-only | 已训练的 SID teacher | 不重排的生成基线；称 TIGER-style，不能冒称原版 TIGER |
