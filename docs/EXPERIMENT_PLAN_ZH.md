@@ -42,7 +42,7 @@
 | RecoChain-pointwise | 同 teacher；联合 SID + pointwise rerank | 与 listwise 的目标函数对照 |
 | Separate-small | 冻结同 teacher；训练独立 candidate-aware reranker | 与分离式 generate-then-rerank 的对照 |
 
-先完成 seed 42 的受控一组并审阅结果；再安排第二 seed 及相匹配的主要对照，避免只给所提方法补 seed。第二 seed 的 teacher 是否共享、各阶段随机种子的含义应先写入配置约定。
+作者已确认多 seed 有必要。先收口内容去重与验证选择协议，再安排匹配的多 seed：建议至少 3 个训练 seed（具体编号待固定），每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照；不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。
 
 共同锁定数据、SID 编码、初始化 checkpoint、beam size、预算 / early-stop 口径、目标标签构造、调参规则。训练时 no-hit 辅助候选可按实现插入 GT；推理候选不得注入 GT。
 
@@ -52,19 +52,23 @@
 
 ## 3. 当前阶段：全量评估与统计
 
-- [ ] 先按 [已固定的数据规则](DATA_PROTOCOL_ZH.md) 生成完整 test 去重复名单 / 掩码及哈希；所有方法共用。按作者更新要求，只报告去重复 test，原始数据保留作追溯；排除名单不依赖模型预测。
+- [ ] 先按 [数据协议的审计范围更正](DATA_PROTOCOL_ZH.md) 检查忽略 user ID 的内容重复：完整 item / SID 序列和生成器窗口分别统计，覆盖所有 split 间及 split 内；train/validation 用户互斥不等于内容互斥。
+- [ ] 根据上述测量冻结最终内容去重口径，生成完整 test 排除名单 / 掩码及哈希，所有方法共用。只报告去重复 test，原始数据保留作追溯；排除名单不依赖预测。旧 3,133 条不能作为最终排除总数。
 - [ ] 去重实现稳定后整理完整数据处理链、运行命令、环境 / 版本与计数核验，使第三方可复现最终评估集。
-- [ ] Generator-only 以及各 reranker 在同一去重复 test 上全量评估，预计 2,057,968 条，以最终名单为准；核对唯一用户和跨模型配对一致性。
-- [ ] 明确是否另做融合权重搜索：若沿用当前固定 beta=0.1，无须为了重测 test 强制重跑 validation；若做搜索，先导出三个 reranker 的全量 validation（347,416 条），使用相同搜索规则并锁定后用于 test。SID-only 无融合权重，其全量 validation 导出仅为可选一致性检查。现有 best checkpoint 保持不变，不通过 test 重挑权重或 checkpoint。
+- [ ] Generator-only 以及各 reranker 在同一去重复 test 上全量评估，规模待全内容审计后确定；核对跨模型的用户 / 输入 / 目标配对一致性。
+- [ ] 作者认可融合权重搜索的意义。建议先固定现有 checkpoint，只在内容边界核验后的 validation 上选推理 beta；三个 reranker 使用相同预声明网格 / 选优规则，锁定后一次用于 test。SID-only 无该融合权重。当前 checkpoint 是在 beta=0.1 的原验证设置下选出的，不宣称联合搜索了所有 checkpoint 与 beta。
 - [ ] 对逐用户 Recall / NDCG@5、@10 做配对差值与置信区间，明确 beam-only、rerank-only、选权后结果；多 seed 波动与逐用户统计分别呈现。
 - [ ] 报告中区分覆盖率、候选内排序能力、整体推荐质量，不把重排提升归因于未经验证的生成能力提升。
 
 当前分析 launcher 采用 5000 次 bootstrap、95% CI、seed 2027。主表还需要 generator-only；现有三模型配对 launcher 不能自动代替完整主表的全部比较。
 
+参数区分：当前三个 reranker 均 `use_beam_score_in_rerank_loss=false`，推理融合 beta=`rerank_logit_weight` 不进入重排优化损失，但用于验证排序，因而影响 early stopping / checkpoint 选择。Joint 的 lambda=`rerank_loss_weight` 才是 SID 与重排损失的梯度权重。只修改 beta 重训并非训练不同融合损失；将融合分数纳入训练目标或调整 lambda 是另一个需要明确设计的重训消融，不与此次推理选权混做。
+
 ## 4. 仅补支撑主张的分析
 
 - [ ] 新 checkpoint 上同硬件、batch、beam、上下文长度的 cache / no-cache 延迟与显存复测；独立 reranker 的成本分开报告。
 - [ ] 根据核心结果决定是否需要 candidate-aware history 长度或历史重复项分析；不自动扩成全面消融网格。
+- [ ] 作者认可可解释性探索：先按预先定义的历史长度、GT 是否自然进入 beam 等分组分析，再展示代表性案例；案例不替代全样本配对统计，多 seed 波动也不由单 seed 用户 bootstrap 代替。
 - [ ] 每项结论有原始输出；旧效率表、旧历史出现率只留作探索参考。
 
 验收：形成可人工审阅的主表、最小必要分析、统计区间与 provenance；没有证据的优势不写成结论。
