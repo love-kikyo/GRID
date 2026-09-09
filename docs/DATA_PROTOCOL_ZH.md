@@ -18,6 +18,8 @@
 
 TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项，目标拆分由模型数据处理链完成。构建上限 1000 与模型实际使用的历史长度是两层不同设置。
 
+实现细节：按 `train-shard-*.parquet` / `test-shard-*.parquet` 文件名字典序、文件内原行序处理。用户首次出现时即记为 seen；即使该首条历史过滤后过短，也不会从后面的曝光记录补选。Validation 的精确条件是 `int(md5(str(user_id).encode()).hexdigest()[:8], 16) % 10000 < 500`，不是运行时随机抽样。
+
 ## 正式版本与审计范围
 
 数据根目录：[data/taobao_history_last_user_v1](../data/taobao_history_last_user_v1)。
@@ -55,6 +57,70 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 复现交付：在本页统一整理“上游来源与版本 → 字段提取 / SID 映射依赖 → A + H1 + L2 → train/validation 划分与官方 test 来源保留 → 最终评估输入”的完整处理链，提供可执行命令、环境依赖、源码版本、文件哈希、各步保留 / 排除计数及核验方法。明确本链路只有 split 内按用户去额外曝光记录，没有跨 split 内容去重；不虚构去重步骤，不改写历史记录。
 
 审计边界：未检查跨不同用户的相同序列；数据不含事件时间戳，历史中出现同一 item 不等于已证明未来信息泄漏。生成器视角相同也不等于 candidate-aware reranker 的完整输入相同。
+
+## 数据处理复现入口
+
+处理链为：官方预拼接 Parquet → 仅提取 user / history → 原 item ID 映射为 SID 行号 → 上述用户保留与 H1/L2 → MD5 划分 train/validation、独立保留 test → GZIP TFRecord → SID 映射与模型输入拆分。没有额外的跨 split 去重步骤。
+
+### 上游与固定编码资产
+
+上游本地 [README](../../Taobao/taobao/README.md) 指向 `TaoBao-MM/Taobao-MM`。直接使用其 `train/`、`test/` 中已经拼接的 shards；README 说明它们由 raw samples、user features、item features 拼接而来，不需要再次 join。现有构建 manifest 记录实际读取 train 161 个 / test 49 个文件及其路径、大小、mtime；上游 test `metadata.json` 写 48，复现时以实际 manifest 文件列表为准，不能只信该汇总字段。
+
+本轮固定两个相互对应的编码资产，不能仅凭同名文件替换：
+
+| 资产 | 用途 | SHA256 |
+| --- | --- | --- |
+| [item2row](../../Taobao/cache/sid_item2row_scl_emb_int8_p90.pkl) | 原始历史 item ID → SID 数组行号 | `ad40ae0e1d2ebf7f149ef12b4c9bd600291b34e2acae23843b2376256bade1d9` |
+| [SID 数组](../data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy) | 行号 → 4 层 SID，形状 `[35458467,4]`、int32 | `02397277e46f1ac8f0c67e0ffe293af3ef35dc433be9e7fdd9a912b18bf2cf54` |
+
+上游提供 SCL embedding 的 keys / values；本地 [SID 生成入口](../../Taobao/src/generate_sid_taobao.py) 调用 [res_kmeans.py](../../Taobao/src/res_kmeans.py)，其 reindexing 逻辑给三层聚类编码追加桶内 item 排序编号。历史 launcher 配置为 `512 512 512`；它不是本模型四层均容量 4096 的配置，两者不能混淆。尚未把历史 SID 生成运行的全部版本 / 随机种子与当前固定数组逐项绑定，因此本轮精确复现以**分发并校验上述编码资产**为前提，不承诺重新聚类能按位生成同一 SID 数组。
+
+同样，现有上游文件记录没有完整的下载 revision 与逐 shard SHA256；发布复现材料时应补齐所使用快照的身份，不把本地路径 / mtime 当作完整的下载版本证明。以下命令复现的是“同一上游 shards + 同一编码资产 → 处理后的样本”，不是已经完成第三方从零复现实验的声明。
+
+### 环境与构建命令
+
+当前环境实查：Python 3.10.19、NumPy 2.0.2、PyArrow 20.0.0、tensorflow-cpu 2.18.0；模型 / 导出使用 torch 2.6.0+cu124、lightning 2.5.0、hydra-core 1.3.2、omegaconf 2.3.0、h5py 3.14.0。[requirements.txt](../requirements.txt) 为仓库依赖清单，不保证它与后续安装过的当前环境完全相同。TensorFlow 读取和全量构建应在兼容的计算节点运行，不在登录节点重跑全量数据。
+
+历史构建命令在 [launcher](../run_build_taobao_history_last_user_v1.sh)。下面只改为**新的输出路径**，防止覆盖现有训练输入；示例未在本次重新执行。先将路径改为实际位置，在 GRID 仓库根目录运行：
+
+```bash
+set -euo pipefail
+DATA_PYTHON=/home/MMReco2021/.conda/envs/GRID/bin/python
+TAOBAO_SOURCE=/mnt/beegfs/home/MMReco2021/liuyu/Taobao/taobao
+ITEM_MAPPING=/mnt/beegfs/home/MMReco2021/liuyu/Taobao/cache/sid_item2row_scl_emb_int8_p90.pkl
+SID_ARRAY=/mnt/beegfs/home/MMReco2021/liuyu/GRID/data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy
+REPRO_ROOT=/path/to/new/history-last-user-v1-reproduction
+test ! -e "$REPRO_ROOT"
+sha256sum "$ITEM_MAPPING" "$SID_ARRAY"
+
+"$DATA_PYTHON" scripts/build_taobao_next_item_dataset.py \
+  --split train --data-dir "$TAOBAO_SOURCE" --item2row-path "$ITEM_MAPPING" \
+  --output-root "$REPRO_ROOT" --min-sequence-length 2 --max-sequence-length 1000 \
+  --eval-ratio 0.05 --samples-per-shard 200000 --batch-size 8192
+"$DATA_PYTHON" scripts/build_taobao_next_item_dataset.py \
+  --split test --data-dir "$TAOBAO_SOURCE" --item2row-path "$ITEM_MAPPING" \
+  --output-root "$REPRO_ROOT" --min-sequence-length 2 --max-sequence-length 1000 \
+  --samples-per-shard 200000 --batch-size 8192
+"$DATA_PYTHON" scripts/audit_taobao_next_item_dataset.py \
+  --data-root "$REPRO_ROOT" --expected-protocol history-last-user-v1
+"$DATA_PYTHON" scripts/verify_taobao_training_data.py \
+  --data-root "$REPRO_ROOT" --semantic-id-path "$SID_ARRAY" \
+  --num-hierarchies 4 --num-embeddings-per-hierarchy 4096 \
+  --report-path "$REPRO_ROOT/reproduction_preflight.json"
+```
+
+构建器 / 审计器在当前源码与原始 manifest 中的哈希一致，分别为 `c55f0471869688a5af285f590db3556fe3b6c28a7fa96487d413eef58f42775c` / `55b359eb903a3368961c3937363897b502d5a7db826755b87a85e042b6d29857`。不要使用旧 `Taobao/src/build_grid_dataset.py` 代替该构建入口。
+
+### 逐步计数与下游输入
+
+| 原始 split | 曝光行数 | 首次出现用户数 | 跳过的额外曝光行 | 映射后不足 2 项而丢弃 | 输出样本 |
+| --- | --- | --- | --- | --- | --- |
+| Train | 76,015,123 | 6,929,606 | 69,085,517 | 8,516 | 6,921,090，随后分为本页 train / validation |
+| Test | 22,979,465 | 2,063,682 | 20,915,783 | 2,581 | 2,061,101 |
+
+两边空原始历史丢弃数均为 0；移除的不可映射历史 item 次数分别为 748,072,812 / 220,880,000，计数只针对每用户首次保留行。应核对样本内容、用户集合和以上计数；新目录的路径 / 时间戳会使 manifest 哈希不同，不要求新 manifest 与历史 JSON 按位相同。
+
+TFRecord 保存的是含 GT 的行号序列；[预处理](../src/data/loading/components/pre_processing.py) 映射 SID，[collator](../src/data/loading/components/collate_functions.py) 将生成器序列左填充 / 截断到 32 个 SID tokens，模型再拆出最后 4 tokens 作为 GT，因此生成器最多看到 7 个历史 item。`hist_itemkey` 只做最低长度填充，不按 32 tokens 截断，重排器可使用更长历史。user ID 仅用于数据划分与评估配对，不是模型特征。
 
 ## 可追溯源文件
 
