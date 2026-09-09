@@ -1,13 +1,13 @@
 # Run 台账
 
-最后核验：2026-09-08 10:00（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-09 21:07（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132051 | 待开始 | 正式 separate-small，seed 42，3 GPU | PENDING；afterok:132050，冻结 teacher，仅训练独立 reranker |
-| 132050 | 09-08 09:26 | 正式 joint pointwise，seed 42，3 GPU | RUNNING；日志 step 2039，loss 有限，3 rank、无重启；尚未首次验证 |
+| 132051 | 09-09 16:27 | 正式 separate-small，seed 42，3 GPU | COMPLETED，4h25m05s；early stop 35000，best 10000；两个验证辅助字段 NaN，见下文 |
+| 132050 | 09-08 09:26 | 正式 joint pointwise，seed 42，3 GPU | COMPLETED，31h01m13s；early stop 115000，best 90000；已重载测试 |
 | 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | COMPLETED，32h55m25s；训练产物验收通过，best step 100000；全量评估待做 |
 | 132048 | 09-07 00:21 | 首次 CPU 全量跨 split 边界审计，无模型训练 | COMPLETED，7m08s；14 项新工具测试通过；完整计数有重复发现，代码 b838070 |
 | 132027 | 09-06 14:20 | Separate 3-GPU staged smoke | COMPLETED，1m00s；冻结 teacher 前后一致，2 optimizer steps，代码 7ae9bb4 |
@@ -39,7 +39,7 @@
 
 共同设置：teacher 为 131908 的 `checkpoint_000_090000.ckpt`，seed 42，3-rank DDP，max optimizer steps 120000，按 validation early stopping 选优。保留训练脚本的原预算，不使用两步 smoke 的限制。Pointwise 和 separate 依赖前一任务成功，使用 `kill-on-invalid-dep=yes`，前序失败时不会留下永久不可运行的下游依赖。
 
-132049 已完成，验收见下节。132050 于 09-08 09:26:43 自动接续启动；[preflight](../logs/training_preflight/pointwise_seed42_132050.json) 通过且 teacher SHA256 与启动记录一致，实际 `world_size=3`、无重启；核验时 [CSV](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/csv/metrics.csv) 最新 step 2039、train/loss 13.080742，已记录数值均有限，尚未首次验证。132051 仍等待 132050 成功，不是已经开始训练。
+三项均已完成。132050 于 09-09 16:27:56 结束并自动接续 132051，后者于 20:53:01 结束；主作业及各 Slurm steps 全部 COMPLETED / 0:0。本次核验时三项均已不在队列中。
 
 边界审计 [132048 全量报告](../logs/analysis/split_boundary/boundary_132048.json) 的 SHA256 为 `2bb805d4d3305037cae0528c8e5b9c22ca6fbac46eea29915aa2d7b15542c4a6`。精确重复计数、为何可继续训练、以及必须执行的去重复评估规则仅在 [数据协议](DATA_PROTOCOL_ZH.md) 维护。审计是完成了测量，不是证明 test 没有重复。
 
@@ -76,6 +76,35 @@ CSV 最优 validation 的 `step=99999` 对应保存时 global step 100000；最�
 - [Best checkpoint](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/checkpoints/checkpoint_000_100000.ckpt)：5,701,613,500 bytes；SHA256 `8c452c412b3a35575516449fd312a06d59b19a3b69d0d40e88320076166e31ad`。验收时 ZIP 目录可读取；实际模型加载证据来自训练结束后的成功测试日志，本次未另做参数逐值 / 全归档 CRC 校验。
 - [运行配置](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/.hydra/config.yaml)、[指标 CSV](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/csv/metrics.csv)、[重启记录](../logs/train/runs/2026-09-07/click-listwise-seed42-132049/metadata/restart_metadata.json)、[preflight](../logs/training_preflight/listwise_seed42_132049.json)。
 - [标准输出](../logs/slurm/GRID-List-HLastV1-132049.out)、[含停止原因与 best 权重重载记录的 stderr](../logs/slurm/GRID-List-HLastV1-132049.err)。
+
+## 132050 / 132051：训练完成，日志与指纹核验
+
+2026-09-09 检查：两项实际 world size 均为 3、无重启；preflight 通过，初始化 teacher SHA256 均为 `0cdb246af381e15988acd4116509c2d0c8e162b5db704438d450012ed4c69664`。重新计算各自 preflight 记录的源码与数据清单哈希，无不一致；未重扫全部 TFRecords。日志未检出 traceback、OOM 或 CUDA / NCCL 致命错误。
+
+| 核验项 | Pointwise 132050 | Separate-small 132051 |
+| --- | --- | --- |
+| 停止 / best optimizer step | 115000 / 90000 | 35000 / 10000 |
+| 停止原因 | 连续 5 次验证 Recall@5 未改善 | 同左；不是超时或崩溃 |
+| Best validation 融合 Recall@5 | 0.2816953361 | 0.2739449441 |
+| CSV validation / test 行数 | 23 / 1 | 7 / 1 |
+| 数值核验 | 所有非空数值均有限 | 14 个 NaN，仅分布于两个验证辅助字段；其余数值有限 |
+| 最终测试权重 | 日志确认重载 best 90000 | 日志确认重载 best 10000 |
+| Checkpoint 大小 | 5,701,613,500 bytes | 6,128,885,734 bytes |
+
+Best checkpoint 的训练自带 test 指标（0–1 标度；有 batch 上限，不是论文全量结果）：
+
+| 方法 / 排序 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | --- | --- | --- | --- |
+| Pointwise / beam-only | 0.274972 | 0.280851 | 0.254766 | 0.256672 |
+| Pointwise / 融合重排 | 0.276553 | 0.282448 | 0.256078 | 0.257991 |
+| Separate / beam-only | 0.266965 | 0.271429 | 0.250223 | 0.251670 |
+| Separate / 融合重排 | 0.269048 | 0.273179 | 0.251678 | 0.253025 |
+
+两者融合仍为 `1.0 × beam_log_prob + 0.1 × rerank_logits`，未做 validation 权重搜索。Separate 的 beam 指标与冻结 teacher 的日志结果一致，但这不替代正式 checkpoint 参数逐值检查。CSV 的 best validation step 分别为 89999 / 9999；test 行的 115000 / 35000 不是实际测试权重步数。
+
+Separate 的日志缺陷已定位：继承的 `on_validation_epoch_end` 会输出 `val/beam_log_prob` 与 `val/click_log_prob`，但 [separate eval_step](../src/models/modules/semantic_id/separate_rerank_model.py) 只更新 loss、beam/rerank evaluator 与 AUC，没有更新这两个 MeanMetric 累加器；7 次验证各产生 2 个 NaN。stderr 同时有 `compute before update` 警告。它们不参与优化损失或选优监控，因此目前证据指向辅助日志缺失，不是训练数值发散；不能宣称“所有数值均有限”。本次只诊断，未修复；应单独修复 / 回归并保留原始日志、preflight，不能为消除 NaN 改写历史产物。
+
+证据：[pointwise 配置](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/csv/metrics.csv)、[preflight](../logs/training_preflight/pointwise_seed42_132050.json)、[stderr](../logs/slurm/GRID-Point-HLastV1-132050.err)、[best checkpoint](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/checkpoints/checkpoint_000_090000.ckpt)；[separate 配置](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/csv/metrics.csv)、[preflight](../logs/training_preflight/separate_small_seed42_132051.json)、[stderr](../logs/slurm/GRID-Sep-HLastV1-132051.err)、[best checkpoint](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/checkpoints/checkpoint_000_010000.ckpt)。两份新 checkpoint 的 SHA256 登记及独立导出检查待收尾；本次没有另行加载权重或提交新作业。
 
 ## 131908：已完成的 SID teacher
 
