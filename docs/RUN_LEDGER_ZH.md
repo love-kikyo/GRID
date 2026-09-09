@@ -1,17 +1,22 @@
 # Run 台账
 
-最后核验：2026-09-09 23:28（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-09 23:50（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132678 | 待开始 | Separate 固定 checkpoint 的 validation-only beta 选权，CPU | PENDING；afterok:132677，不训练模型 |
-| 132677 | 09-09 23:28 | Separate best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条，无 smoke 上限 |
-| 132676 | 待开始 | Pointwise validation-only beta 选权，CPU | PENDING；afterok:132675 |
-| 132675 | 09-09 23:28 | Pointwise best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条 |
-| 132674 | 待开始 | Listwise validation-only beta 选权，CPU | PENDING；afterok:132673 |
-| 132673 | 09-09 23:28 | Listwise best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条 |
+| 132685 | 待开始 | 四模型全量 test 的配对统计，CPU | PENDING；afterok:132681:132682:132683:132684 |
+| 132684 | 待开始 | SID teacher best 的全量 test 导出，单 GPU | PENDING；afterok:132683，接续一张 GPU |
+| 132683 | 09-09 23:45 | Separate best 的全量 test 导出，单 GPU | RUNNING；目标 2,061,101 条 |
+| 132682 | 09-09 23:45 | Pointwise best 的全量 test 导出，单 GPU | RUNNING；目标 2,061,101 条 |
+| 132681 | 09-09 23:45 | Listwise best 的全量 test 导出，单 GPU | RUNNING；已记录 112,000 条，未完成 |
+| 132678 | 09-09（选权） | Separate validation-only beta 选权，CPU | COMPLETED，50s；51 点网格中选 beta=0.50 |
+| 132677 | 09-09 23:28 | Separate best 的完整 validation 导出，单 GPU | COMPLETED，8m55s；347,416 唯一用户，验收通过 |
+| 132676 | 09-09（选权） | Pointwise validation-only beta 选权，CPU | COMPLETED，47s；beta=0.50 |
+| 132675 | 09-09 23:28 | Pointwise best 的完整 validation 导出，单 GPU | COMPLETED，12m58s；347,416 唯一用户，验收通过 |
+| 132674 | 09-09（选权） | Listwise validation-only beta 选权，CPU | COMPLETED，46s；beta=0.50 |
+| 132673 | 09-09 23:28 | Listwise best 的完整 validation 导出，单 GPU | COMPLETED，13m05s；347,416 唯一用户，验收通过 |
 | 132672 | 09-09（验收） | CPU 检查 pointwise / separate checkpoint | COMPLETED，36s；模型张量有限，separate 冻结 teacher 两份别名状态均逐值一致 |
 | 132667 | 09-09（验收） | Separate best checkpoint 的 val 导出，单 GPU | COMPLETED，1m22s；64 条，显式兼容记录绑定日志修复 |
 | 132666 | 09-09（验收） | Pointwise best checkpoint 的 val 导出，单 GPU | COMPLETED，1m18s；64 条；不是重训 |
@@ -43,15 +48,33 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：全量 validation 导出与固定 checkpoint 融合校准
+## 当前：四模型全量 test 与配对统计
+
+Validation 验收通过后，提交前工作树干净，源码提交 `3db28b13914846e18cf0c0aa506aec3d0ee302ed`。四模型仍使用现有 best checkpoint，每份导出覆盖当前 test 的 2,061,101 条，不去重、不重训。首批三个 reranker 各用单 GPU，SID 依赖 separate 成功后接续；配对统计依赖四份导出全部成功。完整命令、依赖、冻结选权文件 SHA256 见 [test 启动记录](../logs/training_launch/full_test_seed42_2026-09-09.json)。
+
+Test 标签为各方法的 `*_test_full_v1`；`MAX_BATCHES` 为空、batch size 32、单 worker、BF16。Teacher 和 separate 分别沿用已验收的精确源码兼容文件，joint 默认严格匹配。导出保留原 run 的候选、raw logits 和 runtime 排序；配对分析从原始分数按已冻结的 validation beta=0.50 重新排序，而不是把 run 原 beta=0.1 的 `rerank_sid` 直接当作 selected 结果。SID 只使用 beam 基线，不使用其未训练的 rerank head 作方法结果。
+
+132685 直接使用支持任意模型数的 `scripts/analyze_paired_evaluation.py`，不是仅支持三模型参数的旧 launcher。预先固定 11 项比较：各 selected 对 SID beam（3）、listwise selected 对 pointwise / separate selected（2）、各方法 selected 对自身 beam / click-only（6）。Recall / NDCG@5、@10；5000 次 paired bootstrap、95% CI、seed 2027，输出为 `paired_report_seed42_four_models_full_v1`。区间是逐项用户配对区间，不是多 seed 波动或同时覆盖所有比较的校正区间；test 输出及统计仍待完成与验收。
+
+## 已完成：全量 validation 与固定 checkpoint 融合校准
 
 按作者最新决定保持现有 split，不追加去重、checkpoint 重选或为 beta 重训。提交前工作树干净，源码提交 `458b68f6ad782acb7b2fc62ea2275337c063b44e`；实际导出及模型源码与已通过的新 checkpoint smoke 一致。三个 GPU 导出分别接续一个 CPU 选权任务，依赖为 `afterok` 且失败依赖自动取消。完整启动命令、输出标签与预声明选权规则见 [启动记录](../logs/training_launch/full_validation_seed42_2026-09-09.json)。
 
 导出：`MAX_BATCHES` 显式清空、`OUTPUT_TAG=_full_v1`，batch size 32、单 GPU / 单 worker、BF16；每模型应覆盖 347,416 个唯一 validation 用户。Listwise / pointwise 严格匹配训练源码；separate 沿用已验收的精确日志修复兼容记录。输出名称分别为 `listwise_seed42_132049_val_full_v1`、`pointwise_seed42_132050_val_full_v1`、`separate_seed42_132051_val_full_v1`，后缀 `.h5` / `.json`。
 
-选权：beam 权重固定 1，beta=0.00–0.50、步长 0.01；按 NDCG@10、NDCG@5、Recall@10、Recall@5 依次比较，同分取较小 beta，完整 validation、FP32 离线融合。脚本拒绝 smoke 或非 validation 输入；本轮不根据 test 扩展搜索。CPU 选权完成仍须核验全量用户、输入哈希 / 目标对齐、候选 / 分数与产物指纹，不能仅凭成功退出认定论文评估完成。四个模型的全量 test 尚未提交。
+选权：beam 权重固定 1，beta=0.00–0.50、步长 0.01；按 NDCG@10、NDCG@5、Recall@10、Recall@5 依次比较，同分取较小 beta，完整 validation、FP32 离线融合。脚本拒绝 smoke 或非 validation 输入；本轮不根据 test 扩展搜索。六项任务全部 COMPLETED / 0:0。
 
-## 当前正式重训：132049–132051
+全量验收通过：每模型 347,416 个唯一 int64 user ID；三个模型逐条 user ID、输入 example hash、target SID 一致；SID 候选形状正确、分数有限，beam/rerank 候选多重集相同；运行配置与导出源码指纹一致。选权读取完整 validation、51 个候选权重，按声明规则选出的最大项与输出一致；输入 HDF5 / sidecar / checkpoint SHA256 绑定正确。[机器可读验收记录](../logs/analysis/paired_evaluation/validation_acceptance_seed42_full_v1.json)。
+
+| 方法 | 固定 beta | Validation Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | --- | --- | --- | --- | --- |
+| Listwise | 0.50 | 0.288150 | 0.290885 | 0.264714 | 0.265607 |
+| Pointwise | 0.50 | 0.284440 | 0.287756 | 0.262570 | 0.263657 |
+| Separate | 0.50 | 0.276096 | 0.277561 | 0.257934 | 0.258411 |
+
+三者均选到网格上界，因此只能称为**预设网格内最优**，未证明更大 beta 不会更好；本次不自动扩大搜索。上表是用于选权的 validation 结果，不是 test 或无偏泛化结论，也不能与此前有限 batch / BF16 runtime 融合日志直接混为同一口径。完整网格及文件指纹：[listwise](../logs/analysis/paired_evaluation/listwise_seed42_132049_fusion_val.json)、[pointwise](../logs/analysis/paired_evaluation/pointwise_seed42_132050_fusion_val.json)、[separate](../logs/analysis/paired_evaluation/separate_seed42_132051_fusion_val.json)。
+
+## 已完成的正式重训：132049–132051
 
 提交时工作树干净，源码提交 `36e78c57a7f977a2c00d77a1aa5417f34379ed2a`；三个方法依赖的模型 / 配置与已通过的 DDP smoke 指纹一致。完整命令、依赖和 teacher / 审计指纹见 [启动记录](../logs/training_launch/seed42_2026-09-07.json)。
 
@@ -59,7 +82,7 @@
 
 三项均已完成。132050 于 09-09 16:27:56 结束并自动接续 132051，后者于 20:53:01 结束；主作业及各 Slurm steps 全部 COMPLETED / 0:0。本次核验时三项均已不在队列中。
 
-边界审计 [132048 全量报告](../logs/analysis/split_boundary/boundary_132048.json) 的 SHA256 为 `2bb805d4d3305037cae0528c8e5b9c22ca6fbac46eea29915aa2d7b15542c4a6`。精确重复计数、为何可继续训练、以及必须执行的去重复评估规则仅在 [数据协议](DATA_PROTOCOL_ZH.md) 维护。审计是完成了测量，不是证明 test 没有重复。
+边界审计 [132048 全量报告](../logs/analysis/split_boundary/boundary_132048.json) 的 SHA256 为 `2bb805d4d3305037cae0528c8e5b9c22ca6fbac46eea29915aa2d7b15542c4a6`。精确重复计数及当前保留 split 的评估取舍仅在 [数据协议](DATA_PROTOCOL_ZH.md) 维护。审计是完成了同用户范围的测量，不是证明 test 没有重复。
 
 ## 132049：listwise 正式训练产物验收通过
 
@@ -87,7 +110,7 @@ Best checkpoint 的训练日志指标如下，均为 0–1 标度：
 
 这里 `rerank_*` 及主指标使用 `1.0 × beam_log_prob + 0.1 × rerank_logits` 排序，不是 rerank-only，也不是完成 validation 搜索后的最优融合权重。同一 checkpoint 的 test 重排相对 beam-only，Recall@5 增加 **0.2452 个百分点**、NDCG@5 增加 **0.1864 个百分点**；是描述性正向结果，尚无全量配对置信区间。`click_auc` 是候选标签上的辅助指标，不是曝光 CTR AUC。
 
-CSV 最优 validation 的 `step=99999` 对应保存时 global step 100000；最终 test 行的 `step=120000` 不代表测试了该步权重。validation / test 仍有每 rank 5000 / 10000 batches 上限，validation 的 2 个 shard 在 3 rank 下还涉及重复分配；以上数字不能直接进入论文全量主表。完整唯一用户导出、固定 test 去重复对照及跨模型统计均待完成。
+CSV 最优 validation 的 `step=99999` 对应保存时 global step 100000；最终 test 行的 `step=120000` 不代表测试了该步权重。训练内 validation / test 有每 rank 5000 / 10000 batches 上限，validation 的 2 个 shard 在 3 rank 下还涉及重复分配；以上数字不能直接进入论文全量主表。后续完整导出及跨模型统计见本页前文。
 
 证据与产物：
 

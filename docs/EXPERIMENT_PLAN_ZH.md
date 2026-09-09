@@ -53,14 +53,15 @@
 ## 3. 当前阶段：全量评估与统计
 
 - [x] 作者确定保留现有 split；不追加跨 split 去重、排除名单或相关重训。已知重叠及未审计范围在 [数据协议](DATA_PROTOCOL_ZH.md) 保留，不把共同数据等同于偏差必然抵消。
-- [ ] 整理当前完整数据处理链、运行命令、环境 / 版本与计数核验，使第三方可复现最终评估集。
-- [ ] 固定三个重排 checkpoint，分别全量导出当前 validation 的 347,416 条记录，核对唯一用户与样本对齐。
-- [ ] 只执行第一层融合校准：beam 权重固定 1，beta 网格 0.00–0.50、步长 0.01；现有脚本按 NDCG@10、NDCG@5、Recall@10、Recall@5 依次比较，同分取较小 beta。三个方法共用该规则，使用完整 validation、FP32 离线分数，锁定后用于 test。不以 test 结果扩展搜索。SID-only 不搜索 beta。
+- [x] 整理当前固定编码资产到最终样本的数据处理链、重建命令、环境与计数核验；[数据协议](DATA_PROTOCOL_ZH.md) 明确复现范围与来源缺口。
+- [ ] 发布前补齐上游快照身份和历史 SID 生成运行的版本 / 参数绑定；不能把有命令文档等同于已完成第三方从零复现。
+- [x] 固定三个重排 checkpoint，全量导出 validation 的 347,416 条记录；唯一用户、输入哈希 / 目标对齐及候选 / 分数检查通过。
+- [x] 第一层融合校准完成：beam 权重 1，beta 网格 0.00–0.50、步长 0.01；NDCG@10、NDCG@5、Recall@10、Recall@5 依次选优，同分取较小 beta。三者均选 0.50，锁定文件指纹后提交 test；仅为网格内最优，本轮不自动扩搜索。SID-only 不搜索 beta。
 - [ ] 四个固定 checkpoint 在当前共同 test 的全部 2,061,101 条记录上评估；核对跨模型的用户 / 输入 / 目标配对一致性。当前 checkpoint 是按 beta=0.1 的原验证设置选出的，不另行重选或为 beta 重训，不宣称做过 checkpoint × beta 联合搜索。
 - [ ] 对逐用户 Recall / NDCG@5、@10 做配对差值与置信区间，明确 beam-only、rerank-only、选权后结果；多 seed 波动与逐用户统计分别呈现。
 - [ ] 报告中区分覆盖率、候选内排序能力、整体推荐质量，不把重排提升归因于未经验证的生成能力提升。
 
-当前分析 launcher 采用 5000 次 bootstrap、95% CI、seed 2027。主表还需要 generator-only；现有三模型配对 launcher 不能自动代替完整主表的全部比较。
+当前四模型分析任务直接调用支持多模型的分析脚本，包含 generator-only 及三个重排模型；5000 次 bootstrap、95% CI、seed 2027。旧三模型 launcher 不代表完整主表。区间为逐项用户配对区间，不等同于多 seed 波动或多重比较同时置信保证。
 
 参数区分：当前三个 reranker 均 `use_beam_score_in_rerank_loss=false`，推理融合 beta=`rerank_logit_weight` 不进入重排优化损失，但用于验证排序，因而可能改变 early stopping / checkpoint 选择。按作者决定不为此追加重训；没有测量其影响，不写成已证明为零。Joint 的 lambda=`rerank_loss_weight` 才是 SID 与重排损失的梯度权重。本轮不增加融合训练目标或 lambda 消融。
 
