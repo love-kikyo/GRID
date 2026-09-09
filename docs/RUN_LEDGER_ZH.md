@@ -1,11 +1,15 @@
 # Run 台账
 
-最后核验：2026-09-09 21:07（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-09 22:25（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 132672 | 09-09（验收） | CPU 检查 pointwise / separate checkpoint | COMPLETED，36s；模型张量有限，separate 冻结 teacher 两份别名状态均逐值一致 |
+| 132667 | 09-09（验收） | Separate best checkpoint 的 val 导出，单 GPU | COMPLETED，1m22s；64 条，显式兼容记录绑定日志修复 |
+| 132666 | 09-09（验收） | Pointwise best checkpoint 的 val 导出，单 GPU | COMPLETED，1m18s；64 条；不是重训 |
+| 132665 | 09-09（验收） | Listwise best checkpoint 的 val 导出，单 GPU | COMPLETED，1m19s；64 条；不是重训 |
 | 132051 | 09-09 16:27 | 正式 separate-small，seed 42，3 GPU | COMPLETED，4h25m05s；early stop 35000，best 10000；两个验证辅助字段 NaN，见下文 |
 | 132050 | 09-08 09:26 | 正式 joint pointwise，seed 42，3 GPU | COMPLETED，31h01m13s；early stop 115000，best 90000；已重载测试 |
 | 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | COMPLETED，32h55m25s；训练产物验收通过，best step 100000；全量评估待做 |
@@ -102,9 +106,30 @@ Best checkpoint 的训练自带 test 指标（0–1 标度；有 batch 上限，
 
 两者融合仍为 `1.0 × beam_log_prob + 0.1 × rerank_logits`，未做 validation 权重搜索。Separate 的 beam 指标与冻结 teacher 的日志结果一致，但这不替代正式 checkpoint 参数逐值检查。CSV 的 best validation step 分别为 89999 / 9999；test 行的 115000 / 35000 不是实际测试权重步数。
 
-Separate 的日志缺陷已定位：继承的 `on_validation_epoch_end` 会输出 `val/beam_log_prob` 与 `val/click_log_prob`，但 [separate eval_step](../src/models/modules/semantic_id/separate_rerank_model.py) 只更新 loss、beam/rerank evaluator 与 AUC，没有更新这两个 MeanMetric 累加器；7 次验证各产生 2 个 NaN。stderr 同时有 `compute before update` 警告。它们不参与优化损失或选优监控，因此目前证据指向辅助日志缺失，不是训练数值发散；不能宣称“所有数值均有限”。本次只诊断，未修复；应单独修复 / 回归并保留原始日志、preflight，不能为消除 NaN 改写历史产物。
+Separate 的历史日志缺陷：继承的 `on_validation_epoch_end` 会输出 `val/beam_log_prob` 与 `val/click_log_prob`，但训练当时的 separate `eval_step` 只更新 loss、beam/rerank evaluator 与 AUC，没有更新这两个 MeanMetric 累加器；7 次验证各产生 2 个 NaN。stderr 同时有 `compute before update` 警告。它们不参与优化损失或选优监控，因此证据指向辅助日志缺失，不是训练数值发散；不能宣称旧 CSV 的“所有数值均有限”。21:07 检查仅诊断；随后已修复并回归，见下节。原始日志与 preflight 未改写。
 
-证据：[pointwise 配置](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/csv/metrics.csv)、[preflight](../logs/training_preflight/pointwise_seed42_132050.json)、[stderr](../logs/slurm/GRID-Point-HLastV1-132050.err)、[best checkpoint](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/checkpoints/checkpoint_000_090000.ckpt)；[separate 配置](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/csv/metrics.csv)、[preflight](../logs/training_preflight/separate_small_seed42_132051.json)、[stderr](../logs/slurm/GRID-Sep-HLastV1-132051.err)、[best checkpoint](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/checkpoints/checkpoint_000_010000.ckpt)。两份新 checkpoint 的 SHA256 登记及独立导出检查待收尾；本次没有另行加载权重或提交新作业。
+证据：[pointwise 配置](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/csv/metrics.csv)、[preflight](../logs/training_preflight/pointwise_seed42_132050.json)、[stderr](../logs/slurm/GRID-Point-HLastV1-132050.err)、[best checkpoint](../logs/train/runs/2026-09-08/click-pointwise-seed42-132050/checkpoints/checkpoint_000_090000.ckpt)；[separate 配置](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/csv/metrics.csv)、[preflight](../logs/training_preflight/separate_small_seed42_132051.json)、[stderr](../logs/slurm/GRID-Sep-HLastV1-132051.err)、[best checkpoint](../logs/train/runs/2026-09-09/rerank-small-seed42-132051/checkpoints/checkpoint_000_010000.ckpt)。
+
+### 收尾：日志修复、checkpoint 指纹与独立导出通过
+
+修复 `6879764` 仅在 [separate eval_step](../src/models/modules/semantic_id/separate_rerank_model.py) 增加 7 行：用自然推理分数更新两项辅助 MeanMetric，口径与 joint 一致；不改优化、候选、排序或选优。新增 3 项测试在修复前因 NaN 失败，修复后通过；含目标函数、配对导出、用户身份、DDP smoke 辅助及空 worker 的定向回归共 **47 passed**、2 个依赖弃用警告。这里只新增单测，没有重复正式训练或 staged training smoke。
+
+Separate 原 preflight SHA256 `07268ef4eec80fc999b232d20993b5caba38ff97e640d1feac399757edad1481` 保留；[精确源码兼容记录](../configs/evaluation/separate_132051_source_compatibility.json) 仅允许该日志修复，记录 SHA256 `95d821f304ec68255a4c6b5a191d2b1d5a711ea1ef82041a336764721c595831`。实测默认严格检查拒绝源码变化，提供该记录后通过；兼容信息随 separate 导出 metadata 保存。Joint 源文件未改，不需要此例外。
+
+新增 best checkpoint SHA256（与独立导出 metadata 再次计算结果一致）：
+
+- Pointwise：`edf4eec9bb908a3f0dec797628c66f45ff7668e0e9e978e50ea397bde9df3e39`。
+- Separate：`4fa94bd5d1efd3ccd1d3c5feae598c936c70cd5baf96b64df406957ac41f0caf`。
+
+[CPU 检查 132672](../logs/slurm/GRID-CkptAudit-132672.out) 读取 global step 分别为 90000 / 10000，31 / 105 个 state tensors 均有限。Separate 的 `teacher_model.*` 和 `teacher.sid_model.*` 各 31 个张量、144,183,296 个值，与原 teacher 逐值完全一致。本地反序列化曾以 Illegal instruction 退出，故改在计算节点完成；不是新训练失败，也未改动 checkpoint。
+
+三个真实导出使用干净源码提交 `5c92de9df514db143b23e204068c5a1fe60fc25f`，现有 `run_export_paired_evaluation.sh`，`MAX_BATCHES=2`、`OUTPUT_TAG=_smoke_v1`、split=val、每 GPU batch 32；仅 separate 指定上述兼容文件。均正常退出，输出各 64 条，验收 metadata：[listwise 132665](../logs/analysis/paired_evaluation/listwise_seed42_132049_val_smoke_v1.json)、[pointwise 132666](../logs/analysis/paired_evaluation/pointwise_seed42_132050_val_smoke_v1.json)、[separate 132667](../logs/analysis/paired_evaluation/separate_seed42_132051_val_smoke_v1.json)；同名 `.h5` 为逐样本产物。
+
+检查通过：每份 64 个唯一 int64 user ID；SID 候选形状 `[64,20,4]`，分数有限；各模型 beam/rerank 为相同候选多重集。三个新模型与原 teacher val smoke 的用户 ID、输入样本哈希、target 完全一致；separate 自然 beam 的 SID 与分数也与 teacher 一致。Joint 加载 missing=0 / unexpected=0；separate 为 missing=0 / unexpected=62，仅来自延迟 setup 的两个 teacher 别名前缀，已由 132672 逐值核对，setup 从指纹绑定的原 teacher 重建，不是 reranker 权重丢失。
+
+融合数值核对需遵循实际 AMP 运算：raw logits 在 BF16 下乘 0.1 后与 beam 相加，导出后全部转存 FP32。直接在 NumPy 用 FP32 重算出现最大约 0.003125 的舍入差异；按实际 BF16 乘法重算后三个新模型的融合分数通过 `rtol=atol=1e-6` 检查。后续全量离线选权沿用统一 FP32 分析口径，不把它与训练日志结果混为同一数值口径。
+
+本阶段产物验收通过，不代表全量 validation / test、去重复掩码、融合选权或论文统计完成。真实导出走 INFER；日志修复由上述定向单测验证，本次未重跑 DDP validation。
 
 ## 131908：已完成的 SID teacher
 

@@ -26,13 +26,14 @@
 
 验收：真实日志、明确的通过 / 失败记录和完整 provenance；发现问题则单独修复并提交，不跳过校验。此阶段完成后再确定正式重训的提交顺序。
 
-## 2. 当前阶段：核心受控重训
+## 2. 已完成：seed 42 核心受控重训及产物验收
 
 已提交 seed 42：listwise 132049 → pointwise 132050 → separate-small 132051；前一任务成功后下一任务运行，各使用 3 GPU，不重新训练 teacher。启动命令、源码版本、数据审计及 checkpoint 绑定见 [启动记录](../logs/training_launch/seed42_2026-09-07.json)。
 
 - [x] Listwise 正式训练产物验收：run、best checkpoint、配置 / preflight、选优及测试日志已核验；不等于第 3 阶段全量评估完成。
 - [x] Pointwise / separate 正式训练结束，正常 early stopping 并重载 best checkpoint 测试；日志、配置与 preflight 指纹已核对。
-- [ ] 收尾两份新 checkpoint 的指纹登记及独立导出验收；separate 两个验证辅助累加器未更新的日志缺陷需单独修复 / 回归，不因该日志缺陷直接重训。
+- [x] 两份新 checkpoint 指纹登记与张量有限性核对；separate 保存的冻结 teacher 逐值一致；三个新模型各 64 条 validation 独立导出及跨模型样本对齐通过。
+- [x] Separate 两个验证辅助累加器日志缺陷已单独修复，47 项定向回归通过；精确兼容记录绑定旧 preflight。未修改旧日志或重训。
 
 | 方法 | 初始化 / 可训练部分 | 在比较中回答什么 |
 | --- | --- | --- |
@@ -49,7 +50,7 @@
 
 验收：每个模型的 run / best checkpoint / 配置 / preflight / 日志可追溯；失败任务与有效结果分开，不凭目录存在认定成功。
 
-## 3. 全量评估与统计
+## 3. 当前阶段：全量评估与统计
 
 - [ ] 先按 [已固定的数据规则](DATA_PROTOCOL_ZH.md) 生成完整 test 去重复名单 / 掩码及哈希；所有方法共用，同时报告原始全量与去重复对照，不根据结果选择样本或只报告较好的一组。
 - [ ] Generator-only 以及各 reranker 独立全量导出，validation 347,416、test 2,061,101 条，核对唯一用户和跨模型配对一致性。

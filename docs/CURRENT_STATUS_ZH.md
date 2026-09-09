@@ -1,10 +1,10 @@
 # 当前状态
 
-核验时间：2026-09-09 21:07，Asia/Shanghai。此页是状态快照，不是实时监控。
+核验时间：2026-09-09 22:25，Asia/Shanghai。此页是状态快照，不是实时监控。
 
 ## 一句话结论
 
-seed 42 的三个正式任务均已 COMPLETED / 0:0，目前这组三个任务没有运行或排队项。Pointwise、separate 均正常 early stopping 并重载 best checkpoint 完成测试。Separate 有两个验证辅助日志字段因累加器未更新而为 NaN，不能宣称全部数值检查通过；主损失和 Recall / NDCG 有限。全量评估仍未完成。
+seed 42 正式训练及 checkpoint 小规模导出验收已收尾：三个新模型均能导出，并与 teacher 的 64 条 validation 样本严格配对。Separate 辅助日志缺陷已修复，47 项回归通过；保存的冻结 teacher 已逐值核对一致。下一步固定全量 test 去重复掩码，再进入全量评估；不重训现有模型。
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
@@ -13,25 +13,25 @@ seed 42 的三个正式任务均已 COMPLETED / 0:0，目前这组三个任务�
 | SID teacher，seed 42，3 GPU | 已完成 | 131908；best optimizer step 90000 |
 | 空 worker 初始化问题 | 已修复并回归通过 | 修复提交 `1cbf5ba`；132021 为 38 passed |
 | Teacher 逐样本导出 / user ID | Smoke 已通过 | 132022 / 132023；原 preflight 保留，显式兼容记录随导出存档 |
-| 新协议 listwise / pointwise / separate | 3 项训练完成 | Listwise 已验收；另两项日志 / 指纹已核对，separate 辅助日志缺陷待处理；[台账](RUN_LEDGER_ZH.md) |
+| 新协议 listwise / pointwise / separate | 3 项训练及产物验收完成 | 新 checkpoint 的 val 导出各 64 条通过；不是全量评估；[台账](RUN_LEDGER_ZH.md) |
+| Separate 辅助日志 / 冻结 teacher | 修复与核对完成 | 修复 `6879764`，47 passed；132672 参数逐值核对通过；旧 NaN 日志保留 |
 | 新 checkpoint 全量导出、配对统计、效率复测 | 待完成 | 训练自带 test 有 batch 上限 |
 | 论文正文 | 暂停修改 | 等实验整体收尾，按作者要求执行 |
 
 ## 最近的任务到底在做什么
 
-- 132048：CPU 数据边界审计，已完成，不训练模型。
-- 132049：RecoChain-listwise（SID + listwise 联合目标）已完成；训练日志融合重排指标优于同模型 beam-only，但不是全量统计结论。
-- 132050：RecoChain-pointwise 已完成；停止 step 115000，best step 90000。
-- 132051：Separate-small 已完成；停止 step 35000，best step 10000；短于 joint 是较早触发 early stopping，不是任务失败。
+- 132665 / 132666 / 132667：三个正式 checkpoint 的首次 validation 导出验收，均完成；不是新训练或全量评估。
+- 132672：CPU checkpoint 张量检查，已完成；不使用 GPU，不训练模型。
+- 132049 / 132050 / 132051：此前的正式训练均已完成。这些验收与训练任务均无待运行项。
 
 详细作业记录、已完成模型的指标与 checkpoint 见 [Run 台账](RUN_LEDGER_ZH.md)。
 
 ## 下一步
 
-当前收尾 [计划第 2 阶段](EXPERIMENT_PLAN_ZH.md)，准备进入全量评估，不重复已完成的训练：
+进入 [计划第 3 阶段](EXPERIMENT_PLAN_ZH.md)，不重复已完成的训练与 smoke：
 
-1. 收尾 pointwise / separate checkpoint 验收；单独处理 separate 辅助日志缺陷并回归。本次仅诊断，未修改代码；现有证据不支持仅因这两个空累加器日志就重训。
-2. 全量评估前固定 test 去重复掩码，同时报告原始全量与去重复对照；审计发现不能被忽略，具体规则只在数据协议页维护。
-3. 全量导出、融合选权、配对统计、必要分析及论文改写均未完成。论文正文继续暂停。
+1. 优先生成完整 test 去重复名单 / 掩码及哈希；现有边界报告只有计数和少量示例，不能代替完整名单。具体规则只在数据协议页维护。
+2. 四个模型全量导出并核对唯一用户；按相同规则在 validation 选融合权重，固定后评估原始 test 与去重复对照。
+3. 配对统计、必要分析及论文改写均未完成。论文正文继续暂停。
 
-本次只读检查训练产物并更新文档，没有提交新作业、修改代码、重建数据或修改论文正文；旧 preflight 保留不变。
+本次只修复辅助日志、补回归与精确源码兼容记录，完成小规模导出和 checkpoint 检查；未重训、重建数据或修改论文正文。旧训练日志、preflight 和 checkpoint 保留不变。
