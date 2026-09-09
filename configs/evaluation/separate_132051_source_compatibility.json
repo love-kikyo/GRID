@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "training_preflight_sha256": "07268ef4eec80fc999b232d20993b5caba38ff97e640d1feac399757edad1481",
+  "changes": [
+    {
+      "path": "src/models/modules/semantic_id/separate_rerank_model.py",
+      "training_sha256": "5c51d997b42ff3d3df43a532373849effab66474adad658e1eefb4773561b0a4",
+      "evaluation_sha256": "9dd52815cfe410e00f2cf05d37d1c09f56bce07d4b89eabb84a44d262f44f323",
+      "change_commit": "6879764a8b63598c7cb21c726bdaca572b016a3e",
+      "reason": "Reviewed seven-line addition to SeparateRerankModule.eval_step updating two previously empty diagnostic accumulators from detached natural inference scores. Matches joint logging: mean beam log probability and mean log_softmax of fused rerank scores. Training loss, inference, candidate IDs, scores, rank evaluators, checkpoint selection and parameter schema are unchanged. The paired exporter calls model_step(INFER), not this eval_step. No data or original preflight is modified.",
+      "regression_evidence": "Three new tests in tests/test_rerank_objective.py fail on the original source with empty-MeanMetric NaNs and pass after the fix. They cover wrapped/unwrapped batches, repeated batches, epoch reset, stable log_softmax and unchanged loss/predictions/evaluator inputs. Focused regression: 47 passed, 2 dependency deprecation warnings. Real checkpoint export acceptance is recorded separately in docs/RUN_LEDGER_ZH.md."
+    }
+  ]
+}
