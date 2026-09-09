@@ -1,11 +1,17 @@
 # Run 台账
 
-最后核验：2026-09-09 22:25（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-09 23:28（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 132678 | 待开始 | Separate 固定 checkpoint 的 validation-only beta 选权，CPU | PENDING；afterok:132677，不训练模型 |
+| 132677 | 09-09 23:28 | Separate best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条，无 smoke 上限 |
+| 132676 | 待开始 | Pointwise validation-only beta 选权，CPU | PENDING；afterok:132675 |
+| 132675 | 09-09 23:28 | Pointwise best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条 |
+| 132674 | 待开始 | Listwise validation-only beta 选权，CPU | PENDING；afterok:132673 |
+| 132673 | 09-09 23:28 | Listwise best 的完整 validation 导出，单 GPU | RUNNING；预计 347,416 条 |
 | 132672 | 09-09（验收） | CPU 检查 pointwise / separate checkpoint | COMPLETED，36s；模型张量有限，separate 冻结 teacher 两份别名状态均逐值一致 |
 | 132667 | 09-09（验收） | Separate best checkpoint 的 val 导出，单 GPU | COMPLETED，1m22s；64 条，显式兼容记录绑定日志修复 |
 | 132666 | 09-09（验收） | Pointwise best checkpoint 的 val 导出，单 GPU | COMPLETED，1m18s；64 条；不是重训 |
@@ -36,6 +42,14 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前：全量 validation 导出与固定 checkpoint 融合校准
+
+按作者最新决定保持现有 split，不追加去重、checkpoint 重选或为 beta 重训。提交前工作树干净，源码提交 `458b68f6ad782acb7b2fc62ea2275337c063b44e`；实际导出及模型源码与已通过的新 checkpoint smoke 一致。三个 GPU 导出分别接续一个 CPU 选权任务，依赖为 `afterok` 且失败依赖自动取消。完整启动命令、输出标签与预声明选权规则见 [启动记录](../logs/training_launch/full_validation_seed42_2026-09-09.json)。
+
+导出：`MAX_BATCHES` 显式清空、`OUTPUT_TAG=_full_v1`，batch size 32、单 GPU / 单 worker、BF16；每模型应覆盖 347,416 个唯一 validation 用户。Listwise / pointwise 严格匹配训练源码；separate 沿用已验收的精确日志修复兼容记录。输出名称分别为 `listwise_seed42_132049_val_full_v1`、`pointwise_seed42_132050_val_full_v1`、`separate_seed42_132051_val_full_v1`，后缀 `.h5` / `.json`。
+
+选权：beam 权重固定 1，beta=0.00–0.50、步长 0.01；按 NDCG@10、NDCG@5、Recall@10、Recall@5 依次比较，同分取较小 beta，完整 validation、FP32 离线融合。脚本拒绝 smoke 或非 validation 输入；本轮不根据 test 扩展搜索。CPU 选权完成仍须核验全量用户、输入哈希 / 目标对齐、候选 / 分数与产物指纹，不能仅凭成功退出认定论文评估完成。四个模型的全量 test 尚未提交。
 
 ## 当前正式重训：132049–132051
 
