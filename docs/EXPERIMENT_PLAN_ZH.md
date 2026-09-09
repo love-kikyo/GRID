@@ -14,7 +14,7 @@
 
 ## 1. 已完成：teacher 与下游链路验收
 
-加载 / 导出 smoke 于 2026-09-06 通过；跨 split 边界审计于 2026-09-07 完成。审计发现 test 重复，处理安排转入第 3 阶段；不更改已冻结训练集。验收证据见 [Run 台账](RUN_LEDGER_ZH.md)。
+加载 / 导出 smoke 于 2026-09-06 通过；同用户范围的跨 split 边界审计于 2026-09-07 完成。审计发现 test 重复；按作者最新决定保留现有 split，在评估中披露限制，不追加跨用户审计 / 内容去重。验收证据见 [Run 台账](RUN_LEDGER_ZH.md)。
 
 - [x] 固定 131908 best checkpoint 的哈希、配置与 preflight；原始 preflight 未改动。
 - [x] 显式记录空 worker 修复的精确前后源码哈希，绑定原 preflight；兼容检查与真实导出通过，默认仍严格拒绝其他变化。
@@ -42,7 +42,7 @@
 | RecoChain-pointwise | 同 teacher；联合 SID + pointwise rerank | 与 listwise 的目标函数对照 |
 | Separate-small | 冻结同 teacher；训练独立 candidate-aware reranker | 与分离式 generate-then-rerank 的对照 |
 
-作者已确认多 seed 有必要。先收口内容去重与验证选择协议，再安排匹配的多 seed：建议至少 3 个训练 seed（具体编号待固定），每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照；不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。
+作者已确认多 seed 有必要。先完成 seed 42 的全量选权与评估，再安排匹配的多 seed：建议至少 3 个训练 seed（具体编号待固定），每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照；不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。多 seed 不等于为每个推理 beta 重训。
 
 共同锁定数据、SID 编码、初始化 checkpoint、beam size、预算 / early-stop 口径、目标标签构造、调参规则。训练时 no-hit 辅助候选可按实现插入 GT；推理候选不得注入 GT。
 
@@ -52,17 +52,17 @@
 
 ## 3. 当前阶段：全量评估与统计
 
-- [ ] 先按 [数据协议的审计范围更正](DATA_PROTOCOL_ZH.md) 检查忽略 user ID 的内容重复：完整 item / SID 序列和生成器窗口分别统计，覆盖所有 split 间及 split 内；train/validation 用户互斥不等于内容互斥。
-- [ ] 根据上述测量冻结最终内容去重口径，生成完整 test 排除名单 / 掩码及哈希，所有方法共用。只报告去重复 test，原始数据保留作追溯；排除名单不依赖预测。旧 3,133 条不能作为最终排除总数。
-- [ ] 去重实现稳定后整理完整数据处理链、运行命令、环境 / 版本与计数核验，使第三方可复现最终评估集。
-- [ ] Generator-only 以及各 reranker 在同一去重复 test 上全量评估，规模待全内容审计后确定；核对跨模型的用户 / 输入 / 目标配对一致性。
-- [ ] 作者认可融合权重搜索的意义。建议先固定现有 checkpoint，只在内容边界核验后的 validation 上选推理 beta；三个 reranker 使用相同预声明网格 / 选优规则，锁定后一次用于 test。SID-only 无该融合权重。当前 checkpoint 是在 beta=0.1 的原验证设置下选出的，不宣称联合搜索了所有 checkpoint 与 beta。
+- [x] 作者确定保留现有 split；不追加跨 split 去重、排除名单或相关重训。已知重叠及未审计范围在 [数据协议](DATA_PROTOCOL_ZH.md) 保留，不把共同数据等同于偏差必然抵消。
+- [ ] 整理当前完整数据处理链、运行命令、环境 / 版本与计数核验，使第三方可复现最终评估集。
+- [ ] 固定三个重排 checkpoint，分别全量导出当前 validation 的 347,416 条记录，核对唯一用户与样本对齐。
+- [ ] 只执行第一层融合校准：beam 权重固定 1，beta 网格 0.00–0.50、步长 0.01；现有脚本按 NDCG@10、NDCG@5、Recall@10、Recall@5 依次比较，同分取较小 beta。三个方法共用该规则，使用完整 validation、FP32 离线分数，锁定后用于 test。不以 test 结果扩展搜索。SID-only 不搜索 beta。
+- [ ] 四个固定 checkpoint 在当前共同 test 的全部 2,061,101 条记录上评估；核对跨模型的用户 / 输入 / 目标配对一致性。当前 checkpoint 是按 beta=0.1 的原验证设置选出的，不另行重选或为 beta 重训，不宣称做过 checkpoint × beta 联合搜索。
 - [ ] 对逐用户 Recall / NDCG@5、@10 做配对差值与置信区间，明确 beam-only、rerank-only、选权后结果；多 seed 波动与逐用户统计分别呈现。
 - [ ] 报告中区分覆盖率、候选内排序能力、整体推荐质量，不把重排提升归因于未经验证的生成能力提升。
 
 当前分析 launcher 采用 5000 次 bootstrap、95% CI、seed 2027。主表还需要 generator-only；现有三模型配对 launcher 不能自动代替完整主表的全部比较。
 
-参数区分：当前三个 reranker 均 `use_beam_score_in_rerank_loss=false`，推理融合 beta=`rerank_logit_weight` 不进入重排优化损失，但用于验证排序，因而影响 early stopping / checkpoint 选择。Joint 的 lambda=`rerank_loss_weight` 才是 SID 与重排损失的梯度权重。只修改 beta 重训并非训练不同融合损失；将融合分数纳入训练目标或调整 lambda 是另一个需要明确设计的重训消融，不与此次推理选权混做。
+参数区分：当前三个 reranker 均 `use_beam_score_in_rerank_loss=false`，推理融合 beta=`rerank_logit_weight` 不进入重排优化损失，但用于验证排序，因而可能改变 early stopping / checkpoint 选择。按作者决定不为此追加重训；没有测量其影响，不写成已证明为零。Joint 的 lambda=`rerank_loss_weight` 才是 SID 与重排损失的梯度权重。本轮不增加融合训练目标或 lambda 消融。
 
 ## 4. 仅补支撑主张的分析
 
