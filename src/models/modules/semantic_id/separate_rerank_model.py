@@ -514,6 +514,13 @@ class SeparateRerankModule(SemanticIDEncoderDecoder):
         with torch.inference_mode():
             result_dict = self.model_step(model_input=batch, mode=ModelMode.INFER)
 
+        # Match joint evaluation diagnostics using the natural inference beam.
+        # These accumulators are logged by the inherited validation hook.
+        self.beam_log_prob_accumulator(result_dict["beam"]["scores"].detach().mean())
+        self.click_log_prob_accumulator(
+            F.log_softmax(result_dict["rerank"]["scores"].detach(), dim=-1).mean()
+        )
+
         sid = batch.transformed_sequences["sequence_data"].long()
         labels = sid[:, -self.num_hierarchies:]
 

@@ -1,5 +1,10 @@
+from copy import deepcopy
+from types import SimpleNamespace
+
+import pytest
 import torch
 from torch import nn
+from torchmetrics.aggregation import MeanMetric
 
 from src.models.modules.huggingface.transformer_base_module import ModelMode
 from src.models.modules.semantic_id.separate_rerank_model import SeparateRerankModule
@@ -124,4 +129,93 @@ def test_separate_reranker_matches_training_only_no_hit_aux_rule():
     torch.testing.assert_close(
         natural_result["candidate_itemkey"],
         natural_candidate_itemkey,
+    )
+
+
+class _RecordingEvaluator:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.calls = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def _separate_eval_fixture():
+    model = SeparateRerankModule.__new__(SeparateRerankModule)
+    nn.Module.__init__(model)
+    model.num_hierarchies = 2
+    model.powers = torch.tensor([16, 1])
+    model.val_loss = MeanMetric()
+    model.click_log_prob_accumulator = MeanMetric()
+    model.beam_log_prob_accumulator = MeanMetric()
+    model.click_auc_accumulator = MeanMetric()
+    model.evaluators = {name: _RecordingEvaluator() for name in ("beam", "rerank")}
+    batch = SimpleNamespace(transformed_sequences={
+        "sequence_data": torch.tensor([[9, 9, 1, 2], [8, 8, 7, 7]])
+    })
+    ids = torch.tensor([[[1, 2], [2, 3], [3, 4]], [[1, 1], [2, 2], [3, 3]]])
+    result = {
+        "beam": {"ids": ids, "scores": torch.tensor([[-1., -2., -4.], [-3., -4., -5.]])},
+        "rerank": {
+            "ids": ids.flip(1),
+            "scores": torch.tensor([[1000., 999., 997.], [-2., -4., -5.]]),
+            "click_logits": torch.tensor([[0., 1., 2.], [-1., -2., -3.]]),
+        },
+    }
+    modes = []
+
+    def model_step(model_input, mode):
+        assert model_input is batch
+        modes.append(mode)
+        if mode is ModelMode.TRAIN:
+            return None, torch.tensor(0.75), {}
+        assert mode is ModelMode.INFER
+        return result
+
+    model.model_step = model_step
+    return model, batch, result, modes
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_separate_eval_updates_log_prob_metrics_without_changing_predictions(wrapped):
+    model, batch, result, modes = _separate_eval_fixture()
+    original = deepcopy(result)
+    model.on_validation_epoch_start()
+    for _ in range(2):
+        model.eval_step((batch, None) if wrapped else batch, model.val_loss)
+
+    assert modes == [ModelMode.TRAIN, ModelMode.INFER] * 2
+    torch.testing.assert_close(model.val_loss.compute(), torch.tensor(0.75))
+    torch.testing.assert_close(
+        model.beam_log_prob_accumulator.compute(), result["beam"]["scores"].mean()
+    )
+    # Match joint logging: normalized fused scores, not raw click logits.
+    torch.testing.assert_close(
+        model.click_log_prob_accumulator.compute(),
+        torch.log_softmax(result["rerank"]["scores"], dim=-1).mean(),
+    )
+    assert torch.isfinite(model.click_auc_accumulator.compute())
+    for name, evaluator in model.evaluators.items():
+        assert len(evaluator.calls) == 2
+        for call in evaluator.calls:
+            torch.testing.assert_close(call["marginal_probs"], original[name]["scores"])
+            torch.testing.assert_close(call["generated_ids"], original[name]["ids"])
+        for key, value in result[name].items():
+            torch.testing.assert_close(value, original[name][key])
+
+
+def test_separate_validation_log_prob_metrics_reset_between_epochs():
+    model, batch, result, _ = _separate_eval_fixture()
+    model.on_validation_epoch_start()
+    model.eval_step(batch, model.val_loss)
+    model.on_validation_epoch_start()
+    result["beam"]["scores"] = torch.full((2, 3), -7.)
+    result["rerank"]["scores"] = torch.zeros(2, 3)
+    model.eval_step(batch, model.val_loss)
+    torch.testing.assert_close(model.beam_log_prob_accumulator.compute(), torch.tensor(-7.))
+    torch.testing.assert_close(
+        model.click_log_prob_accumulator.compute(), -torch.log(torch.tensor(3.))
     )
