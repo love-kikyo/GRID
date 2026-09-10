@@ -12,14 +12,19 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: sbatch $0 TEACHER_CKPT" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "Usage: sbatch $0 TEACHER_CKPT [SEED]" >&2
   exit 2
 fi
 
 TEACHER_CKPT=$1
+SEED=${2:-42}
 if [ ! -f "${TEACHER_CKPT}" ]; then
   echo "Teacher checkpoint not found: ${TEACHER_CKPT}" >&2
+  exit 2
+fi
+if ! [[ "${SEED}" =~ ^[0-9]+$ ]]; then
+  echo "SEED must be a non-negative integer: ${SEED}" >&2
   exit 2
 fi
 
@@ -29,8 +34,8 @@ PYTHON_BIN=/home/MMReco2021/.conda/envs/GRID/bin/python
 DATA_ROOT=${GRID_ROOT}/data/taobao_history_last_user_v1
 SEMANTIC_ID_PATH=${GRID_ROOT}/data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy
 JOB_ID=${SLURM_JOB_ID:-local}
-RUN_ID="$(date +%F)/rerank-small-seed42-${JOB_ID}"
-PREFLIGHT_REPORT=${GRID_ROOT}/logs/training_preflight/separate_small_seed42_${JOB_ID}.json
+RUN_ID="$(date +%F)/rerank-small-seed${SEED}-${JOB_ID}"
+PREFLIGHT_REPORT=${GRID_ROOT}/logs/training_preflight/separate_small_seed${SEED}_${JOB_ID}.json
 
 cd "${GRID_ROOT}"
 mkdir -p logs/slurm logs/training_preflight "/tmp/matplotlib-${USER}-${JOB_ID}"
@@ -66,10 +71,10 @@ srun --ntasks=3 --ntasks-per-node=3 --kill-on-bad-exit=1 \
   semantic_id_path="${SEMANTIC_ID_PATH}" \
   num_hierarchies=4 \
   num_embeddings_per_hierarchy=4096 \
-  seed=42 \
+  seed="${SEED}" \
   id="${RUN_ID}" \
   ++should_skip_retry=true \
-  'tags=[taobao-history-last-user-v1,separate-reranker-small,seed42]' \
+  "tags=[taobao-history-last-user-v1,separate-reranker-small,seed${SEED}]" \
   model.sid_teacher_ckpt_path="${TEACHER_CKPT}" \
   data_loading.train_dataloader_config.dataloader.assign_all_files_per_worker=false \
   data_loading.val_dataloader_config.dataloader.num_workers=2 \

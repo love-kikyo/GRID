@@ -12,14 +12,25 @@
 
 set -euo pipefail
 
+if [ "$#" -gt 1 ]; then
+  echo "Usage: sbatch $0 [SEED]" >&2
+  exit 2
+fi
+
+SEED=${1:-42}
+if ! [[ "${SEED}" =~ ^[0-9]+$ ]]; then
+  echo "SEED must be a non-negative integer: ${SEED}" >&2
+  exit 2
+fi
+
 TASK_ROOT=/mnt/beegfs/home/MMReco2021/liuyu
 GRID_ROOT=${TASK_ROOT}/GRID
 PYTHON_BIN=/home/MMReco2021/.conda/envs/GRID/bin/python
 DATA_ROOT=${GRID_ROOT}/data/taobao_history_last_user_v1
 SEMANTIC_ID_PATH=${GRID_ROOT}/data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy
 JOB_ID=${SLURM_JOB_ID:-local}
-RUN_ID="$(date +%F)/sid-seed42-${JOB_ID}"
-PREFLIGHT_REPORT=${GRID_ROOT}/logs/training_preflight/sid_seed42_${JOB_ID}.json
+RUN_ID="$(date +%F)/sid-seed${SEED}-${JOB_ID}"
+PREFLIGHT_REPORT=${GRID_ROOT}/logs/training_preflight/sid_seed${SEED}_${JOB_ID}.json
 
 cd "${GRID_ROOT}"
 mkdir -p logs/slurm logs/training_preflight "/tmp/matplotlib-${USER}-${JOB_ID}"
@@ -52,10 +63,10 @@ srun --ntasks=3 --ntasks-per-node=3 --kill-on-bad-exit=1 \
   semantic_id_path="${SEMANTIC_ID_PATH}" \
   num_hierarchies=4 \
   num_embeddings_per_hierarchy=4096 \
-  seed=42 \
+  seed="${SEED}" \
   id="${RUN_ID}" \
   ++should_skip_retry=true \
-  'tags=[taobao-history-last-user-v1,tiger-sid-stage,seed42]' \
+  "tags=[taobao-history-last-user-v1,tiger-sid-stage,seed${SEED}]" \
   data_loading.train_dataloader_config.dataloader.assign_all_files_per_worker=false \
   data_loading.val_dataloader_config.dataloader.num_workers=2 \
   data_loading.test_dataloader_config.dataloader.num_workers=3 \

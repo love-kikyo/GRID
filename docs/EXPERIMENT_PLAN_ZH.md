@@ -43,9 +43,16 @@
 | RecoChain-pointwise | 同 teacher；联合 SID + pointwise rerank | 与 listwise 的目标函数对照 |
 | Separate-small | 冻结同 teacher；训练独立 candidate-aware reranker | 与分离式 generate-then-rerank 的对照 |
 
-作者已确认多 seed 有必要。先完成 seed 42 的全量选权与评估，再安排匹配的多 seed：建议至少 3 个训练 seed（具体编号待固定），每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照；不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。多 seed 不等于为每个推理 beta 重训。
+作者已确认多 seed 有必要，seed 42 全量评估已验收。2026-09-10 固定训练 seed 为 **42、43、44**，新增 43 / 44；每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照，不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。多 seed 不等于为每个推理 beta 重训。
 
-- [ ] 下一优先项：固定新增两个 seed、资源与依赖安排，执行各自 teacher + 三个对照；沿用相同选权 / test 规则，汇总训练 seed 的均值与波动。Seed 42 全量验收已完成，尚未提交新增训练。
+- [x] 固定新增 seed 43 / 44 及分阶段资源安排；SID 与 separate launcher 支持 seed 参数，默认仍为 42，listwise / pointwise 已支持。
+- [ ] 本轮先完成 SID teacher 43 → 44，各使用单节点 3-GPU DDP；以 afterok 串行调度、失败依赖自动取消。两者从头初始化，不加载 seed 42 权重；不提前提交尚未绑定 best checkpoint 的下游任务。
+- [ ] Teacher 完成后逐一验收 best checkpoint / run / preflight，再为相同 seed 的 listwise、pointwise、separate 绑定同一 teacher；训练和选优预算与 seed 42 一致。
+- [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
+
+启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游均为 `LAUNCHER TEACHER_CKPT [SEED]`。run ID、tags、preflight 名称和实际 Hydra `seed` 同步；本轮只改两个原本写死 42 的 launcher 参数，不改模型、损失或数据规则。43 项无 GPU 的 Bash 参数传递测试通过，覆盖四个入口的 42 / 43 / 44、默认值、非法参数、checkpoint 路径和 3-task 分布式保护；新旧默认入口实际参数逐字一致。
+
+时间仅作资源估计：按 seed 42 的实际耗时，两份 teacher 合计约 23 小时；新增两组完整四模型训练在 3 GPU 串行下约 6–7 天，另加评估时间。实际耗时取决于各 seed 的早停与排队，不能保证相同步数结束。任务状态只在 [Run 台账](RUN_LEDGER_ZH.md) 记录。
 
 共同锁定数据、SID 编码、初始化 checkpoint、beam size、预算 / early-stop 口径、目标标签构造、调参规则。训练时 no-hit 辅助候选可按实现插入 GT；推理候选不得注入 GT。
 
