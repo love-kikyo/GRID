@@ -1,16 +1,16 @@
 # Run 台账
 
-最后核验：2026-09-09 23:50（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-10 14:08（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132685 | 待开始 | 四模型全量 test 的配对统计，CPU | PENDING；afterok:132681:132682:132683:132684 |
-| 132684 | 待开始 | SID teacher best 的全量 test 导出，单 GPU | PENDING；afterok:132683，接续一张 GPU |
-| 132683 | 09-09 23:45 | Separate best 的全量 test 导出，单 GPU | RUNNING；目标 2,061,101 条 |
-| 132682 | 09-09 23:45 | Pointwise best 的全量 test 导出，单 GPU | RUNNING；目标 2,061,101 条 |
-| 132681 | 09-09 23:45 | Listwise best 的全量 test 导出，单 GPU | RUNNING；已记录 112,000 条，未完成 |
+| 132685 | 09-10 01:46 | 四模型全量 test 的配对统计，CPU | COMPLETED / 0:0，1m23s；01:47:28 结束，11 项比较 |
+| 132684 | 09-10 00:34 | SID teacher best 的全量 test 导出，单 GPU | COMPLETED / 0:0，1h11m51s；01:46:05 结束，2,061,101 条 |
+| 132683 | 09-09 23:45 | Separate best 的全量 test 导出，单 GPU | COMPLETED / 0:0，48m51s；09-10 00:34:14 结束，2,061,101 条 |
+| 132682 | 09-09 23:45 | Pointwise best 的全量 test 导出，单 GPU | COMPLETED / 0:0，1h13m08s；09-10 00:58:31 结束，2,061,101 条 |
+| 132681 | 09-09 23:45 | Listwise best 的全量 test 导出，单 GPU | COMPLETED / 0:0，1h13m36s；09-10 00:58:59 结束，2,061,101 条 |
 | 132678 | 09-09（选权） | Separate validation-only beta 选权，CPU | COMPLETED，50s；51 点网格中选 beta=0.50 |
 | 132677 | 09-09 23:28 | Separate best 的完整 validation 导出，单 GPU | COMPLETED，8m55s；347,416 唯一用户，验收通过 |
 | 132676 | 09-09（选权） | Pointwise validation-only beta 选权，CPU | COMPLETED，47s；beta=0.50 |
@@ -23,7 +23,7 @@
 | 132665 | 09-09（验收） | Listwise best checkpoint 的 val 导出，单 GPU | COMPLETED，1m19s；64 条；不是重训 |
 | 132051 | 09-09 16:27 | 正式 separate-small，seed 42，3 GPU | COMPLETED，4h25m05s；early stop 35000，best 10000；两个验证辅助字段 NaN，见下文 |
 | 132050 | 09-08 09:26 | 正式 joint pointwise，seed 42，3 GPU | COMPLETED，31h01m13s；early stop 115000，best 90000；已重载测试 |
-| 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | COMPLETED，32h55m25s；训练产物验收通过，best step 100000；全量评估待做 |
+| 132049 | 09-07 00:31 | 正式 joint listwise，seed 42，3 GPU | COMPLETED，32h55m25s；训练产物验收通过，best step 100000；全量评估见 132681 / 132685 |
 | 132048 | 09-07 00:21 | 首次 CPU 全量跨 split 边界审计，无模型训练 | COMPLETED，7m08s；14 项新工具测试通过；完整计数有重复发现，代码 b838070 |
 | 132027 | 09-06 14:20 | Separate 3-GPU staged smoke | COMPLETED，1m00s；冻结 teacher 前后一致，2 optimizer steps，代码 7ae9bb4 |
 | 132026 | 09-06 14:19 | Joint pointwise 3-GPU staged smoke | COMPLETED，59s；3 rank 验收通过，2 optimizer steps，代码 7ae9bb4 |
@@ -48,13 +48,51 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：四模型全量 test 与配对统计
+## 已验收：seed 42 四模型全量 test 与配对统计
 
 Validation 验收通过后，提交前工作树干净，源码提交 `3db28b13914846e18cf0c0aa506aec3d0ee302ed`。四模型仍使用现有 best checkpoint，每份导出覆盖当前 test 的 2,061,101 条，不去重、不重训。首批三个 reranker 各用单 GPU，SID 依赖 separate 成功后接续；配对统计依赖四份导出全部成功。完整命令、依赖、冻结选权文件 SHA256 见 [test 启动记录](../logs/training_launch/full_test_seed42_2026-09-09.json)。
 
 Test 标签为各方法的 `*_test_full_v1`；`MAX_BATCHES` 为空、batch size 32、单 worker、BF16。Teacher 和 separate 分别沿用已验收的精确源码兼容文件，joint 默认严格匹配。导出保留原 run 的候选、raw logits 和 runtime 排序；配对分析从原始分数按已冻结的 validation beta=0.50 重新排序，而不是把 run 原 beta=0.1 的 `rerank_sid` 直接当作 selected 结果。SID 只使用 beam 基线，不使用其未训练的 rerank head 作方法结果。
 
-132685 直接使用支持任意模型数的 `scripts/analyze_paired_evaluation.py`，不是仅支持三模型参数的旧 launcher。预先固定 11 项比较：各 selected 对 SID beam（3）、listwise selected 对 pointwise / separate selected（2）、各方法 selected 对自身 beam / click-only（6）。Recall / NDCG@5、@10；5000 次 paired bootstrap、95% CI、seed 2027，输出为 `paired_report_seed42_four_models_full_v1`。区间是逐项用户配对区间，不是多 seed 波动或同时覆盖所有比较的校正区间；test 输出及统计仍待完成与验收。
+132685 直接使用支持任意模型数的 `scripts/analyze_paired_evaluation.py`，不是仅支持三模型参数的旧 launcher。预先固定 11 项比较：各 selected 对 SID beam（3）、listwise selected 对 pointwise / separate selected（2）、各方法 selected 对自身 beam / click-only（6）。Recall / NDCG@5、@10；5000 次 paired bootstrap、95% CI、seed 2027，输出为 `paired_report_seed42_four_models_full_v1`。五项作业及 Slurm steps 均 COMPLETED / 0:0，从首批导出启动到统计完成共 2h02m05s。
+
+### 验收证据与主表
+
+四份导出各 2,061,101 个唯一 int64 user ID；逐条 user ID、输入 example hash、target SID 完全一致。所有分数有限、形状 / SID 范围正确；每行 20 个候选无重复，同一模型 beam 与 runtime rerank 候选多重集一致，分数按降序保存。Separate 与 SID 的全量 beam SID 和分数逐值完全一致。
+
+重新读取四个 checkpoint、三份 validation 输入 / sidecar 和冻结选权，SHA256 与既有记录一致；本次额外为四份 test HDF5 / sidecar 登记 SHA256。源码 / 运行配置 / 数据清单指纹与报告绑定也通过，未重扫原 TFRecords。SID / separate 精确源码兼容文件及原 preflight 绑定再次核对通过。Separate 的 missing=0 / unexpected=62 仍仅为此前已验收的延迟 teacher 别名；不是新权重丢失。stderr 未检出致命错误；只读 NumPy 转 tensor 警告仍在，当前路径先转 long 并做非原地加法，没有向只读映射写入。
+
+从完整 HDF5 用独立的单 GT 命中名次公式重算指标及逐样本差值；11 项比较中 44 组指标的均值 / 差值与原报告在绝对容差 1e-12 内一致。独立累计差值分布后复用既有 bootstrap 函数与同一随机序列，44 个区间复算一致；22 组 Recall 胜负计数及精确二项检验也一致。没有再次进行 GPU 推理或权重搜索。
+
+证据：[机器可读验收](../logs/analysis/paired_evaluation/test_acceptance_seed42_full_v1.json)、[只读验收脚本](../logs/analysis/paired_evaluation/accept_test_seed42_full_v1.py)、[完整配对报告](../logs/analysis/paired_evaluation/paired_report_seed42_four_models_full_v1.md)、[原始统计 JSON](../logs/analysis/paired_evaluation/paired_report_seed42_four_models_full_v1.json)。验收脚本从任意目录用 GRID 环境 Python 执行，仅向 stdout 输出结果，不覆盖原产物。
+
+下表为当前完整 test、seed 42、0–1 标度；SID 使用 beam，其余使用 validation 冻结的 beta=0.50、FP32 融合。这一主表与下面的有限 batch 训练日志分开保留。
+
+| 方法 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| SID / beam-only | 0.267156 | 0.271581 | 0.250433 | 0.251868 |
+| RecoChain-listwise / 融合 | 0.284292 | 0.287060 | 0.261166 | 0.262070 |
+| RecoChain-pointwise / 融合 | 0.280813 | 0.284096 | 0.259177 | 0.260254 |
+| Separate-small / 融合 | 0.272527 | 0.274050 | 0.254558 | 0.255053 |
+
+Listwise 相对 SID：Recall@5 相对增加 6.414%，NDCG@10 增加 4.051%。相对 pointwise：Recall@5 差值 +0.003479（+0.3479 个百分点，相对 +1.239%），95% 配对 CI 为 [+0.003363, +0.003599]；NDCG@10 差值 +0.001816，CI 为 [+0.001743, +0.001889]。Listwise 对三个主表基线的四项指标差值区间均高于零。这是本 seed / 本 test 的逐用户证据，不替代多 seed。
+
+### 不能混淆的结果解释
+
+自然 beam@20 的 GT 覆盖率：listwise 0.289569（596,831 条命中）、pointwise 0.286810（591,144）、SID / separate 0.275886（568,629）。Joint 模型更新了生成器，因此跨模型的整体差异同时包含候选覆盖和排序差异；不能把融合总收益全部归因于纯重排头。对同一模型，重排不改变候选集及该覆盖率。
+
+对每个模型自身的同一候选池，三种打分方式的 NDCG@10 如下；报告中的 `click` 是 raw rerank logit 排序，不是曝光 CTR：
+
+| 模型 | Beam-only | Rerank-only | 固定融合 |
+| --- | ---: | ---: | ---: |
+| Listwise | 0.258045 | 0.254695 | 0.262070 |
+| Pointwise | 0.256797 | 0.259444 | 0.260254 |
+| Separate | 0.251868 | 0.253829 | 0.255053 |
+
+- Listwise 的纯重排 NDCG@10 低于自身 beam-only，融合后才达到主表最好结果；不能声称纯重排头在所有指标上更优。上表中未预声明的额外对比只作描述，不补做事后显著性检验。
+- 44 个预声明差值区间中，43 个高于零；例外是 pointwise 融合对纯重排的 Recall@5：差值 +0.000046，CI [-0.000036, +0.000131]，p=0.277，不能宣称该项显著改善。
+- 区间为逐项用户重采样区间，不是训练 seed 波动或多重比较同时覆盖保证。极小的 Recall 精确检验 p 值在原报告中有数值下溢为 `0` 的情况，不写成数学意义上的 p=0；NDCG 只报告 bootstrap CI。
+- 现有 split 重叠限制继续按 [数据协议](DATA_PROTOCOL_ZH.md) 披露；beta=0.50 是已冻结 validation 网格上界，不是全局最优。验收通过意味着本轮评估完整且可追溯，不意味着实验整体或论文已收尾。
 
 ## 已完成：全量 validation 与固定 checkpoint 融合校准
 
@@ -166,7 +204,7 @@ Separate 原 preflight SHA256 `07268ef4eec80fc999b232d20993b5caba38ff97e640d1fea
 
 融合数值核对需遵循实际 AMP 运算：raw logits 在 BF16 下乘 0.1 后与 beam 相加，导出后全部转存 FP32。直接在 NumPy 用 FP32 重算出现最大约 0.003125 的舍入差异；按实际 BF16 乘法重算后三个新模型的融合分数通过 `rtol=atol=1e-6` 检查。后续全量离线选权沿用统一 FP32 分析口径，不把它与训练日志结果混为同一数值口径。
 
-本阶段产物验收通过，不代表全量 validation / test、去重复掩码、融合选权或论文统计完成。真实导出走 INFER；日志修复由上述定向单测验证，本次未重跑 DDP validation。
+上述 smoke 阶段只验收小规模产物，当时不代表全量 validation / test、融合选权或论文统计完成；随后全量验收见本页前文。真实导出走 INFER；日志修复由上述定向单测验证，当时未重跑 DDP validation。
 
 ## 131908：已完成的 SID teacher
 
