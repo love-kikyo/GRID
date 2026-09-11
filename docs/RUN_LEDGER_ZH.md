@@ -1,13 +1,13 @@
 # Run 台账
 
-最后核验：2026-09-10 14:27（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-11 15:22（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 132733 | 待开始 | 新增 seed 44 SID teacher 正式训练，3 GPU | PENDING；afterok:132732，失败依赖自动取消；不是复用 seed 42 teacher |
-| 132732 | 09-10 14:25 | 新增 seed 43 SID teacher 正式训练，3 GPU | RUNNING；预检通过，world size 3，首批 25 行训练 CSV 数值有限 |
+| 132733 | 09-11 02:06 | 新增 seed 44 SID teacher 正式训练，3 GPU | COMPLETED / 0:0，11h03m30s；13:10:05 结束，早停 115000、best 90000 |
+| 132732 | 09-10 14:25 | 新增 seed 43 SID teacher 正式训练，3 GPU | COMPLETED / 0:0，11h41m23s；09-11 02:06:35 结束，达到 120000 上限、best 100000 |
 | 132685 | 09-10 01:46 | 四模型全量 test 的配对统计，CPU | COMPLETED / 0:0，1m23s；01:47:28 结束，11 项比较 |
 | 132684 | 09-10 00:34 | SID teacher best 的全量 test 导出，单 GPU | COMPLETED / 0:0，1h11m51s；01:46:05 结束，2,061,101 条 |
 | 132683 | 09-09 23:45 | Separate best 的全量 test 导出，单 GPU | COMPLETED / 0:0，48m51s；09-10 00:34:14 结束，2,061,101 条 |
@@ -50,17 +50,36 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：匹配多 seed 的 SID teacher 43 / 44
+## 已完成：匹配多 seed 的 SID teacher 43 / 44
 
-固定训练 seed 为 42 / 43 / 44；seed 42 全量结果保留，本轮只提交新增 teacher 43 → 44。提交前工作树干净，源码提交 `91fa232aea1397967195139a94a2c7f7600505d9`。两个任务各用 aias-compute-01 上 3 GPU、3 tasks × 8 CPU、60G 内存，max optimizer steps / scheduler 120000、BF16、全局 batch 384、原 validation Recall@5 早停规则不变。完整命令、依赖与后续匹配原则见 [启动记录](../logs/training_launch/multiseed_teachers_2026-09-10.json)。
+固定训练 seed 为 42 / 43 / 44；seed 42 全量结果保留，09-10 提交新增 teacher 43 → 44。提交前工作树干净，源码提交 `91fa232aea1397967195139a94a2c7f7600505d9`。两个任务各用 aias-compute-01 上 3 GPU、3 tasks × 8 CPU、60G 内存，max optimizer steps / scheduler 120000、BF16、全局 batch 384、原 validation Recall@5 早停规则不变。完整命令、依赖与后续匹配原则见 [启动记录](../logs/training_launch/multiseed_teachers_2026-09-10.json)。
 
-本轮仅为 SID 与 separate launcher 添加 seed 参数；listwise / pointwise 原已支持。默认仍为 42，run ID、tags、preflight 文件名和 Hydra seed 一致。新增 43 项无 GPU 的 Bash 调用测试：修改前 16 failed / 27 passed，修改后 43 passed；四份 launcher 语法检查通过，新旧默认 seed 42 的实际 preflight / training 参数逐字一致。模型及核心配置未改；新任务使用当前已修复的空 worker 保护，不改写旧 teacher 的 preflight。
+启动前仅为 SID 与 separate launcher 添加 seed 参数；listwise / pointwise 原已支持。默认仍为 42，run ID、tags、preflight 文件名和 Hydra seed 一致。新增 43 项无 GPU 的 Bash 调用测试：修改前 16 failed / 27 passed，修改后 43 passed；四份 launcher 语法检查通过，新旧默认 seed 42 的实际 preflight / training 参数逐字一致。模型及核心配置未改；新任务使用当前已修复的空 worker 保护，不改写旧 teacher 的 preflight。
 
-132732 已于 14:25:12 开始；[preflight](../logs/training_preflight/sid_seed43_132732.json) 通过，SHA256 `c1c3bdcc5326d35640e22d6ca689e9a0f647d01b96b040346f766d81212c7c35`。数据计数、SID / item2row 身份、三个清单指纹与已验收 seed 42 teacher 完全一致；initialization checkpoint 为 null，源码指纹与当前启动版本一致。
+09-11 检查：两项主作业及所有 Slurm steps 均 COMPLETED / 0:0，串行总耗时 22h44m53s。两份实际运行配置与 seed 42 逐字段比较，仅 `seed`、`id`、`tags` 不同；每个任务的三个 rank 均使用对应 seed，world_size=3、current_run=0、restarts=[]，从头初始化而非加载旧 teacher。全部非空 CSV 数值有限；未检出 traceback、OOM、CUDA / NCCL 致命错误或空累加器警告。`OUT_OF_RANGE: End of sequence` 出现在正常数据遍历结束处，作业随后继续执行并正常结束，不是训练崩溃。
 
-实际 [运行配置](../logs/train/runs/2026-09-10/sid-seed43-132732/.hydra/config.yaml) 与 seed 42 逐字段比较，仅 `seed`、`id`、`tags` 不同。三个 rank 均日志确认 seed 43，NCCL 注册 3 processes、local rank 0 / 1 / 2；[重启记录](../logs/train/runs/2026-09-10/sid-seed43-132732/metadata/restart_metadata.json) 为 world_size=3、current_run=0、restarts=[]。14:27 检查时 [CSV](../logs/train/runs/2026-09-10/sid-seed43-132732/csv/metrics.csv) 已有 25 行，最新记录 step=124、train/loss=34.050049，所有非空数值有限。这是启动验收，不代表训练效果或最终 checkpoint 验收。
+| Seed | 停止 step / 原因 | Best optimizer step | Best validation Recall@5 | CSV 行数 / validation 次数 / test 次数 |
+| --- | --- | ---: | ---: | --- |
+| 43 | 120000 / 达到 max steps，best 之后仅 4 次未改善 | 100000 | 0.274226 | 24025 / 24 / 1 |
+| 44 | 115000 / 连续 5 次未改善，正常早停 | 90000 | 0.270626 | 23024 / 23 / 1 |
 
-132733 尚未开始；其 preflight 和 run 目录将在运行时生成，当前不虚构日期目录或 checkpoint。没有提交下游六项训练或新增 seed 的评估任务。后续先验收各 teacher 的 best checkpoint，再为该 seed 的 listwise / pointwise 初始化、separate 冻结绑定同一个 teacher，不使用 seed 42 权重替代。新增 seed 各自遵循同一 validation 网格选权，不直接复制 seed 42 的 beta=0.50，也不根据 test 扩网格。耗时估计与验收步骤见 [实验计划](EXPERIMENT_PLAN_ZH.md)。
+两个 best checkpoint 均存在，各 5,701,604,302 bytes，ZIP 目录可读（134 个成员）；本次登记 SHA256。训练 stderr 明确记录重新加载下列 best 后测试，并正常退出。本轮未另做逐张量有限性检查、完整 ZIP CRC 扫描或独立 GPU 推理；训练文件核验通过不等于新 seed 全量评估完成。
+
+- Seed 43：[best checkpoint](../logs/train/runs/2026-09-10/sid-seed43-132732/checkpoints/checkpoint_000_100000.ckpt)，SHA256 `6514f4a6af6811239f7d0ec66032eaaa8283c79f41f91c223b7657175df9e446`；[配置](../logs/train/runs/2026-09-10/sid-seed43-132732/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-10/sid-seed43-132732/csv/metrics.csv)、[stderr](../logs/slurm/GRID-SID43-HLastV1-132732.err)、[preflight](../logs/training_preflight/sid_seed43_132732.json)。
+- Seed 44：[best checkpoint](../logs/train/runs/2026-09-11/sid-seed44-132733/checkpoints/checkpoint_000_090000.ckpt)，SHA256 `3f8b60dad3172ffc666b71d5ad0708e348363c44589d31f9d6eb3639c8d85da4`；[配置](../logs/train/runs/2026-09-11/sid-seed44-132733/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-11/sid-seed44-132733/csv/metrics.csv)、[stderr](../logs/slurm/GRID-SID44-HLastV1-132733.err)、[preflight](../logs/training_preflight/sid_seed44_132733.json)。
+
+两份 preflight 均通过，数据计数、SID / item2row 身份及三个清单指纹与 seed 42 完全一致，initialization checkpoint 为 null；当前重新计算的全部预检源码与清单 SHA256 匹配，未重扫全部 TFRecords。完整指纹及本次核验范围见 [机器可读状态记录](../logs/training_launch/multiseed_teachers_status_2026-09-11.json)。
+
+训练自带 test 的 beam-only 指标如下（0–1 标度，有每 rank 10000 batches 上限；不是全量主表）。SID 的 rerank head 未训练，不使用其辅助 rerank 指标作为方法结果。
+
+| Seed | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| 43 | 0.269751 | 0.273784 | 0.251623 | 0.252930 |
+| 44 | 0.265751 | 0.270093 | 0.249298 | 0.250707 |
+
+Validation 的 CSV step=99999 / 89999 对应保存时 optimizer step=100000 / 90000；test 行的 step=120000 / 115000 是停止时记账，不代表测试了最后权重。上述 validation 仍有每 rank 5000 batches 上限，不与全量选权结果混用。
+
+本轮只检查与记录，没有提交六项下游训练或新增 seed 的评估。后续为该 seed 的 listwise / pointwise 初始化、separate 冻结绑定同一个已核验 best teacher，不使用 seed 42 权重替代；各自遵循同一 validation 网格选权，不直接复制 seed 42 的 beta=0.50，也不根据 test 扩网格。
 
 ## 已验收：seed 42 四模型全量 test 与配对统计
 

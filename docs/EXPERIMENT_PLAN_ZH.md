@@ -46,8 +46,9 @@
 作者已确认多 seed 有必要，seed 42 全量评估已验收。2026-09-10 固定训练 seed 为 **42、43、44**，新增 43 / 44；每个 seed 训练自己的 SID teacher，再由该 teacher 初始化该 seed 的三种对照，不是只给所提方法补 seed。同一数据划分 / SID 映射固定，训练随机性与数据划分随机性分开；若仅共享 seed 42 teacher 重训下游，只能解释为下游随机性实验。多 seed 不等于为每个推理 beta 重训。
 
 - [x] 固定新增 seed 43 / 44 及分阶段资源安排；SID 与 separate launcher 支持 seed 参数，默认仍为 42，listwise / pointwise 已支持。
-- [ ] 本轮先完成 SID teacher 43 → 44，各使用单节点 3-GPU DDP；以 afterok 串行调度、失败依赖自动取消。两者从头初始化，不加载 seed 42 权重；不提前提交尚未绑定 best checkpoint 的下游任务。
-- [ ] Teacher 完成后逐一验收 best checkpoint / run / preflight，再为相同 seed 的 listwise、pointwise、separate 绑定同一 teacher；训练和选优预算与 seed 42 一致。
+- [x] 完成 SID teacher 43 → 44，各使用单节点 3-GPU DDP；以 afterok 串行调度。两者从头初始化，不加载 seed 42 权重。
+- [x] 核验两份 teacher 的停止原因、best checkpoint 文件 / SHA256、run / preflight 和训练重载测试证据；范围与未做的独立张量检查见台账，不等于完整 split 推理通过。
+- [ ] 为相同 seed 的 listwise、pointwise、separate 绑定同一 best teacher 并提交训练；训练和选优预算与 seed 42 一致。本次状态检查未提交新任务。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游均为 `LAUNCHER TEACHER_CKPT [SEED]`。run ID、tags、preflight 名称和实际 Hydra `seed` 同步；本轮只改两个原本写死 42 的 launcher 参数，不改模型、损失或数据规则。43 项无 GPU 的 Bash 参数传递测试通过，覆盖四个入口的 42 / 43 / 44、默认值、非法参数、checkpoint 路径和 3-task 分布式保护；新旧默认入口实际参数逐字一致。
