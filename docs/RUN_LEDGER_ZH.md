@@ -1,11 +1,18 @@
 # Run 台账
 
-最后核验：2026-09-11 15:22（Asia/Shanghai）。状态来自 `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-11 15:41（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 132793 | 未开始 | 正式 joint pointwise，seed 43，3 GPU | PENDING（Dependency），`afterok:132786`；替代已取消的 132787，唯一保留的等待项 |
+| 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132790 | 未开始 | 原计划 joint pointwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132789 | 未开始 | 原计划 joint listwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132788 | 未开始 | 原计划 separate-small，seed 43 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132787 | 未开始 | 原计划 joint pointwise，seed 43 | CANCELLED，15:36:34 撤销，耗时 0；后以 132793 重新提交 |
+| 132786 | 09-11 15:30 | 正式 joint listwise，seed 43，3 GPU | RUNNING；启动核验通过，尚未完成训练 / 产物验收 |
 | 132733 | 09-11 02:06 | 新增 seed 44 SID teacher 正式训练，3 GPU | COMPLETED / 0:0，11h03m30s；13:10:05 结束，早停 115000、best 90000 |
 | 132732 | 09-10 14:25 | 新增 seed 43 SID teacher 正式训练，3 GPU | COMPLETED / 0:0，11h41m23s；09-11 02:06:35 结束，达到 120000 上限、best 100000 |
 | 132685 | 09-10 01:46 | 四模型全量 test 的配对统计，CPU | COMPLETED / 0:0，1m23s；01:47:28 结束，11 项比较 |
@@ -50,6 +57,19 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
+## 当前：seed 43 listwise 运行，pointwise 依赖等待
+
+09-11 15:30 曾提交六项串行下游训练，源码 `19a4fcbda4ce36f0983230bed170ce7b00dcd9b4`，提交前工作树干净。作者要求缩小提交粒度后，15:36:34 撤销了五项未启动作业；随后明确应保留“1 个运行 + 1 个依赖等待”，因此 15:41:35 仅重新提交 pointwise 为 132793，仍依赖 `afterok:132786` 并设置 `kill-on-invalid-dep=yes`。重新提交时源码与干净状态不变。其余四项不再排队，验收并确认后再逐项提交；取消记录不是训练失败，没有删除文件。
+
+当前两项均为正式 SID + rerank 联合训练，不是重训 SID-only teacher。两者从 seed 43 teacher 132732 的同一 best step 100000 初始化，仅加载权重、重新初始化 optimizer；不是从 seed 42 或当前 listwise 的输出初始化 pointwise。各用 3-GPU / 3-task DDP、60G、max optimizer steps / scheduler 120000，训练与选优预算沿用 seed 42。完整命令、teacher SHA256、原始六项提交及本次撤销 / 替代关系见 [启动记录及调度修订](../logs/training_launch/multiseed_downstream_2026-09-11.json)。
+
+132786 启动核验：preflight 通过，数据 / SID / 映射与 seed 42 一致，初始化绑定 seed 43 已核验 checkpoint；实际 Hydra 配置相对 seed 42 listwise 仅 `seed`、`id`、`tags`、`model.manual_ckpt_path` 四项变化。`training_task=click`、`rerank_objective=listwise`、`load_only_weights=true`、`ckpt_path=null`；三个 rank seed 均为 43，world_size=3、current_run=0、restarts=[]。15:37 CSV 已记录 60 行、最近 step=299，所有非空数值有限；stderr 未检出致命错误。这只是启动检查，不是训练完成或效果结论。
+
+- 132786：[run](../logs/train/runs/2026-09-11/click-listwise-seed43-132786)、[preflight](../logs/training_preflight/listwise_seed43_132786.json)（SHA256 `b7752c490736f79bf5d6b3d33c17f06f5cece56a08176f07ba666b0c5ca808f3`）、[stderr](../logs/slurm/GRID-List43-HLastV1-132786.err)。
+- 132793：尚无 run / preflight；启动时生成 `logs/train/runs/<启动日期>/click-pointwise-seed43-132793` 和 `logs/training_preflight/pointwise_seed43_132793.json`。不将预期路径当作已有产物。
+
+新 seed 的全量 validation / test 尚未提交，仍须固定各自 best checkpoint 后沿用原选权与配对协议。
+
 ## 已完成：匹配多 seed 的 SID teacher 43 / 44
 
 固定训练 seed 为 42 / 43 / 44；seed 42 全量结果保留，09-10 提交新增 teacher 43 → 44。提交前工作树干净，源码提交 `91fa232aea1397967195139a94a2c7f7600505d9`。两个任务各用 aias-compute-01 上 3 GPU、3 tasks × 8 CPU、60G 内存，max optimizer steps / scheduler 120000、BF16、全局 batch 384、原 validation Recall@5 早停规则不变。完整命令、依赖与后续匹配原则见 [启动记录](../logs/training_launch/multiseed_teachers_2026-09-10.json)。
@@ -79,7 +99,7 @@
 
 Validation 的 CSV step=99999 / 89999 对应保存时 optimizer step=100000 / 90000；test 行的 step=120000 / 115000 是停止时记账，不代表测试了最后权重。上述 validation 仍有每 rank 5000 batches 上限，不与全量选权结果混用。
 
-本轮只检查与记录，没有提交六项下游训练或新增 seed 的评估。后续为该 seed 的 listwise / pointwise 初始化、separate 冻结绑定同一个已核验 best teacher，不使用 seed 42 权重替代；各自遵循同一 validation 网格选权，不直接复制 seed 42 的 beta=0.50，也不根据 test 扩网格。
+15:22 的 teacher 核验阶段只检查与记录；随后下游提交及队列调整见前节，新增 seed 的评估仍未提交。该 seed 的 listwise / pointwise 初始化、separate 冻结绑定同一个已核验 best teacher，不使用 seed 42 权重替代；各自遵循同一 validation 网格选权，不直接复制 seed 42 的 beta=0.50，也不根据 test 扩网格。
 
 ## 已验收：seed 42 四模型全量 test 与配对统计
 
