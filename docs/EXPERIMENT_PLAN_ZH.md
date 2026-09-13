@@ -49,8 +49,10 @@
 - [x] 完成 SID teacher 43 → 44，各使用单节点 3-GPU DDP；以 afterok 串行调度。两者从头初始化，不加载 seed 42 权重。
 - [x] 核验两份 teacher 的停止原因、best checkpoint 文件 / SHA256、run / preflight 和训练重载测试证据；范围与未做的独立张量检查见台账，不等于完整 split 推理通过。
 - [x] 固定各 seed 的共同 best teacher 绑定与既有训练预算；先安排 seed 43 listwise 和唯一依赖后继 pointwise，具体 job / 撤销记录见台账。
-- [ ] 完成并验收 seed 43 listwise / pointwise；训练和选优预算与 seed 42 一致，不凭 Slurm 依赖通过认定产物已验收。
-- [ ] 验收后逐项安排 seed 43 separate、seed 44 listwise / pointwise / separate，保持最多一项依赖等待；原四个排队 job 已在启动前取消，不代表这些实验已完成。
+- [x] Seed 43 listwise 训练产物验收通过：停止 / 选优、配置 / preflight、CSV 数值及 checkpoint 文件 / 重载测试证据已核验；不等于全量评估完成。
+- [ ] 完成并验收 seed 43 pointwise（运行中）；训练和选优预算与 seed 42 一致，不凭 Slurm 依赖通过认定产物已验收。
+- [x] Listwise 验收后，按 09-13 作者要求仅补交 seed 43 separate-small，作为 pointwise 的唯一依赖等待项；冻结同 seed SID teacher，具体新旧 job 关系见台账。
+- [ ] 完成并验收 seed 43 separate；再逐项安排 seed 44 listwise / pointwise / separate，保持最多一项依赖等待。Seed 44 原排队作业已取消，目前没有重新提交。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游均为 `LAUNCHER TEACHER_CKPT [SEED]`。run ID、tags、preflight 名称和实际 Hydra `seed` 同步；09-10 仅为两个原本写死 42 的 launcher 添加参数，不改模型、损失或数据规则。43 项无 GPU 的 Bash 参数传递测试已通过，覆盖四个入口的 42 / 43 / 44、默认值、非法参数、checkpoint 路径和 3-task 分布式保护；新旧默认入口实际参数逐字一致。本次调度调整不修改训练代码 / 配置。
