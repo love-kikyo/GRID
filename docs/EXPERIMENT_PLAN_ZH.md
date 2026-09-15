@@ -53,7 +53,9 @@
 - [x] Seed 43 pointwise 训练产物验收通过；达到 120000 步上限，best 100000，已重载测试，配置 / preflight / CSV / 文件指纹通过。
 - [x] Listwise 验收后，按 09-13 作者要求仅补交 seed 43 separate-small，作为 pointwise 的唯一依赖等待项；冻结同 seed SID teacher，具体新旧 job 关系见台账。
 - [x] Seed 43 separate 训练产物验收通过；正常早停 35000，best 10000，辅助日志有限，有限 batch test 的四项 beam 汇总指标与 teacher 一致；不等于冻结参数逐值核对或全量推理已通过。
-- [ ] 确认后逐项安排 seed 44 listwise / pointwise / separate，保持最多一项依赖等待。Seed 44 原排队作业已取消，目前没有重新提交；09-15 本次只验收，不启动任务。
+- [x] 09-15 seed 43 验收后，作者确认继续；仅启动 seed 44 listwise，并提交 pointwise 作为唯一依赖后继。共同初始化为 seed 44 SID teacher best 90000，预算 / 数据 / 损失不变。
+- [ ] 完成并验收 seed 44 listwise / pointwise；启动或依赖成功不等于产物验收。
+- [ ] 确认后再提交 seed 44 separate-small 并验收；原 separate 排队 job 已取消，目前没有重新提交，仍保持最多一项依赖等待。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游均为 `LAUNCHER TEACHER_CKPT [SEED]`。run ID、tags、preflight 名称和实际 Hydra `seed` 同步；09-10 仅为两个原本写死 42 的 launcher 添加参数，不改模型、损失或数据规则。43 项无 GPU 的 Bash 参数传递测试已通过，覆盖四个入口的 42 / 43 / 44、默认值、非法参数、checkpoint 路径和 3-task 分布式保护；新旧默认入口实际参数逐字一致。本次调度调整不修改训练代码 / 配置。

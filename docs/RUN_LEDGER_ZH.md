@@ -1,16 +1,18 @@
 # Run 台账
 
-最后核验：2026-09-15 09:59（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-15 10:10（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 133874 | 未开始 | 正式 joint pointwise，seed 44，3 GPU | PENDING（Dependency），`afterok:133873`；替代 132790，唯一等待项 |
+| 133873 | 09-15 10:06 | 正式 joint listwise，seed 44，3 GPU | RUNNING；preflight、实际配置、3-rank 初始化及首批有限 loss 核验通过 |
 | 133277 | 09-14 16:30 | 正式 separate-small，seed 43，3 GPU | COMPLETED / 0:0，4h13m51s；20:44:13 结束，正常早停 35000、best 10000；训练产物验收通过 |
 | 132793 | 09-13 01:01 | 正式 joint pointwise，seed 43，3 GPU | COMPLETED / 0:0，32h40m01s；09-14 09:41:22 结束，达到 120000 上限、best 100000；训练产物验收通过 |
 | 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
-| 132790 | 未开始 | 原计划 joint pointwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
-| 132789 | 未开始 | 原计划 joint listwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132790 | 未开始 | 原计划 joint pointwise，seed 44 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-15 由 133874 替代 |
+| 132789 | 未开始 | 原计划 joint listwise，seed 44 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-15 由 133873 替代 |
 | 132788 | 未开始 | 原计划 separate-small，seed 43 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-13 由 133277 替代 |
 | 132787 | 未开始 | 原计划 joint pointwise，seed 43 | CANCELLED，15:36:34 撤销，耗时 0；后以 132793 重新提交 |
 | 132786 | 09-11 15:30 | 正式 joint listwise，seed 43，3 GPU | COMPLETED / 0:0，33h30m40s；09-13 01:01:21 结束；best 100000，训练产物验收通过 |
@@ -58,9 +60,19 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 43 四模型训练完成，队列为空
+## 当前：seed 44 listwise 运行，pointwise 依赖等待
 
-09-15 本次只验收 pointwise / separate，不提交新任务。Seed 43 teacher / listwise 已在此前验收，四模型训练均已完成；新 seed 全量 validation 选权 / test 配对尚未开展，seed 44 三项下游也未重新提交。后续仍按最多“1 个运行 + 1 个依赖等待”、验收并确认后再推进。
+09-15 09:59 完成 seed 43 pointwise / separate 验收，当时未提交新任务；随后作者确认继续。10:06:40 提交并启动 **133873 listwise**，10:07:02 仅追加 **133874 pointwise**，`afterok:133873`、`kill-on-invalid-dep=yes`。Seed 44 separate 尚未重新提交，新 seed 全量 validation 选权 / test 配对也未启动；不预排后续任务。
+
+两项提交时源码 `81cf4c23123e45565b029e4e1ecda805047c9263`，工作树干净；正式 SID + rerank 联合训练，不是 SID-only 或 smoke。各用 3-GPU / 3-task、60G、BF16、全局 batch 384、max optimizer steps / scheduler 120000，原 Recall@5 早停与 runtime beta=0.1 不变。独立加载同一个 seed 44 SID teacher 132733 best 90000，仅加载权重、重新初始化 optimizer；pointwise 不从前一个 listwise 的输出初始化。
+
+提交前重新核验 9 个不同源码 / 配置 / launcher、3 份数据清单和 teacher 文件的 SHA256，13 项均匹配已验收记录；SID / item2row 当前 size / mtime 一致，不重扫 TFRecords。未改数据、损失、模型或预算；共享文件系统当时可用约 586G，不是本任务独占配额。完整命令、来源哈希和新旧 job 替代关系见 [seed 44 启动记录](../logs/training_launch/seed44_joint_2026-09-15.json)。
+
+133873 启动核验通过：fresh preflight 的 7 个源码文件、数据 / SID / 映射身份及初始化路径与预期一致，teacher SHA256 为 `3f8b60dad3172ffc666b71d5ad0708e348363c44589d31f9d6eb3639c8d85da4`。实际配置相对 seed 43 listwise 仅 `seed`、`id`、`tags`、`model.manual_ckpt_path` 四项变化；三个 rank seed 均为 44，成功加载 teacher 并重置到 step 0，world_size=3、current_run=0、restarts=[]。10:10 CSV 首批 3 行、最近 step=14，train/loss=14.133067，全部非空数值有限，无致命日志错误。这只是启动核验，不是训练产物或效果验收。
+
+133873：[run](../logs/train/runs/2026-09-15/click-listwise-seed44-133873)、[配置](../logs/train/runs/2026-09-15/click-listwise-seed44-133873/.hydra/config.yaml)、[preflight](../logs/training_preflight/listwise_seed44_133873.json)（SHA256 `ae5633e1beb93b68a4bf9c0882155be1a7e1da62ee492898d67f42be7e54e30e`）、[CSV](../logs/train/runs/2026-09-15/click-listwise-seed44-133873/csv/metrics.csv)、[stderr](../logs/slurm/GRID-List44-HLastV1-133873.err)。
+
+133874 尚未开始，没有 run / preflight；启动时生成 `logs/train/runs/<启动日期>/click-pointwise-seed44-133874` 与 `logs/training_preflight/pointwise_seed44_133874.json`。Seed 43 四模型训练已完成，原验收证据见下文。
 
 调度沿革：09-11 以源码 `19a4fcbda4ce36f0983230bed170ce7b00dcd9b4`、干净工作树提交下游；缩小队列后，pointwise 132793 替代旧 132787。09-13 listwise 验收后，仅补交 separate 133277 替代旧 132788，`afterok:132793`、`kill-on-invalid-dep=yes`；该次提交源码 `1c47d01c598c77a4f8072a02b6e50eb621adc1e8`、工作树干净。原 [09-11 启动快照](../logs/training_launch/multiseed_downstream_2026-09-11.json) 与 [separate 启动记录](../logs/training_launch/seed43_separate_2026-09-13.json) 保留，不当作实时队列。Separate 实际于 09-14 16:30 启动，训练耗时不含依赖满足后的调度等待；此处不推断等待原因。
 
