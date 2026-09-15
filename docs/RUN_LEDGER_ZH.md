@@ -1,13 +1,13 @@
 # Run 台账
 
-最后核验：2026-09-13 13:12（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-15 09:59（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 133277 | 未开始 | 正式 separate-small，seed 43，3 GPU | PENDING（Dependency），`afterok:132793`；替代 132788，唯一等待项 |
-| 132793 | 09-13 01:01 | 正式 joint pointwise，seed 43，3 GPU | RUNNING，约 12h11m；13:11 CSV step 44999，阶段核验正常，不是训练完成 |
+| 133277 | 09-14 16:30 | 正式 separate-small，seed 43，3 GPU | COMPLETED / 0:0，4h13m51s；20:44:13 结束，正常早停 35000、best 10000；训练产物验收通过 |
+| 132793 | 09-13 01:01 | 正式 joint pointwise，seed 43，3 GPU | COMPLETED / 0:0，32h40m01s；09-14 09:41:22 结束，达到 120000 上限、best 100000；训练产物验收通过 |
 | 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
 | 132790 | 未开始 | 原计划 joint pointwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
 | 132789 | 未开始 | 原计划 joint listwise，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
@@ -58,15 +58,41 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 43 pointwise 运行，separate 依赖等待
+## 当前：seed 43 四模型训练完成，队列为空
 
-132793 于 09-13 01:01:21 接续运行。13:11 只读快照：CSV 9008 行，最近训练 step=44999（约 45000 optimizer steps），已记录 8 次 validation，当前 best step 40000 / validation Recall@5=0.278005；这些不是最终结果。全部非空数值有限，world_size=3、current_run=0、restarts=[]；无致命日志错误。与 seed 42 pointwise 的配置仅 `seed`、`id`、`tags`、`model.manual_ckpt_path` 不同，preflight 及源码 / 数据清单哈希核验通过。[run](../logs/train/runs/2026-09-13/click-pointwise-seed43-132793)、[preflight](../logs/training_preflight/pointwise_seed43_132793.json)、[stderr](../logs/slurm/GRID-Point43-HLastV1-132793.err)。
+09-15 本次只验收 pointwise / separate，不提交新任务。Seed 43 teacher / listwise 已在此前验收，四模型训练均已完成；新 seed 全量 validation 选权 / test 配对尚未开展，seed 44 三项下游也未重新提交。后续仍按最多“1 个运行 + 1 个依赖等待”、验收并确认后再推进。
 
-Listwise 验收通过后，按作者本次要求于 13:12:21 仅补交 **133277 separate-small**，`afterok:132793`、`kill-on-invalid-dep=yes`。源码 `1c47d01c598c77a4f8072a02b6e50eb621adc1e8`，提交前工作树干净；源码 / 配置 / launcher 指纹与此前已核验版本一致，本轮无训练代码改动。3-GPU / 3-task、60G、max steps / scheduler 120000，原早停与训练 beta=0.1 不变；冻结 seed 43 SID teacher 132732 的 best step 100000（SHA256 见下文 teacher 43 / 44 记录），不加载 listwise / pointwise 输出。完整命令与指纹见 [单项启动记录](../logs/training_launch/seed43_separate_2026-09-13.json)。
+调度沿革：09-11 以源码 `19a4fcbda4ce36f0983230bed170ce7b00dcd9b4`、干净工作树提交下游；缩小队列后，pointwise 132793 替代旧 132787。09-13 listwise 验收后，仅补交 separate 133277 替代旧 132788，`afterok:132793`、`kill-on-invalid-dep=yes`；该次提交源码 `1c47d01c598c77a4f8072a02b6e50eb621adc1e8`、工作树干净。原 [09-11 启动快照](../logs/training_launch/multiseed_downstream_2026-09-11.json) 与 [separate 启动记录](../logs/training_launch/seed43_separate_2026-09-13.json) 保留，不当作实时队列。Separate 实际于 09-14 16:30 启动，训练耗时不含依赖满足后的调度等待；此处不推断等待原因。
 
-133277 尚未开始，没有 run / preflight；预期为 `logs/train/runs/<启动日期>/rerank-small-seed43-133277` 和 `logs/training_preflight/separate_small_seed43_133277.json`。当前只保留一项运行、一项依赖等待，seed 44 三项仍未重新提交；新 seed 全量 validation / test 也未提交。
+## 已验收：seed 43 pointwise / separate 训练产物
 
-调度沿革：09-11 曾以源码 `19a4fcbda4ce36f0983230bed170ce7b00dcd9b4`、干净工作树提交六项；15:36 撤销五项未启动任务，按作者澄清仅重新提交 pointwise 为 132793。本次 separate 133277 替代旧 132788。原 [09-11 启动快照](../logs/training_launch/multiseed_downstream_2026-09-11.json) 保留，不当作实时队列；取消不是训练失败，没有删除文件。
+两个主作业及全部 Slurm steps 均 COMPLETED / 0:0；stderr 均明确重载对应 best checkpoint 后测试。配置、原选优预算与训练 beta=0.1 不变，没有 checkpoint 重选、重训或新 GPU 推理。
+
+| 模型 / job | 停止 step / 原因 | Best step | Best validation Recall@5 | CSV 行数 / validation 次数 / test 次数 |
+| --- | --- | ---: | ---: | --- |
+| Pointwise / 132793 | 120000 / 达到上限，best 后仅 4 次未改善 | 100000 | 0.286196 | 24025 / 24 / 1 |
+| Separate / 133277 | 35000 / 连续 5 次未改善，正常早停 | 10000 | 0.276433 | 7008 / 7 / 1 |
+
+- 两者与各自 seed 42 实际配置逐字段对比，仅 seed / id / tags / 同 seed teacher 路径四项不同；三 rank seed 均为 43，world_size=3、current_run=0、restarts=[]。Pointwise 是 SID + pointwise 联合训练、仅加载初始权重并使用新 optimizer；separate 使用冻结 teacher 的独立小型 reranker 实现。
+- 两者初始化均绑定 SID teacher 132732 best 100000，不使用 listwise / pointwise 输出或 seed 42 teacher。全部预检源码哈希与各自启动记录一致；本次重新计算各 8 个源码 / 配置 / launcher、3 份数据清单及共同 teacher 哈希，均匹配。SID / item2row 身份与 seed 42 preflight 一致，当前 size / mtime 相符；未重扫 TFRecords 或重读 SID / 映射全量哈希。
+- 所有非空 CSV 数值有限，无 traceback / OOM / CUDA / NCCL 致命错误或异常重启。Separate 的 `val/beam_log_prob` / `val/click_log_prob` 在全部 7 次验证中都有有限值，未复现旧版辅助日志 NaN。
+- 两份 checkpoint 的 ZIP 目录可读、全文件 SHA256 已登记。未另做逐张量有限性、separate 冻结参数逐值核对或完整 ZIP CRC 检查；运行实现和训练重载证据通过，不将它们冒称为独立参数验收。
+
+训练自带 test 的结果如下，0–1 标度；validation / test 仍分别有每 rank 5000 / 10000 batches 上限。融合为 runtime beta=0.1，不是全量 validation 选权后的主表，不能直接与 seed 42 全量 beta=0.50 结果比较。
+
+| 模型 / 排序方式 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Pointwise / beam | 0.279478 | 0.285149 | 0.256374 | 0.258215 |
+| Pointwise / 融合 | 0.281080 | 0.286608 | 0.258004 | 0.259801 |
+| Separate / beam | 0.269751 | 0.273784 | 0.251623 | 0.252930 |
+| Separate / 融合 | 0.271549 | 0.275466 | 0.252979 | 0.254254 |
+
+Separate 的四项 test beam 汇总数值与 teacher 132732 的训练自带 test 完全一致；这不等于逐样本候选 / 分数或冻结参数逐值核对。两份 test 的 CSV step=120000 / 35000 是停止时记账，实际测试的是 best 100000 / 10000。
+
+- Pointwise：[best checkpoint](../logs/train/runs/2026-09-13/click-pointwise-seed43-132793/checkpoints/checkpoint_000_100000.ckpt)，5,701,613,500 bytes、137 个 ZIP 成员，SHA256 `5b7d4e9721c273339da97de6158ca31347698377d8fe1f71156317f8447b0f02`；[配置](../logs/train/runs/2026-09-13/click-pointwise-seed43-132793/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-13/click-pointwise-seed43-132793/csv/metrics.csv)、[preflight](../logs/training_preflight/pointwise_seed43_132793.json)、[stderr](../logs/slurm/GRID-Point43-HLastV1-132793.err)。
+- Separate：[best checkpoint](../logs/train/runs/2026-09-14/rerank-small-seed43-133277/checkpoints/checkpoint_000_010000.ckpt)，6,128,885,734 bytes、122 个 ZIP 成员，SHA256 `4e5751819d402f366346499ae1e2479611bfbea4110adae0e2cd80000c1b270b`；[配置](../logs/train/runs/2026-09-14/rerank-small-seed43-133277/.hydra/config.yaml)、[CSV](../logs/train/runs/2026-09-14/rerank-small-seed43-133277/csv/metrics.csv)、[preflight](../logs/training_preflight/separate_small_seed43_133277.json)、[stderr](../logs/slurm/GRID-Sep43-HLastV1-133277.err)。
+
+完整精度指标、Slurm 状态及来源哈希见 [机器可读验收](../logs/training_launch/pointwise_separate_seed43_acceptance_2026-09-15.json)；[只读核验脚本](../logs/training_launch/accept_pointwise_separate_seed43_2026-09-15.py) 仅输出 JSON，不加载张量、覆盖旧产物或提交任务。
 
 ## 已验收：seed 43 listwise 132786 训练产物
 
