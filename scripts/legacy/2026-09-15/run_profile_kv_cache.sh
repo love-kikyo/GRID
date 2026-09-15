@@ -1,4 +1,5 @@
 #!/bin/bash
+# Historical launcher: archived 2026-09-15; see this directory's README.md.
 #
 #SBATCH --job-name=GRID-ProfileKV
 #SBATCH --output=logs/slurm/%x-%j.out

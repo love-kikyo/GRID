@@ -1,4 +1,5 @@
 #!/bin/bash
+# Historical launcher: archived 2026-09-15; see this directory's README.md.
 #
 # Usage:
 #   sbatch run_profile_context_mask_length.sh listwise 0
@@ -65,4 +66,3 @@ fi
     --split test \
     --device cuda \
     --amp bf16
-

@@ -1,16 +1,17 @@
 #!/bin/bash
+# Historical launcher: archived 2026-09-15; see this directory's README.md.
 #
 # Usage:
-#   sbatch run_eval_context_mask_length.sh listwise 0
-#   sbatch run_eval_context_mask_length.sh listwise 2
-#   sbatch run_eval_context_mask_length.sh listwise 5
-#   sbatch run_eval_context_mask_length.sh listwise 10
+#   sbatch run_eval_context_length.sh listwise 0
+#   sbatch run_eval_context_length.sh listwise 5
+#   sbatch run_eval_context_length.sh listwise 10
+#   sbatch run_eval_context_length.sh listwise 20
 #
-# Scheme C: keep top_k_for_score fixed at 10 so the candidate token position
-# stays unchanged, and vary active_top_k_for_score by masking lower-ranked
-# retrieved history items.
+# Runs Lightning test-only evaluation while overriding top_k_for_score.
+# This measures the length of candidate-aware historical context retrieved
+# for reranking, not the beam/candidate list length.
 
-#SBATCH --job-name=GRID-EvalCtxMask
+#SBATCH --job-name=GRID-EvalCtx
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 #SBATCH --ntasks=1
@@ -23,7 +24,7 @@
 set -euo pipefail
 
 METHOD="${1:-listwise}"
-ACTIVE_TOP_K_SCORE="${2:-10}"
+TOP_K_SCORE="${2:-10}"
 JOB_ID="${SLURM_JOB_ID:-local}"
 
 mkdir -p logs/slurm /tmp/matplotlib-${USER}-${JOB_ID}
@@ -46,10 +47,14 @@ case "${METHOD}" in
         ;;
 esac
 
-if (( ACTIVE_TOP_K_SCORE < 0 || ACTIVE_TOP_K_SCORE > 10 )); then
-    echo "ACTIVE_TOP_K_SCORE must be in [0, 10], got ${ACTIVE_TOP_K_SCORE}" >&2
-    exit 2
-fi
+case "${TOP_K_SCORE}" in
+    0|5|10|20)
+        ;;
+    *)
+        echo "Unsupported TOP_K_SCORE=${TOP_K_SCORE}. Expected one of: 0, 5, 10, 20" >&2
+        exit 2
+        ;;
+esac
 
 /home/MMReco2021/.conda/envs/GRID/bin/python -m src.train "experiment=${EXPERIMENT}" \
     train=false \
@@ -60,9 +65,7 @@ fi
     num_hierarchies=4 \
     num_embeddings_per_hierarchy=4096 \
     model.top_k_for_generation=20 \
-    model.top_k_for_score=10 \
-    model.active_top_k_for_score="${ACTIVE_TOP_K_SCORE}" \
+    model.top_k_for_score="${TOP_K_SCORE}" \
     eval.evaluators.beam.top_k_list="[5,10,20]" \
     eval.evaluators.rerank.top_k_list="[5,10,20]" \
-    id="context_mask_length/${METHOD}_activek${ACTIVE_TOP_K_SCORE}_${JOB_ID}"
-
+    id="context_length/${METHOD}_scorek${TOP_K_SCORE}_${JOB_ID}"

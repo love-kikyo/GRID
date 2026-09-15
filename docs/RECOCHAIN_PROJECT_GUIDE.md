@@ -41,6 +41,8 @@
 
 先看脚本 Usage 和 [验收计划](EXPERIMENT_PLAN_ZH.md)，不要直接复制归档里的旧 checkpoint 命令。新正式任务必须显式绑定 teacher、数据与代码版本。
 
+旧协议的 12 个根目录入口已移入 [历史脚本目录](../scripts/legacy/2026-09-15/README.md)，不属于下表的现用入口；产物去向见 [清理记录](archive/2026-09-15/REPOSITORY_CLEANUP_ZH.md)。
+
 | 用途 | 脚本 |
 | --- | --- |
 | 综合测试 | [run_test_retraining_controls.sh](../run_test_retraining_controls.sh) |

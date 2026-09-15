@@ -14,7 +14,7 @@ set -euo pipefail
 GRID_ROOT=/mnt/beegfs/home/MMReco2021/liuyu/GRID
 PYTHON_BIN=/home/MMReco2021/.conda/envs/GRID/bin/python
 SMOKE_ROOT=${GRID_ROOT}/data/taobao_history_last_user_v1_smoke_131855
-TEACHER_CKPT=${GRID_ROOT}/logs/train/runs/2026-06-12/16-29-32/checkpoints/checkpoint_000_085000.ckpt
+TEACHER_CKPT=${GRID_ROOT}/logs/train/runs/2026-09-05/sid-seed42-131908/checkpoints/checkpoint_000_090000.ckpt
 
 cd "${GRID_ROOT}"
 mkdir -p logs/data_build
