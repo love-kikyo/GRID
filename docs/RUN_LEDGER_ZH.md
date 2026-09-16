@@ -1,13 +1,14 @@
 # Run 台账
 
-最后核验：2026-09-15 10:10（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-16 10:52（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 133874 | 未开始 | 正式 joint pointwise，seed 44，3 GPU | PENDING（Dependency），`afterok:133873`；替代 132790，唯一等待项 |
-| 133873 | 09-15 10:06 | 正式 joint listwise，seed 44，3 GPU | RUNNING；preflight、实际配置、3-rank 初始化及首批有限 loss 核验通过 |
+| 134290 | 09-16 10:41 | seed 44 listwise CPU 预算 / 完整续训短测，3 GPU | COMPLETED / 0:0，5m33s；10:46:58 结束；3 CPU、88 项测试、完整恢复及 100-step 短测验收通过 |
+| 133874 | 未开始 | 正式 joint pointwise，seed 44，3 GPU | CANCELLED，09-15 15:27:36 结束，耗时 0；无 run / preflight |
+| 133873 | 09-15 10:06 | 正式 joint listwise，seed 44，3 GPU | CANCELLED by 1018，09-15 15:27:29；5h20m49s，作者因 CPU 24 核占用取消；保留 step 20000 完整 checkpoint |
 | 133277 | 09-14 16:30 | 正式 separate-small，seed 43，3 GPU | COMPLETED / 0:0，4h13m51s；20:44:13 结束，正常早停 35000、best 10000；训练产物验收通过 |
 | 132793 | 09-13 01:01 | 正式 joint pointwise，seed 43，3 GPU | COMPLETED / 0:0，32h40m01s；09-14 09:41:22 结束，达到 120000 上限、best 100000；训练产物验收通过 |
 | 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
@@ -60,7 +61,21 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 44 listwise 运行，pointwise 依赖等待
+## 当前：CPU 预算修复与 seed 44 完整续训短测
+
+作者确认整项作业最多 4 核。133873 原申请 3 tasks × 8 CPU，实际 AllocCPUS=24；训练 DataLoader 每 rank 8 workers。现改为 3 tasks × 1 CPU、显式 core binding、库线程池 1、训练 worker 每 rank 1；validation / test worker 2 / 3 不变。模型、损失、全局 batch 384、seed、120000 步总训练 / 调度预算和验证选优规则不变。修复提交 `d289330`、`6343824`，提交短测时工作树干净。
+
+133873 最后训练 CSV step=20629；保留 `checkpoint_000_020000.ckpt`，元数据确认 optimizer、scheduler、early stopping 和 best 记录存在。完整恢复不能使用原 weights-only/reset 模式；新副本只迁移 ModelCheckpoint 的输出路径，不修改父文件。数据游标未保存，降低 worker 会改变训练序列，非逐步等价恢复。
+
+134290 仅做短测：同一正式 launcher 从 20000 到 20100，scheduler 总长度仍 120000，短验证 2 batches/rank、test=false。先执行扩展回归，再逐 rank 核对模型 / optimizer / scheduler / 选优状态及所有后代线程的 CPU affinity。短测模型与指标不进入正式主表，也不作为正式续训起点。短测已通过，下一步从原 133873 step 20000 正式续训。
+
+轻量测试 65 passed；含 TensorFlow 的扩展测试在登录环境触发 Illegal instruction，移到计算节点后 **88 passed**（53.45s）。短测及所有 Slurm steps 均 COMPLETED / 0:0。总分配 3 CPU；rank 0 / 1 / 2 分别绑定 `[0]` / `[16]` / `[17]`，11 个采样点覆盖恢复、训练、验证与结束，所有后代进程的每个线程均在所属 rank 的单核内。各 rank 验证了 400 个有限 loss（梯度累积 4，共 100 optimizer steps）、2 个真实验证 batches，最终 step=20100；CPU 累计时间 / 采样间隔得到每 rank 平均约 0.75 / 0.84 / 0.84 核，不把线程数当占用核数。
+
+模型、optimizer、scheduler 和 early-stopping / best 状态恢复逐值核对通过。父 checkpoint SHA256 为 `30e273d9b5c3323c068f4d3bdee5cd97d800c404409476029d458cc82eb3284b`，短测后重读确认未改；15 个源码指纹、父配置和数据清单核对通过。短测新 run 的初始副本已被自身 top-1 规则正常替换，不影响父 checkpoint；不能拿 smoke best 20100 续训。
+
+证据：[启动记录](../logs/training_launch/cpu_resume_smoke_2026-09-16.json)、[机器可读验收](../logs/training_launch/cpu_resume_smoke_acceptance_2026-09-16.json)、[只读验收脚本](../logs/training_launch/accept_cpu_resume_smoke_2026-09-16.py)、[逐 rank 审计](../logs/train/runs/2026-09-16/cpu-resume-smoke-listwise-seed44-134290/cpu_resume_audit)、[stdout](../logs/slurm/GRID-CPUResume44-Smoke-134290.out)、[stderr](../logs/slurm/GRID-CPUResume44-Smoke-134290.err)。
+
+## 历史：seed 44 首次启动（已取消）
 
 09-15 09:59 完成 seed 43 pointwise / separate 验收，当时未提交新任务；随后作者确认继续。10:06:40 提交并启动 **133873 listwise**，10:07:02 仅追加 **133874 pointwise**，`afterok:133873`、`kill-on-invalid-dep=yes`。Seed 44 separate 尚未重新提交，新 seed 全量 validation 选权 / test 配对也未启动；不预排后续任务。
 
@@ -72,7 +87,7 @@
 
 133873：[run](../logs/train/runs/2026-09-15/click-listwise-seed44-133873)、[配置](../logs/train/runs/2026-09-15/click-listwise-seed44-133873/.hydra/config.yaml)、[preflight](../logs/training_preflight/listwise_seed44_133873.json)（SHA256 `ae5633e1beb93b68a4bf9c0882155be1a7e1da62ee492898d67f42be7e54e30e`）、[CSV](../logs/train/runs/2026-09-15/click-listwise-seed44-133873/csv/metrics.csv)、[stderr](../logs/slurm/GRID-List44-HLastV1-133873.err)。
 
-133874 尚未开始，没有 run / preflight；启动时生成 `logs/train/runs/<启动日期>/click-pointwise-seed44-133874` 与 `logs/training_preflight/pointwise_seed44_133874.json`。Seed 43 四模型训练已完成，原验收证据见下文。
+133874 在开始前取消，没有 run / preflight。Seed 43 四模型训练已完成，原验收证据见下文；上述 09-15 启动核验不是当前队列状态。
 
 调度沿革：09-11 以源码 `19a4fcbda4ce36f0983230bed170ce7b00dcd9b4`、干净工作树提交下游；缩小队列后，pointwise 132793 替代旧 132787。09-13 listwise 验收后，仅补交 separate 133277 替代旧 132788，`afterok:132793`、`kill-on-invalid-dep=yes`；该次提交源码 `1c47d01c598c77a4f8072a02b6e50eb621adc1e8`、工作树干净。原 [09-11 启动快照](../logs/training_launch/multiseed_downstream_2026-09-11.json) 与 [separate 启动记录](../logs/training_launch/seed43_separate_2026-09-13.json) 保留，不当作实时队列。Separate 实际于 09-14 16:30 启动，训练耗时不含依赖满足后的调度等待；此处不推断等待原因。
 

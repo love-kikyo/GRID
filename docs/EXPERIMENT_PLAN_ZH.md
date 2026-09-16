@@ -54,13 +54,16 @@
 - [x] Listwise 验收后，按 09-13 作者要求仅补交 seed 43 separate-small，作为 pointwise 的唯一依赖等待项；冻结同 seed SID teacher，具体新旧 job 关系见台账。
 - [x] Seed 43 separate 训练产物验收通过；正常早停 35000，best 10000，辅助日志有限，有限 batch test 的四项 beam 汇总指标与 teacher 一致；不等于冻结参数逐值核对或全量推理已通过。
 - [x] 09-15 seed 43 验收后，作者确认继续；仅启动 seed 44 listwise，并提交 pointwise 作为唯一依赖后继。共同初始化为 seed 44 SID teacher best 90000，预算 / 数据 / 损失不变。
+- [x] 09-16 作者确认整项 CPU 上限 4 核；修复为 3 rank × 1 核并实现完整状态续训，原 133873 / 133874 取消记录保留。
+- [x] CPU 预算 / 完整恢复短测 134290 验收通过：计算节点 88 项回归、3 rank 模型 / optimizer / scheduler / 早停与 best 状态、后代线程 affinity、100 个恢复后 optimizer steps 和真实验证均通过；不是仅检查退出码。
+- [ ] 短测通过后从原 step 20000 checkpoint 新建正式续训，不从 smoke 输出初始化；保持总上限 120000。之后只保留一项 pointwise 依赖等待。
 - [ ] 完成并验收 seed 44 listwise / pointwise；启动或依赖成功不等于产物验收。
 - [ ] 确认后再提交 seed 44 separate-small 并验收；原 separate 排队 job 已取消，目前没有重新提交，仍保持最多一项依赖等待。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
-启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游均为 `LAUNCHER TEACHER_CKPT [SEED]`。run ID、tags、preflight 名称和实际 Hydra `seed` 同步；09-10 仅为两个原本写死 42 的 launcher 添加参数，不改模型、损失或数据规则。43 项无 GPU 的 Bash 参数传递测试已通过，覆盖四个入口的 42 / 43 / 44、默认值、非法参数、checkpoint 路径和 3-task 分布式保护；新旧默认入口实际参数逐字一致。本次调度调整不修改训练代码 / 配置。
+启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游从 teacher 开始时均为 `LAUNCHER TEACHER_CKPT [SEED]`；listwise 现可另传第三个 `RESUME_CKPT` 作完整续训。历史的 09-10 seed 参数改动没有改模型 / 损失 / 数据，43 项启动测试通过；09-16 的 CPU 与恢复改动另有定向测试和真实短测，不将两次修改混作同一基线。资源预算见 [开发约定](DEVELOPMENT_WORKFLOW_ZH.md)。
 
-时间仅作资源估计：按 seed 42 的实际耗时，两份 teacher 合计约 23 小时（已完成）；六项下游合计约 5.7 天计算时间，另加评估、排队与验收间隔。不是六项已连续排队或完成日期承诺；各 seed 早停步数可能不同。任务状态只在 [Run 台账](RUN_LEDGER_ZH.md) 记录。
+旧资源配置下的时间估计：按 seed 42 实测，两份 teacher 合计约 23 小时（已完成）；六项下游合计约 5.7 天计算时间，另加评估、排队与验收。CPU 缩减后的吞吐需要重新实测，不沿用旧耗时作承诺。任务状态只在 [Run 台账](RUN_LEDGER_ZH.md) 记录。
 
 共同锁定数据、SID 编码、初始化 checkpoint、beam size、预算 / early-stop 口径、目标标签构造、调参规则。训练时 no-hit 辅助候选可按实现插入 GT；推理候选不得注入 GT。
 

@@ -17,6 +17,8 @@
 
 ## 正式任务的最小记录
 
+资源约定（2026-09-16 作者确认）：**整个作业最多 4 个 CPU 核，不是每张 GPU 4 核**。当前 3-GPU 正式训练采用 3 tasks × 1 CPU，显式绑定 CPU；线程池设为 1、训练 worker 每 rank 1，validation / test worker 暂不改。检查实际 AllocCPUS 和所有 rank / 子进程的 affinity，不以 worker 数替代 CPU 配额。短测 / 导出 / 分析也受此上限约束，未适配的旧入口不得直接沿用原资源申请。
+
 提交前记录：方法、seed、启动命令 / 参数、代码 commit 与 dirty 状态、数据协议、初始化 checkpoint、训练 preflight 路径。提交后立即登记 job ID 与 run 目录。
 
 任务结束后记录：Slurm 状态和退出码、失败原因或 best checkpoint、选优 / 评估口径、原始日志位置。`COMPLETED` 需要结合脚本用途解释；测试配置打印不算训练结果。
