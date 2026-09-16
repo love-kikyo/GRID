@@ -1,6 +1,9 @@
 import os
 from typing import Any, Dict, Optional, Tuple
 
+import rootutils
+rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
+
 from src.runtime_cpu import check_affinity, configure_environment, configure_torch, enabled
 from src.checkpoint_resume import test_checkpoint_after_fit, validate_resume_mode
 
@@ -10,12 +13,10 @@ if enabled():
     print("[cpu-budget] " + json.dumps(check_affinity(rank=True)), flush=True)
 
 import hydra
-import rootutils
 import torch
 configure_torch(torch)
 from omegaconf import DictConfig, OmegaConf
 
-rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 OmegaConf.register_new_resolver(
     "sub",
     lambda x, y: int(x) - int(y),

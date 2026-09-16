@@ -26,7 +26,8 @@ def invoke(method, arguments, **env_overrides):
     script = ROOT / LAUNCHERS[method][0]
     env = {
         "PATH": os.defpath, "USER": "launcher-test", "SLURM_JOB_ID": "mock-job",
-        "SLURM_NTASKS": "3", "SLURM_NTASKS_PER_NODE": "3", **env_overrides,
+        "SLURM_NTASKS": "3", "SLURM_NTASKS_PER_NODE": "3", "SLURM_CPUS_PER_TASK": "1",
+        "SLURM_JOB_CPUS_PER_NODE": "3", **env_overrides,
     }
     return subprocess.run(
         ["bash", "-c", MOCK_COMMANDS + script.read_text(), str(script), *arguments],
@@ -61,9 +62,11 @@ def test_seed_reaches_training_and_provenance_names(method, seed, teacher):
     assert script in preflight
     for fixed_arg in (
         "--ntasks=3", "--ntasks-per-node=3", "--kill-on-bad-exit=1",
+        "--cpus-per-task=1", "--cpu-bind=verbose,cores",
         "trainer.max_steps=120000", "optim.scheduler.num_training_steps=120000",
         "num_hierarchies=4", "num_embeddings_per_hierarchy=4096", "++should_skip_retry=true",
         "data_loading.train_dataloader_config.dataloader.assign_all_files_per_worker=false",
+        "data_loading.train_dataloader_config.dataloader.num_workers=1",
         "data_loading.val_dataloader_config.dataloader.num_workers=2",
         "data_loading.test_dataloader_config.dataloader.num_workers=3",
     ):
@@ -96,7 +99,8 @@ def test_invalid_seed_rejected_before_any_task(method, seed, teacher):
 
 @pytest.mark.parametrize("method", LAUNCHERS)
 def test_extra_arguments_rejected(method, teacher):
-    result = invoke(method, [*arguments(method, teacher, 43), "extra"])
+    extras = ["extra", "extra"] if method == "listwise" else ["extra"]
+    result = invoke(method, [*arguments(method, teacher, 43), *extras])
     assert result.returncode == 2
     assert "Usage:" in result.stderr
     assert not result.stdout

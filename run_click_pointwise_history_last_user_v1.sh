@@ -4,7 +4,7 @@
 #SBATCH --error=logs/slurm/%x-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=3
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=60G
 #SBATCH --time=100:00:00
 #SBATCH --gres=gpu:3
@@ -42,6 +42,7 @@ mkdir -p logs/slurm logs/training_preflight "/tmp/matplotlib-${USER}-${JOB_ID}"
 export MPLCONFIGDIR="/tmp/matplotlib-${USER}-${JOB_ID}"
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
+source "${GRID_ROOT}/scripts/cpu_budget.sh"
 
 "${PYTHON_BIN}" scripts/verify_taobao_training_data.py \
   --data-root "${DATA_ROOT}" \
@@ -50,6 +51,11 @@ export TOKENIZERS_PARALLELISM=false
   --num-embeddings-per-hierarchy 4096 \
   --initialization-checkpoint "${TEACHER_CKPT}" \
   --source-file scripts/verify_taobao_training_data.py \
+  --source-file scripts/cpu_budget.sh \
+  --source-file src/runtime_cpu.py \
+  --source-file src/train.py \
+  --source-file src/checkpoint_resume.py \
+  --source-file src/data/loading/components/iterators.py \
   --source-file src/data/loading/components/dataloading.py \
   --source-file src/data/loading/components/interfaces.py \
   --source-file src/models/modules/semantic_id/tiger_generation_model.py \
@@ -64,7 +70,7 @@ if [[ "${SLURM_NTASKS:-}" != "3" || "${SLURM_NTASKS_PER_NODE:-}" != "3" ]]; then
   exit 1
 fi
 
-srun --ntasks=3 --ntasks-per-node=3 --kill-on-bad-exit=1 \
+srun --ntasks=3 --ntasks-per-node=3 --cpus-per-task=1 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
   "${PYTHON_BIN}" -m src.train \
   "experiment=[tiger_train_flat,tiger_train_click,tiger_train_click_pointwise]" \
   data_dir="${DATA_ROOT}" \
@@ -77,6 +83,7 @@ srun --ntasks=3 --ntasks-per-node=3 --kill-on-bad-exit=1 \
   "tags=[taobao-history-last-user-v1,recochain-pointwise,seed${SEED}]" \
   model.manual_ckpt_path="${TEACHER_CKPT}" \
   data_loading.train_dataloader_config.dataloader.assign_all_files_per_worker=false \
+  data_loading.train_dataloader_config.dataloader.num_workers=1 \
   data_loading.val_dataloader_config.dataloader.num_workers=2 \
   data_loading.test_dataloader_config.dataloader.num_workers=3 \
   trainer.max_steps=120000 \
