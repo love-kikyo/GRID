@@ -56,7 +56,7 @@
 - [x] 09-15 seed 43 验收后，作者确认继续；仅启动 seed 44 listwise，并提交 pointwise 作为唯一依赖后继。共同初始化为 seed 44 SID teacher best 90000，预算 / 数据 / 损失不变。
 - [x] 09-16 作者确认整项 CPU 上限 4 核；修复为 3 rank × 1 核并实现完整状态续训，原 133873 / 133874 取消记录保留。
 - [x] CPU 预算 / 完整恢复短测 134290 验收通过：计算节点 88 项回归、3 rank 模型 / optimizer / scheduler / 早停与 best 状态、后代线程 affinity、100 个恢复后 optimizer steps 和真实验证均通过；不是仅检查退出码。
-- [ ] 短测通过后从原 step 20000 checkpoint 新建正式续训，不从 smoke 输出初始化；保持总上限 120000。之后只保留一项 pointwise 依赖等待。
+- [x] 短测通过后提交 134298，从原 step 20000 checkpoint 新建正式续训，三 rank 启动核验通过；不从 smoke 输出初始化，总上限仍 120000。仅提交 134299 pointwise 作为唯一依赖等待项。
 - [ ] 完成并验收 seed 44 listwise / pointwise；启动或依赖成功不等于产物验收。
 - [ ] 确认后再提交 seed 44 separate-small 并验收；原 separate 排队 job 已取消，目前没有重新提交，仍保持最多一项依赖等待。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
