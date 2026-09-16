@@ -11,8 +11,12 @@ from src.utils.file_utils import open_pyarrow_file
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
+from src.runtime_cpu import bound_tf_dataset, enabled
 
 tf.config.set_visible_devices([], "GPU")  # Disable all for tensorflow
+if enabled():
+    tf.config.threading.set_intra_op_parallelism_threads(1)
+    tf.config.threading.set_inter_op_parallelism_threads(1)
 # if GPU version of TF installed,
 # it will automatically occupy the full GPU memory
 
@@ -143,6 +147,7 @@ class TFRecordIterator(RawDataIterator):
         raw_dataset = tf.data.TFRecordDataset(
             [self.list_of_file_paths], compression_type="GZIP"
         )
+        raw_dataset = bound_tf_dataset(raw_dataset, tf)
         if self.should_shuffle_rows:
             # the buffer here is the number of records to shuffle
             # the larger the buffer, the more memory it will use
@@ -164,6 +169,7 @@ class TFRecordIterator(RawDataIterator):
         raw_dataset = tf.data.TFRecordDataset(
             self.list_of_file_paths, compression_type="GZIP"
         )
+        raw_dataset = bound_tf_dataset(raw_dataset, tf)
 
         if self.should_shuffle_rows:
             # the buffer here is the number of records to shuffle
@@ -179,7 +185,7 @@ class TFRecordIterator(RawDataIterator):
 
         batched_dataset = batch_function(
             batch_size, drop_remainder=self.should_drop_last_batch
-        ).prefetch(buffer_size=tf.data.AUTOTUNE)
+        ).prefetch(buffer_size=1 if enabled() else tf.data.AUTOTUNE)
 
         for batch_tf_processing_function in self.batch_tf_processing_functions:
             batched_dataset = batched_dataset.map(batch_tf_processing_function)

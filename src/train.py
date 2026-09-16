@@ -1,9 +1,18 @@
 import os
 from typing import Any, Dict, Optional, Tuple
 
+from src.runtime_cpu import check_affinity, configure_environment, configure_torch, enabled
+from src.checkpoint_resume import test_checkpoint_after_fit, validate_resume_mode
+
+configure_environment()
+if enabled():
+    import json
+    print("[cpu-budget] " + json.dumps(check_affinity(rank=True)), flush=True)
+
 import hydra
 import rootutils
 import torch
+configure_torch(torch)
 from omegaconf import DictConfig, OmegaConf
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -50,6 +59,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     # Pipeline launcher initializes the modules needed for the pipeline to run.
     # It also serves as a context manager, so all resources are properly closed after the pipeline is done.
+    validate_resume_mode(cfg.get("ckpt_path"), OmegaConf.select(cfg, "model.load_only_weights"), cfg.get("train"))
     with pipeline_launcher(cfg) as pipeline_modules:
 
         if cfg.get("train"):
@@ -63,18 +73,11 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
         if cfg.get("test"):
             command_line_logger.info("Starting testing!")
-            ckpt_path = cfg.get("ckpt_path")
-            # If user didn't provide a checkpoint, try to get the best model path from checkpoint callback.
-            # Note that if multiple checkpoint callbacks are used, only the first one will be used
-            # to determine the best model path for testing.
-            if not ckpt_path:
-                checkpoint_callback = getattr(
-                    pipeline_modules.trainer, "checkpoint_callback", None
-                )
-                if checkpoint_callback:
-                    ckpt_path = getattr(checkpoint_callback, "best_model_path", None)
-                    if ckpt_path == "":
-                        ckpt_path = None
+            checkpoint_callback = getattr(pipeline_modules.trainer, "checkpoint_callback", None)
+            ckpt_path = test_checkpoint_after_fit(
+                trained=bool(cfg.get("train")), explicit=cfg.get("ckpt_path"),
+                best=getattr(checkpoint_callback, "best_model_path", None),
+            )
             if not ckpt_path:
                 command_line_logger.warning(
                     "Best checkpoint not found! Using current weights for testing..."
