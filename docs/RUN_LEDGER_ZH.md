@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-09-21 00:33（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 00:43（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 135459 | 09-21 00:36 | 正式 separate-small，seed 44，3 GPU / 3 CPU | RUNNING；启动核验通过，替代原 132791；无后继排队，训练尚未完成 |
 | 135458 | 09-21 00:29 | seed 44 两项训练的 checkpoint / 记录验收，1 CPU / 0 GPU | COMPLETED / 0:0，2m17s；模型和 optimizer 张量扫描、指纹及选优记录通过，无新推理 |
 | 135457 | 09-21 00:27 | 同上，首次独立验收入口 | FAILED / 1:0，1m24s；缺少项目导入路径，修正后以 135458 重跑；非训练失败 |
 | 134299 | 09-17 13:50 | 正式 joint pointwise，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，38h02m53s；09-19 03:53:04 结束，达到 120000 上限，best 100000；产物验收通过 |
@@ -15,7 +16,7 @@
 | 133873 | 09-15 10:06 | 正式 joint listwise，seed 44，3 GPU | CANCELLED by 1018，09-15 15:27:29；5h20m49s，作者因 CPU 24 核占用取消；保留 step 20000 完整 checkpoint |
 | 133277 | 09-14 16:30 | 正式 separate-small，seed 43，3 GPU | COMPLETED / 0:0，4h13m51s；20:44:13 结束，正常早停 35000、best 10000；训练产物验收通过 |
 | 132793 | 09-13 01:01 | 正式 joint pointwise，seed 43，3 GPU | COMPLETED / 0:0，32h40m01s；09-14 09:41:22 结束，达到 120000 上限、best 100000；训练产物验收通过 |
-| 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；暂不重新排队 |
+| 132791 | 未开始 | 原计划 separate-small，seed 44 | CANCELLED，15:36:34 撤销，耗时 0；09-21 由 135459 替代 |
 | 132790 | 未开始 | 原计划 joint pointwise，seed 44 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-15 由 133874 替代 |
 | 132789 | 未开始 | 原计划 joint listwise，seed 44 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-15 由 133873 替代 |
 | 132788 | 未开始 | 原计划 separate-small，seed 43 | CANCELLED，09-11 15:36:34 撤销，耗时 0；09-13 由 133277 替代 |
@@ -64,6 +65,18 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前：seed 44 separate-small 正式训练
+
+09-21 两项 joint 产物验收通过后，按作者确认仅提交 **135459**，00:36:07 开始；当前只有这一项训练，没有后继等待任务。提交时源码 `dacfb5bee570f523ebece8c95a6aef43a4bf5bd5`、工作树干净；本轮没有修改训练代码。
+
+固定 seed 44 SID teacher 132733 best 90000（SHA256 `3f8b60dad3172ffc666b71d5ad0708e348363c44589d31f9d6eb3639c8d85da4`），冻结 teacher、只训练独立 small reranker，不使用 listwise / pointwise 的输出。3 GPU / 3 rank × 1 CPU、60G、BF16、全局 batch 384；max steps / scheduler 120000、runtime beta=0.1、原 Recall@5 / patience=5 规则不变，训练 / validation / test worker 为 1 / 2 / 3。
+
+启动核验通过：13 个源码 / launcher 指纹及数据清单匹配启动记录，fresh preflight 的 teacher 身份一致；与 seed 43 separate 配置仅 seed / id / tags / teacher / train worker 五项差异。三 rank seed=44、world_size=3、current_run=0、restarts=[]。模型摘要显示 79.2M 可训练、288M 不可训练参数；最终冻结参数逐值核验仍须等 checkpoint 产出。00:42:55 CSV 共 141 行、最近 step=704、train/loss=4.456452，所有非空数值有限。
+
+00:42:00 在原分配内做一次只读进程检查：三个 rank 和各自数据 worker 共 6 个进程、74 个线程，分别仅绑定 CPU `[4]` / `[20]` / `[21]`；库线程上限为 1。检查不额外申请 CPU / GPU，这是一次实时采样，不等于全程资源审计。辅助检查 step `135459.1` 曾因把 `srun` 也识别为训练进程而退出 1，修正枚举后的 `135459.2` 通过；主训练 step `135459.0` 始终运行，未停止或重启。后续不能把该已说明的辅助 step 当作正式训练失败，也不能漏掉真正的训练退出异常。
+
+证据：[启动记录](../logs/training_launch/seed44_separate_2026-09-21.json)、[启动验收](../logs/training_launch/seed44_separate_startup_acceptance_2026-09-21.json)、[CPU 实时采样](../logs/training_launch/seed44_separate_cpu_snapshot_2026-09-21.json)、[只读核验脚本](../logs/training_launch/accept_seed44_separate_startup_2026-09-21.py)、[run](../logs/train/runs/2026-09-21/rerank-small-seed44-135459)、[preflight](../logs/training_preflight/separate_small_seed44_135459.json)。此处仅是启动验收，不是训练产物 / 全量评估完成。
 
 ## 已验收：seed 44 listwise / pointwise 训练产物
 
