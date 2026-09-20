@@ -1,13 +1,15 @@
 # Run 台账
 
-最后核验：2026-09-16 10:58（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 00:33（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 134299 | 未开始 | 正式 joint pointwise，seed 44，3 GPU / 3 CPU | PENDING / Dependency；afterok:134298，唯一等待项；替代原 133874 |
-| 134298 | 09-16 10:54 | 正式 joint listwise，seed 44，3 GPU / 3 CPU | RUNNING；从原 133873 step 20000 完整续训，三 rank 启动核验通过；训练尚未完成 |
+| 135458 | 09-21 00:29 | seed 44 两项训练的 checkpoint / 记录验收，1 CPU / 0 GPU | COMPLETED / 0:0，2m17s；模型和 optimizer 张量扫描、指纹及选优记录通过，无新推理 |
+| 135457 | 09-21 00:27 | 同上，首次独立验收入口 | FAILED / 1:0，1m24s；缺少项目导入路径，修正后以 135458 重跑；非训练失败 |
+| 134299 | 09-17 13:50 | 正式 joint pointwise，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，38h02m53s；09-19 03:53:04 结束，达到 120000 上限，best 100000；产物验收通过 |
+| 134298 | 09-16 10:54 | 正式 joint listwise，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，26h55m42s；09-17 13:50:11 结束，原 step 20000 续训至 105000 早停，best 80000；产物验收通过 |
 | 134290 | 09-16 10:41 | seed 44 listwise CPU 预算 / 完整续训短测，3 GPU | COMPLETED / 0:0，5m33s；10:46:58 结束；3 CPU、88 项测试、完整恢复及 100-step 短测验收通过 |
 | 133874 | 未开始 | 正式 joint pointwise，seed 44，3 GPU | CANCELLED，09-15 15:27:36 结束，耗时 0；无 run / preflight |
 | 133873 | 09-15 10:06 | 正式 joint listwise，seed 44，3 GPU | CANCELLED by 1018，09-15 15:27:29；5h20m49s，作者因 CPU 24 核占用取消；保留 step 20000 完整 checkpoint |
@@ -63,13 +65,40 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 44 正式续训与唯一依赖后继
+## 已验收：seed 44 listwise / pointwise 训练产物
 
-短测 134290 验收通过后，09-16 10:54:28 提交 **134298 listwise**，10:54:29 开始；启动核验通过后于 10:57:37 补交 **134299 pointwise**，`afterok:134298`、`kill-on-invalid-dep=yes`。10:58 队列为一项 RUNNING、一项 PENDING / Dependency；separate 及全量评估均未追加排队。
+两项主作业及全部 Slurm steps 均 COMPLETED / 0:0；pointwise 在 listwise 成功结束后自动启动，没有同时占用两份训练资源。每项 AllocCPUS=3，累计 CPU 时间 / 作业耗时约为 2.99 核。Listwise 三 rank 各 189 次训练 / 验证阶段采样，rank 与所有后代线程均在所属单核内；pointwise 的启动 core binding 及 Slurm 分配记录同样为总计 3 核，不将其冒称为也有 189 次运行中审计。
+
+| 模型 / job | 停止 step / 原因 | Best step | Best validation Recall@5 | CSV / validation / test 条数 |
+| --- | --- | ---: | ---: | --- |
+| Listwise / 134298 | 105000 / 连续 5 次未改善 | 80000 | 0.288896 | 17018 / 17 / 1（仅续训部分） |
+| Pointwise / 134299 | 120000 / 达到上限 | 100000 | 0.285033 | 24025 / 24 / 1 |
+
+135458 用单核、无 GPU 独立验收：每份 best checkpoint 的 **31 个模型张量、93 个 optimizer 张量全部有限**，global step、scheduler 与 best / early-stopping 状态和日志一致；两份模型状态结构一致。均明确重载各自 best 后完成训练自带 test，未重新选择 checkpoint 或做新推理。
+
+源码指纹分别 15 / 13 项，与提交时 Git `53c6faf` 和当前文件一致；数据清单、teacher、SID 和 item2row 均重读 SHA256 核验，未重扫 TFRecords。Listwise 与原取消 run 的配置仅 5 项恢复 / CPU 相关差异；pointwise 与 seed 43 仅 seed / id / tags / teacher / train worker 五项差异。三 rank seed=44、world_size=3、无作业级重启，所有 CSV 非空数值有限。Listwise 有 1 次、pointwise 有 2 次已恢复的 DataLoader timeout retry，原日志保留，不写成完全没有警告。
+
+两份固定 best 各 5,701,613,500 bytes：
+
+- [Listwise best 80000](../logs/train/runs/2026-09-16/click-listwise-seed44-134298/checkpoints/checkpoint_000_080000.ckpt)，SHA256 `494287038e220b5032b331dd887c28a7519a31f980e3b349846cea60eab93c9e`。
+- [Pointwise best 100000](../logs/train/runs/2026-09-17/click-pointwise-seed44-134299/checkpoints/checkpoint_000_100000.ckpt)，SHA256 `122ad80cc9506b3f677b77406ed7ac7ff12be104c0cbaf8ed255450a61b46d20`。
+
+原 133873 step 20000 及正式续训的初始副本哈希均未改变，完整恢复与 CPU 审计通过；数据游标未保存，仍不宣称与未中断训练逐步等价。以下仅为 runtime beta=0.1、test 上限每 rank 10000 batches 的日志结果，不能并入全量主表或直接比较 seed 42 的全量校准结果：
+
+| 模型 / 融合 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Listwise | 0.283794 | 0.288222 | 0.259267 | 0.260710 |
+| Pointwise | 0.279875 | 0.285096 | 0.257382 | 0.259082 |
+
+证据：[机器可读验收](../logs/training_launch/seed44_artifact_acceptance_2026-09-21.json)、[只读验收脚本](../logs/training_launch/accept_seed44_artifacts_2026-09-21.py)、[输入与源码绑定](../logs/training_launch/seed44_artifact_audit_input_2026-09-21.json)、[验收启动 / 失败追溯](../logs/training_launch/seed44_artifact_audit_launch_2026-09-21.json)。首次 135457 因独立脚本的 Python 导入路径缺失而失败；补齐后 135458 完成，未更改训练代码或产物，未执行完整 ZIP CRC 检查。
+
+## 历史：seed 44 正式续训启动（两项现已完成）
+
+短测 134290 验收通过后，09-16 10:54:28 提交 **134298 listwise**，10:54:29 开始；启动核验通过后于 10:57:37 补交 **134299 pointwise**，`afterok:134298`、`kill-on-invalid-dep=yes`。当时 10:58 队列为一项 RUNNING、一项 PENDING / Dependency；这是历史启动快照，不是当前状态。
 
 两项提交源码为 `53c6faf409819e24aa3b80ab17ff5fb3f9605ddb`，各自提交时工作树干净；相对已通过短测的 `6343824` 仅更新文档。各申请 3 tasks × 1 CPU、3 GPU、60G；线程池 1，训练 / validation / test worker 每 rank 为 1 / 2 / 3。数据、模型、损失、全局 batch 384、runtime beta=0.1、120000 总步数 / scheduler 预算及原选优规则不变。
 
-134298 由原 133873 的 `checkpoint_000_020000.ckpt` 完整恢复，不是 weights-only 重训，也不使用 smoke best 20100；新副本仅迁移 ModelCheckpoint 路径。134299 尚未开始，将从同 seed SID teacher 132733 best 90000 独立加载初始权重并重建 optimizer，不使用 listwise 的任何输出。
+134298 由原 133873 的 `checkpoint_000_020000.ckpt` 完整恢复，不是 weights-only 重训，也不使用 smoke best 20100；新副本仅迁移 ModelCheckpoint 路径。134299 从同 seed SID teacher 132733 best 90000 独立加载初始权重并重建 optimizer，不使用 listwise 的任何输出。
 
 正式启动验收通过：15 个源码 / launcher 指纹与短测一致；数据清单、SID / item2row 及 teacher 身份相同。实际配置对父 run 仅 5 项差异：新增审计 callback、续训路径、run ID、关闭 weights-only、train worker 8→1；验证 interval=20000 batches、limit=5000、test=true 均恢复正式值。三个 rank 的模型、optimizer、scheduler、early-stopping / best 状态逐值一致，恢复 step=20000，world_size=3；rank CPU 分别 `[0]` / `[16]` / `[17]`，所有后代线程绑定通过。首批 CSV 11 行、最近 step=20054、train/loss=13.427476，所有非空数值有限，无 traceback。此项仅为启动验收，不是新训练产物或效果验收。
 
