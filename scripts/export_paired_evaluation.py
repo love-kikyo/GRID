@@ -572,6 +572,11 @@ def write_metadata(output: Path, metadata: Mapping[str, Any], num_samples: int) 
 
 def main() -> None:
     args = parse_args()
+    from src.runtime_export_cpu import configure_export_cpu, export_cpu_snapshot
+    cpu_budget = configure_export_cpu(torch, args.num_workers)
+    cpu_samples = []
+    if cpu_budget is not None:
+        print('[cpu-budget] ' + json.dumps(cpu_budget), flush=True)
     run_dir = args.run_dir.expanduser().resolve()
     checkpoint = resolve_checkpoint(run_dir, args.checkpoint)
     checkpoint_root = (run_dir / "checkpoints").resolve()
@@ -601,6 +606,10 @@ def main() -> None:
     )
     source_paths = [
         Path(__file__).resolve(),
+        ROOT / "src/runtime_export_cpu.py",
+        ROOT / "src/runtime_cpu.py",
+        ROOT / "src/data/loading/components/iterators.py",
+        ROOT / "run_export_paired_evaluation.sh",
         ROOT / "src/data/loading/components/dataloading.py",
         ROOT / "src/data/loading/components/interfaces.py",
         ROOT / "src/models/modules/semantic_id/tiger_generation_model.py",
@@ -657,6 +666,9 @@ def main() -> None:
                     batch = slice_batch(batch, remaining)
 
             result = infer_batch(model, batch, device, args.amp)
+            if cpu_budget is not None and batch_idx == 0:
+                cpu_samples.append(export_cpu_snapshot(cpu_budget['allowed_cpus']))
+                print('[cpu-process-tree] ' + json.dumps(cpu_samples[-1]), flush=True)
             batch_arrays = extract_batch_arrays(model, batch, result)
             for key in arrays:
                 arrays[key].append(batch_arrays[key])
@@ -683,10 +695,14 @@ def main() -> None:
             f"Full export count mismatch: expected {expected_samples}, got {processed}"
         )
 
+    if cpu_budget is not None:
+        cpu_samples.append(export_cpu_snapshot(cpu_budget['allowed_cpus']))
     incomplete_output.replace(output)
 
     metadata = {
         "schema_version": 3,
+        "cpu_budget": cpu_budget,
+        "cpu_process_tree_samples": cpu_samples,
         "storage": "hdf5_lzf_streaming",
         "run_dir": str(run_dir),
         "checkpoint": str(checkpoint),

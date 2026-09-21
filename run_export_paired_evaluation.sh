@@ -12,7 +12,8 @@
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=4
 # mmap checkpoint loading keeps listwise host RSS low; the separate reranker
 # smoke test peaked below 16 GiB, so 20 GiB allows three jobs under the user QoS.
 #SBATCH --mem=20G
@@ -75,6 +76,11 @@ mkdir -p logs/slurm "${OUTPUT_DIR}" "/tmp/matplotlib-${USER}-${JOB_ID}"
 export MPLCONFIGDIR="/tmp/matplotlib-${USER}-${JOB_ID}"
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
+export GRID_EXPORT_CPU_BUDGET=4 GRID_CPU_BUDGET=4
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+export TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1
+export OMP_DYNAMIC=FALSE MKL_DYNAMIC=FALSE
 if [[ -z "${SOURCE_GIT_COMMIT:-}" ]]; then
     SOURCE_GIT_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
 fi
@@ -88,7 +94,8 @@ if [[ -n "${SOURCE_COMPATIBILITY:-}" ]]; then
     EXTRA_ARGS+=(--source-compatibility "${SOURCE_COMPATIBILITY}")
 fi
 
-"${PYTHON_BIN}" scripts/export_paired_evaluation.py \
+srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
+    "${PYTHON_BIN}" scripts/export_paired_evaluation.py \
     --run-dir "${RUN_DIR}" \
     --checkpoint "${CHECKPOINT}" \
     --training-preflight "${TRAINING_PREFLIGHT}" \
