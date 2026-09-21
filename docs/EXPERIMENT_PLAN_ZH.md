@@ -63,7 +63,7 @@
 - [x] 全量导出入口适配整项 4 CPU 核；36 项回归与 135620 的 64 条真实导出短测通过，不改打分 / 配对 / 选权规则。
 - [x] 完成 seed 43 listwise 全量 validation：135621 导出、135643 验收通过，347416 唯一用户与 seed 42 输入 / 目标逐用户一致。
 - [x] 融合选权入口适配四核限制，39 项回归通过；135645 完成 listwise validation-only 选权与独立复算，冻结 beta=0.50，未扩网格。
-- [ ] 接下来逐项完成 seed 43 pointwise、separate 及 seed 44 三个重排模型的全量 validation / 同规则选权；配对分析旧入口运行前仍须适配 CPU 上限。
+- [ ] 逐项完成 seed 43 pointwise、separate 及 seed 44 三个重排模型的全量 validation / 同规则选权；当前 135649 仅运行 pointwise validation，无后继排队；配对分析旧入口运行前仍须适配 CPU 上限。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游从 teacher 开始时均为 `LAUNCHER TEACHER_CKPT [SEED]`；listwise 现可另传第三个 `RESUME_CKPT` 作完整续训。历史的 09-10 seed 参数改动没有改模型 / 损失 / 数据，43 项启动测试通过；09-16 的 CPU 与恢复改动另有定向测试和真实短测，不将两次修改混作同一基线。资源预算见 [开发约定](DEVELOPMENT_WORKFLOW_ZH.md)。

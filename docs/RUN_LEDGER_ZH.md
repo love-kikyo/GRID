@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-09-21 21:45（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 21:54（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 135649 | 09-21 21:51 | seed 43 pointwise 全量 validation 导出，1 GPU / 4 CPU | RUNNING；固定 best 100000，目标 347416 条；首批加载 / CPU 启动验收通过，最终验收待完成，无等待后继 |
 | 135645 | 09-21 21:14 | seed 43 listwise validation-only 选权及独立复算，4 CPU / 0 GPU | COMPLETED / 0:0，42s；51 组 beta / 204 项指标复核通过，冻结 beta=0.50，未扩网格 |
 | 135643 | 09-21 21:11 | 135621 全量导出验收及融合资源回归，1 CPU / 0 GPU | COMPLETED / 0:0，46s；39 passed，347416 唯一用户与 seed 42 输入 / 目标逐用户一致 |
 | 135621 | 09-21 19:28 | seed 43 listwise 全量 validation 导出，1 GPU / 4 CPU | COMPLETED / 0:0，12m42s；347416 条无截断，完整性 / 来源 / CPU 采样验收通过 |
@@ -70,6 +71,16 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前：seed 43 pointwise 全量 validation 导出
+
+按作者中断后继续推进的确认，仅提交 **135649**，09-21 21:51:53 开始；未重复 listwise 导出 / 选权。提交时工作树干净，源码 `82f747fcd20dadfe4217f313a4651771fa2b96c2`，相对已验收运行仅有融合资源适配和文档变化；实际 8 个导出源码指纹与 135621 完全一致。没有修改模型、损失、checkpoint 或数据，也没有另交选权 / test / 其他模型。
+
+固定既有 pointwise 132793 best 100000；提交前重新读取 checkpoint SHA256，结果 `5b7d4e9721c273339da97de6158ca31347698377d8fe1f71156317f8447b0f02`，配置 / preflight / 清单及三个必需训练源码指纹一致，无兼容豁免。SID、item2row 和 teacher 的 size / mtime 与冻结 preflight 一致，此项预检查没有重读这些资产的完整哈希；teacher 哈希仍由 exporter 的正常严格校验核对。
+
+资源为 1 task / 4 CPU / 1 GPU、20G，库线程 1、worker1、batch32、BF16。`MAX_BATCHES` 显式清空，无 sample 截断，目标完整 347416 条；输出 `pointwise_seed43_132793_val_full_v1.h5` / `.json`。21:54:19 首批验收通过：加载 best 的 missing=0 / unexpected=0，已导出 700 batches / 22400 条；主进程与 worker 共 14 个线程均在 `[0,1,16,17]` 四核内。Checkpoint size / mtime 自提交前 SHA256 核验后未变，8 个实际导出源码指纹仍一致。保留只读 NumPy 映射的非致命警告，无 fatal 标记；最终完整性尚未验收。
+
+证据：[启动记录](../logs/training_launch/full_validation_pointwise_seed43_2026-09-21.json)、[提交前核验](../logs/training_launch/full_validation_pointwise_seed43_prelaunch_2026-09-21.json)、[启动验收](../logs/training_launch/full_validation_pointwise_seed43_startup_2026-09-21.json)、[stdout](../logs/slurm/GRID-ValPoint43-CPU4-135649.out)、[stderr](../logs/slurm/GRID-ValPoint43-CPU4-135649.err)。先验收本次全量输出，再对该 seed / 模型独立沿用既定 validation-only 网格选权。
 
 ## 已验收：seed 43 listwise 全量 validation 与融合选权
 
