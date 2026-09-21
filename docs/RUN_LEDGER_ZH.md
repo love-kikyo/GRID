@@ -1,12 +1,14 @@
 # Run 台账
 
-最后核验：2026-09-21 19:31（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 21:45（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 135621 | 09-21 19:28 | seed 43 listwise 全量 validation 导出，1 GPU / 4 CPU | RUNNING；无截断，目标 347416 条；启动核验通过，最终验收待完成；无等待后继 |
+| 135645 | 09-21 21:14 | seed 43 listwise validation-only 选权及独立复算，4 CPU / 0 GPU | COMPLETED / 0:0，42s；51 组 beta / 204 项指标复核通过，冻结 beta=0.50，未扩网格 |
+| 135643 | 09-21 21:11 | 135621 全量导出验收及融合资源回归，1 CPU / 0 GPU | COMPLETED / 0:0，46s；39 passed，347416 唯一用户与 seed 42 输入 / 目标逐用户一致 |
+| 135621 | 09-21 19:28 | seed 43 listwise 全量 validation 导出，1 GPU / 4 CPU | COMPLETED / 0:0，12m42s；347416 条无截断，完整性 / 来源 / CPU 采样验收通过 |
 | 135620 | 09-21 19:24 | seed 43 listwise validation 导出短测，1 GPU / 4 CPU | COMPLETED / 0:0，1m30s；36 项回归、64 条真实样本与 CPU 绑定验收通过，非全量结果 |
 | 135618 | 09-21 19:20 | seed 44 separate 最终产物 / 冻结 teacher 核验，1 CPU / 0 GPU | COMPLETED / 0:0，2m39s；两份 teacher 状态逐值相同，产物验收通过 |
 | 135459 | 09-21 00:36 | 正式 separate-small，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，5h34m32s；06:10:39 结束，35000 早停、best 10000；最终产物验收通过 |
@@ -69,15 +71,29 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 43 listwise 全量 validation 导出
+## 已验收：seed 43 listwise 全量 validation 与融合选权
 
 135620 短测验收通过后，仅提交 **135621**，09-21 19:28:55 开始；无后继等待项。提交时工作树干净，源码 `fbeb7c2e6e182e407eb3aa234df784f495cb10b4`（相对短测只改文档）。固定既有 132786 best 100000，不重选 checkpoint、不重训，单 GPU / 总计 4 CPU、20G、batch32、worker1、BF16；`MAX_BATCHES` 显式清空，无 sample 截断，目标完整 347416 个 validation 用户。
 
-输出为 `listwise_seed43_132786_val_full_v1.h5` / `.json`；未完成时只存在 job 绑定的 `.incomplete.135621` 文件，不作为有效结果使用。未提交 beta 搜索或 test，也未提交其他模型导出。后续沿用预声明 beta=0.00–0.50、步长0.01、beam 权重1、按 NDCG@10 → NDCG@5 → Recall@10 → Recall@5、同分较小 beta 的 validation-only 规则，不搬用 seed 42 beta 或根据 test 扩网格。
+135621 于 19:41:37 正常完成，耗时 12m42s；135643 单核验收通过。最终 HDF5 / sidecar 各为完整 **347416 条**，用户和输入哈希唯一；按 user ID 排序后，全部用户、输入 hash、目标 SID 与已验收 seed 42 listwise validation 完全一致。这不是比较两模型的候选池，也不是追加跨 split 去重。每行 20 个自然候选无重复、重排前后为同一集合，SID 范围、分数有限性 / 排序通过；自然 beam@20 命中 102761 条（覆盖率 0.295787）。
 
-19:30:57 启动检查通过：正确加载 best（missing=0 / unexpected=0），已有 1100 batches / 35200 条；8 个实际导出源码指纹与已验收短测一致，checkpoint size / mtime 未变。主进程与 worker 共 14 个线程在 `[0,1,16,17]` 四核内，库线程上限 1。尚未验收全量数量、最终 sidecar / HDF5 或最终 CPU 采样，不凭首批输出认定全量通过。
+Checkpoint SHA256 重新读取核对通过，配置 / preflight、清单及 8 个导出源码指纹通过；正确加载（missing=0 / unexpected=0），无需兼容豁免。导出开始 / 结束采样中主进程和 worker 的全部线程均在 `[0,1,16,17]` 四核内，库线程上限 1。HDF5 SHA256 `05655c1f323b0a1491c4374859f42ad795df9fd592cb2c7691881e27df9372e8`；sidecar SHA256 `117f00c58c900323236341bcbae740184bb84e8137a9a926f1aa5549b82a7455`。
 
-证据：[启动命令与冻结规则](../logs/training_launch/full_validation_listwise_seed43_2026-09-21.json)、[启动核验](../logs/training_launch/full_validation_listwise_seed43_startup_2026-09-21.json)、[stdout](../logs/slurm/GRID-ValList43-CPU4-135621.out)、[stderr](../logs/slurm/GRID-ValList43-CPU4-135621.err)。
+导出证据：[启动命令与冻结规则](../logs/training_launch/full_validation_listwise_seed43_2026-09-21.json)、[全量验收](../logs/training_launch/listwise_seed43_validation_acceptance_2026-09-21.json)、[只读验收脚本](../logs/training_launch/accept_listwise_seed43_validation_2026-09-21.py)、[stdout](../logs/slurm/GRID-ValList43-CPU4-135621.out)、[stderr](../logs/slurm/GRID-ValList43-CPU4-135621.err)。
+
+融合 launcher 原已申请 4 CPU，提交 `2cae4f6` 仅补单节点 core binding、库线程池 1、资源检查 / 进程树采样和源码指纹，未改打分或选优算法。135643 的 39 项回归全部通过，包括限制启用前后选权一致、拒绝 test / 截断输入和拒绝覆盖输出。随后工作树干净地提交 135645，21:14:17–21:14:59 完成；无 GPU、总计 4 CPU，独立验收 step 仅用 1 CPU。选权进程开始 / 结束均为单线程，绑定 `[0,1,2,3]`，累计 CPU / 耗时约 0.93 核。
+
+沿用预声明的 beta=0.00–0.50、步长0.01、beam 权重1，以 NDCG@10 → NDCG@5 → Recall@10 → Recall@5 依次选优，同分取较小 beta；**本 seed 独立选出 0.50**，未搬用 seed 42 结果。固定权重文件 SHA256 `4c2076e0d151309f355fc012a90662f7454531251d4cba63260981ebd515cfda`；独立以目标分数的超越计数与稳定同分规则复算 51 × 4 项指标，最大绝对差 `1.11e-16`。结果处于预设网格上界，只称网格内最优，不扩网格、不重选 checkpoint、不重训。
+
+以下仅为该 checkpoint 的**全量 validation**结果，不能作为独立 test 提升：
+
+| 推理方式 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Beam-only，beta=0 | 0.284852 | 0.290677 | 0.260934 | 0.262821 |
+| 原 runtime beta=0.1 | 0.286979 | 0.292479 | 0.262818 | 0.264607 |
+| Validation 选出 beta=0.5 | 0.290516 | 0.293372 | 0.265931 | 0.266860 |
+
+选权证据：[启动 / 来源绑定](../logs/training_launch/fusion_listwise_seed43_2026-09-21.json)、[完整 51 组指标](../logs/analysis/paired_evaluation/listwise_seed43_132786_fusion_val.md)、[机器可读冻结结果](../logs/analysis/paired_evaluation/listwise_seed43_132786_fusion_val.json)、[独立复算验收](../logs/training_launch/listwise_seed43_fusion_acceptance_2026-09-21.json)、[复算脚本](../logs/training_launch/accept_fusion43_2026-09-21.py)。本阶段未提交其他模型或 test。
 
 ## 已验收：seed 44 separate 最终产物与 4 核导出短测
 
