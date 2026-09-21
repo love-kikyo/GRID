@@ -23,6 +23,19 @@ except ModuleNotFoundError:  # Direct execution adds scripts/, not the repositor
 DEFAULT_METRIC_ORDER = ("ndcg@10", "ndcg@5", "recall@10", "recall@5")
 
 
+def selection_cpu_budget():
+    """Reuse the single-task four-core guard; do not import training/ML code."""
+    if os.environ.get("GRID_FUSION_CPU_BUDGET") != "4":
+        return None
+    from src.runtime_cpu import THREAD_VARIABLES
+    from src.runtime_export_cpu import check_export_allocation
+
+    # Libraries are imported above: limits must be set by the launcher, not here.
+    if any(os.environ.get(name) != "1" for name in THREAD_VARIABLES):
+        raise RuntimeError("Fusion library thread limits must be set before Python starts")
+    return check_export_allocation()
+
+
 def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -193,6 +206,14 @@ def markdown_report(payload: Mapping[str, object]) -> str:
 
 def main() -> None:
     args = parse_args()
+    if args.output_json.exists() or args.output_md.exists():
+        raise FileExistsError("Refusing to overwrite an existing fusion selection")
+    cpu_budget = selection_cpu_budget()
+    cpu_samples = []
+    if cpu_budget is not None:
+        from src.runtime_export_cpu import export_cpu_snapshot
+        cpu_samples.append(export_cpu_snapshot(cpu_budget["allowed_cpus"]))
+        print("[cpu-budget] " + json.dumps(cpu_budget), flush=True)
     input_path = args.input.expanduser().resolve()
     metadata_path = input_path.with_suffix(".json")
     if not metadata_path.exists():
@@ -235,9 +256,23 @@ def main() -> None:
         )
 
     selected_index = select_best(candidates, args.metric_order)
+    if cpu_budget is not None:
+        cpu_samples.append(export_cpu_snapshot(cpu_budget["allowed_cpus"]))
+        print("[cpu-process-tree] " + json.dumps(cpu_samples), flush=True)
+    root = Path(__file__).resolve().parents[1]
     output = {
         "schema_version": 2,
         "selector_sha256": file_sha256(Path(__file__).resolve()),
+        "source_git_commit": os.environ.get("SOURCE_GIT_COMMIT"),
+        "source_files": [
+            {"path": str(root / name), "sha256": file_sha256(root / name)}
+            for name in (
+                "scripts/select_score_fusion.py", "scripts/analyze_paired_evaluation.py",
+                "run_select_score_fusion.sh", "src/runtime_export_cpu.py", "src/runtime_cpu.py",
+            )
+        ],
+        "cpu_budget": cpu_budget,
+        "cpu_process_tree_samples": cpu_samples,
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "selection_scope": "validation_only",
         "input": str(input_path),

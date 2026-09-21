@@ -4,6 +4,7 @@
 #SBATCH --job-name=GRID-FusionSelect
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
@@ -39,8 +40,14 @@ ANALYSIS_DIR=${GRID_ROOT}/logs/analysis/paired_evaluation
 cd "${GRID_ROOT}"
 mkdir -p logs/slurm "${ANALYSIS_DIR}"
 export PYTHONUNBUFFERED=1
+export GRID_CPU_BUDGET=4 GRID_FUSION_CPU_BUDGET=4
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1 NUMEXPR_MAX_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+export TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1
+export OMP_DYNAMIC=FALSE MKL_DYNAMIC=FALSE
 
-"${PYTHON_BIN}" scripts/select_score_fusion.py \
+srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
+    "${PYTHON_BIN}" -m scripts.select_score_fusion \
     --input "${VALIDATION_EXPORT}" \
     --beam-weight 1.0 \
     --rerank-weight-start 0.00 \

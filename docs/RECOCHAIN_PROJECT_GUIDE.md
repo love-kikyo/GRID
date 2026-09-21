@@ -56,7 +56,9 @@
 
 环境沿用 `/home/MMReco2021/.conda/envs/GRID/bin/python`。训练与较重测试在 Slurm 计算节点执行，不在登录节点直接跑训练。正式 launcher 使用 3 GPU DDP；需检查实际 world size，不能仅以申请了 3 GPU 判断用满三卡。
 
-四个正式训练入口及 CPU resume smoke 使用整项作业 3 核（上限 4 核）。逐样本导出入口现使用 1 task / 4 CPU / 1 GPU，显式 core binding、库线程池 1、数据 worker 1，并把首次 / 结束时的进程树 CPU 绑定写入 sidecar；不改 batch=32、BF16 或打分公式。导出 sidecar 另绑定实际 iterator 和 CPU 控制源码，旧训练 preflight 未覆盖这些文件的范围仍按原记录保留，不假称旧 preflight 覆盖了全部依赖。其他旧 smoke / 分析入口运行前仍须调整并核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
+四个正式训练入口及 CPU resume smoke 使用整项作业 3 核（上限 4 核）。逐样本导出入口现使用 1 task / 4 CPU / 1 GPU，显式 core binding、库线程池 1、数据 worker 1，并把首次 / 结束时的进程树 CPU 绑定写入 sidecar；不改 batch=32、BF16 或打分公式。导出 sidecar 另绑定实际 iterator 和 CPU 控制源码，旧训练 preflight 未覆盖这些文件的范围仍按原记录保留，不假称旧 preflight 覆盖了全部依赖。
+
+融合选权入口 `run_select_score_fusion.sh` 使用 1 task / 4 CPU / 无 GPU，库线程池 1、显式 core binding；复用单 task 四核检查，把开始 / 结束的进程树采样与分析源码指纹写入结果，不改 validation 网格或打分 / 选优规则。直接调用脚本不自动启用资源检查；正式任务必须用受限 launcher。其他旧 smoke / 配对分析入口运行前仍须调整并核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
 
 Listwise 可传第三个参数 `RESUME_CKPT`：先在新 run 内准备完整续训副本，仅迁移 best-checkpoint 路径；保留 optimizer / scheduler / early stopping，关闭 weights-only reset。父 run 和原 checkpoint 不覆盖、不删除。恢复时逐 rank 对比真实状态，训练结束后测试新选出的 best，而非最初的 resume 输入。数据读取游标未保存，worker 改变也影响训练顺序，不宣称与未中断训练逐步完全一致。
 
