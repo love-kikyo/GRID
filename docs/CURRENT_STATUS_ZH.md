@@ -1,10 +1,10 @@
 # 当前状态
 
-核验时间：2026-09-21 00:43，Asia/Shanghai。此页是状态快照，不是实时监控。
+核验时间：2026-09-21 19:26，Asia/Shanghai。此页是状态快照，不是实时监控。
 
 ## 一句话结论
 
-Seed 44 listwise / pointwise 正式产物验收通过；**seed 44 separate 135459 运行中，启动核验通过**，当前只有这一项训练、无等待任务。分配 3 GPU / 总计 3 CPU 核，满足整项最多 4 核。Seed 43 训练验收及 seed 42 全量结果保留，新增 seed 的全量评估未开展，论文继续暂停。
+三个 seed 的计划训练均已结束；seed 44 separate 最终产物及冻结 teacher 逐值验收通过。全量导出已适配总计 4 CPU 核并通过 64 条真实短测，下一步仅提交 seed 43 listwise 全量 validation。Seed 42 全量结果保留，新增 seed 的完整评估仍未完成，论文继续暂停。
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
@@ -24,14 +24,17 @@ Seed 44 listwise / pointwise 正式产物验收通过；**seed 44 separate 13545
 | CPU 预算 / 完整续训短测 | 134290 验收通过 | 88 项测试、3 rank 完整恢复、20000→20100、有限 loss / 验证与后代线程 CPU 绑定均通过 |
 | Seed 44 listwise 正式续训 | 134298 完成，产物验收通过 | 105000 正常早停，best 80000；原 133873 step 20000 恢复，不是从 smoke 继续 |
 | Seed 44 pointwise | 134299 完成，产物验收通过 | 达到 120000 上限，best 100000；同 seed SID teacher 独立初始化 |
-| Seed 44 separate-small | 135459 运行中，启动核验通过 | 冻结 seed 44 teacher best 90000；3 GPU / 总计 3 CPU；无后继等待项 |
-| 新增 seed 全量评估 | 未提交 | 各模型完成验收后，沿用原 validation 选权与 test 协议 |
+| Seed 44 separate-small | 135459 完成，最终产物验收通过 | 35000 早停、best 10000；两份 teacher 状态各 31 张量与原 teacher 逐值相同 |
+| 4 核全量导出入口 | 135620 短测验收通过 | 36 项测试 + 64 条真实 validation；不是全量结果 |
+| 新增 seed 全量评估 | 即将分阶段启动 | 先做 seed 43 listwise 全量 validation；不直接搬用 seed 42 beta，不排整条队列 |
 | 效率复测 / 必要解释分析 | 待开展 | 后续与训练统一安排 GPU 资源 |
 | 论文正文 | 暂停修改 | 等实验整体收尾，按作者要求执行 |
 
 ## 最近的任务到底在做什么
 
-- 135459：09-21 00:36:07 启动，冻结 SID teacher、训练独立小 reranker；三 rank、CPU 子进程绑定、配置 / 源码 / teacher 来源通过，00:42:55 CSV 到 step 704，loss 有限。不是训练完成或效果验收。
+- 135620：09-21 19:25:42 完成，1m30s；4 核 / 单 GPU 导出短测及回归通过，无 checkpoint 缺失 / 多余参数；不构成正式评估结果。
+- 135618：09-21 19:23:07 完成，2m39s；单核、无 GPU 验收 separate，冻结 teacher 两份状态逐值一致。
+- 135459：09-21 06:10:39 完成，5h34m32s；35000 正常早停、best 10000，已重载测试并通过最终产物验收。
 - 135458：09-21 单核 CPU 产物验收完成，2m17s；两份 best checkpoint 的模型 / optimizer 张量有限性、哈希、配置 / 选优和测试记录均通过，无新推理。
 - 135457：此前验收入口缺少项目导入路径而失败，已修正为 135458；非训练或 checkpoint 失败，日志保留。
 - 134298：09-17 13:50:11 完成，续训耗时 26h55m42s；正常早停，已重载 best 测试并通过产物验收。
@@ -47,7 +50,7 @@ Seed 44 listwise / pointwise 正式产物验收通过；**seed 44 separate 13545
 - 132733：seed 44 SID teacher，09-11 13:10 完成；正常 early stopping，不是故障退出。
 - 132681–132685：seed 42 全量 test / 配对统计已验收，不重复执行。
 
-当前仅 separate 一项运行，无依赖等待；不代表核验了其他账号的 GPU 占用。
+当前短测已结束；下一步只提交一项全量 validation，无后继等待；不代表核验了其他账号的 GPU 占用。
 
 详细作业记录、已完成模型的指标与 checkpoint 见 [Run 台账](RUN_LEDGER_ZH.md)。
 
@@ -55,10 +58,10 @@ Seed 44 listwise / pointwise 正式产物验收通过；**seed 44 separate 13545
 
 按 [实验计划](EXPERIMENT_PLAN_ZH.md) 分阶段推进，不重复已完成的 seed 42 训练、smoke 或全量推理：
 
-1. 等 135459 完成后验收停止原因、best checkpoint、冻结 teacher 和训练自带测试；当前不追加后继队列。
+1. 提交 seed 43 listwise best 的全量 validation，完成后验收样本计数、身份、候选 / 分数和源码指纹；再分阶段安排其他模型与 validation-only 选权。
 2. 新 seed 各自使用相同 validation 网格选权与 test 配对协议，不直接搬用 seed 42 的 beta；逐用户区间与跨训练 seed 波动分开报告。
 3. [数据协议](DATA_PROTOCOL_ZH.md) 已补固定资产重建命令与逐步计数；上游下载快照和历史 SID 生成来源的完整绑定仍需补齐。论文正文继续暂停。
 
 补充：多 seed 不是为每个 beta 重训。仍不测量 beta 改变早停的影响，也不宣称影响已证明为零；每个 run 完成后固定其原规则选出的 best checkpoint。已知 split 重叠继续按原协议披露。
 
-09-16 调整了 CPU / 线程 / 训练 worker、完整恢复与训练后测试选 best 的逻辑；本轮只验收产物和推进既定 separate，不改模型、损失、训练预算或数据。续训数据游标无法恢复，不宣称与不中断训练逐步完全一致。训练自带 test 仍有 batch 上限，不并入全量主表。详细证据集中在 [Run 台账](RUN_LEDGER_ZH.md)，父 run 保留不变。
+本轮只完成 separate 验收和导出资源适配，不改模型、损失、训练预算、数据或选权规则。09-16 续训的数据游标无法恢复，仍不宣称与不中断训练逐步完全一致。训练自带 test 有 batch 上限，不并入全量主表。详细证据集中在 [Run 台账](RUN_LEDGER_ZH.md)，父 run 保留不变。

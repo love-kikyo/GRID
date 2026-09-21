@@ -1,12 +1,14 @@
 # Run 台账
 
-最后核验：2026-09-21 00:43（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 19:26（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 135459 | 09-21 00:36 | 正式 separate-small，seed 44，3 GPU / 3 CPU | RUNNING；启动核验通过，替代原 132791；无后继排队，训练尚未完成 |
+| 135620 | 09-21 19:24 | seed 43 listwise validation 导出短测，1 GPU / 4 CPU | COMPLETED / 0:0，1m30s；36 项回归、64 条真实样本与 CPU 绑定验收通过，非全量结果 |
+| 135618 | 09-21 19:20 | seed 44 separate 最终产物 / 冻结 teacher 核验，1 CPU / 0 GPU | COMPLETED / 0:0，2m39s；两份 teacher 状态逐值相同，产物验收通过 |
+| 135459 | 09-21 00:36 | 正式 separate-small，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，5h34m32s；06:10:39 结束，35000 早停、best 10000；最终产物验收通过 |
 | 135458 | 09-21 00:29 | seed 44 两项训练的 checkpoint / 记录验收，1 CPU / 0 GPU | COMPLETED / 0:0，2m17s；模型和 optimizer 张量扫描、指纹及选优记录通过，无新推理 |
 | 135457 | 09-21 00:27 | 同上，首次独立验收入口 | FAILED / 1:0，1m24s；缺少项目导入路径，修正后以 135458 重跑；非训练失败 |
 | 134299 | 09-17 13:50 | 正式 joint pointwise，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，38h02m53s；09-19 03:53:04 结束，达到 120000 上限，best 100000；产物验收通过 |
@@ -66,9 +68,21 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 44 separate-small 正式训练
+## 已验收：seed 44 separate 最终产物与 4 核导出短测
 
-09-21 两项 joint 产物验收通过后，按作者确认仅提交 **135459**，00:36:07 开始；当前只有这一项训练，没有后继等待任务。提交时源码 `dacfb5bee570f523ebece8c95a6aef43a4bf5bd5`、工作树干净；本轮没有修改训练代码。
+135459 主作业 / 训练 step `135459.0` 正常完成，best 10000、连续 5 次验证未改善后于 35000 早停，已重载 best 完成训练自带 test。此前辅助探针 `.1` 失败、修正后的 `.2` 通过按下节记录保留，不把辅助步骤失败误判为训练失败。总分配 3 CPU，累计 CPU / 耗时约 2.99 核。
+
+135618 在单核、无 GPU 条件下完成独立核验：checkpoint 的 **105 个模型张量、36 个 optimizer 张量全部有限**；`teacher_model.` 和 `teacher.sid_model.` 各 31 个张量、144,183,296 个数值，均与 seed 44 SID teacher best 90000 逐值一致。配置 / preflight / 源码 / 数据清单、SID / item2row / teacher 哈希核对通过；模型与 scheduler step=10000、best 记录与日志一致。CSV 7008 行、7 次 validation、1 次 test，非空数值均有限，两个辅助验证字段各 7 次正常，无加载超时或作业重启。
+
+[Separate best checkpoint](../logs/train/runs/2026-09-21/rerank-small-seed44-135459/checkpoints/checkpoint_000_010000.ckpt)：6,128,885,734 bytes，SHA256 `00fec1959cd97c57b9f45d0f4cd77f0026e2ace1fefb97f81874b28cdd0181a6`。Best validation Recall@5=0.272732；有限 batch、runtime beta=0.1 的 test 为 Recall@5/10=0.267852/0.271783、NDCG@5/10=0.250885/0.252167；这些数值不并入全量主表。证据：[完整验收](../logs/training_launch/separate_seed44_acceptance_2026-09-21.json)、[只读核验脚本](../logs/training_launch/accept_separate_seed44_2026-09-21.py)、[验收 launcher](../logs/training_launch/run_separate_seed44_audit_2026-09-21.sh)。
+
+导出入口原申请 8 CPU，本轮提交 `3dc6d9d` 改为单 task / 4 CPU / 单 GPU、显式 core binding、库线程 1 / 数据 worker 1；复用已有 TensorFlow 单线程数据选项，未修改模型 / 候选 / 打分 / batch32 / BF16。新增首次 / 结束进程树采样和实际 CPU / iterator 源码指纹；原训练 preflight 未覆盖的依赖范围不伪装成已经覆盖，也未放宽其原有必需源码校验。
+
+135620 提交时工作树干净，源码 `3dc6d9d084abeab0d8dff786204c3899ebdbc8b2`；计算节点 **36 passed**。Seed 43 listwise best 100000 的 64 条 validation 导出验收通过：64 唯一用户和输入 hash、候选一一对应 / 无重复、SID 范围及分数有限 / 排序正确；自然 beam 命中 21 条，未将短测当全量。Checkpoint 加载 missing=0 / unexpected=0，指纹与既有验收一致。主进程和 worker 所有线程限制于 `[0,1,16,17]` 四核，两个采样点通过。证据：[启动](../logs/training_launch/cpu4_export_smoke_2026-09-21.json)、[短测验收](../logs/training_launch/cpu4_export_smoke_acceptance_2026-09-21.json)、[核验脚本](../logs/training_launch/accept_cpu4_export_smoke_2026-09-21.py)。
+
+## 历史：seed 44 separate-small 启动（现已验收完成）
+
+09-21 两项 joint 产物验收通过后，按作者确认仅提交 **135459**，00:36:07 开始；当时只有这一项训练，没有后继等待任务。提交时源码 `dacfb5bee570f523ebece8c95a6aef43a4bf5bd5`、工作树干净；该次没有修改训练代码。
 
 固定 seed 44 SID teacher 132733 best 90000（SHA256 `3f8b60dad3172ffc666b71d5ad0708e348363c44589d31f9d6eb3639c8d85da4`），冻结 teacher、只训练独立 small reranker，不使用 listwise / pointwise 的输出。3 GPU / 3 rank × 1 CPU、60G、BF16、全局 batch 384；max steps / scheduler 120000、runtime beta=0.1、原 Recall@5 / patience=5 规则不变，训练 / validation / test worker 为 1 / 2 / 3。
 
