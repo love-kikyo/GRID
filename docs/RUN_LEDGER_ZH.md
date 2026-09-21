@@ -1,11 +1,15 @@
 # Run 台账
 
-最后核验：2026-09-21 22:20（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 22:37（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 135686 | 09-21 22:33 | seed 43 separate 全量 validation 导出，1 GPU / 4 CPU | RUNNING；固定 best 10000，目标 347416 条；启动 / CPU 检查通过，无后继等待，最终完整性待验收 |
+| 135681 | 09-21 22:31 | separate 43 前置 / 冻结 teacher 核验，1 CPU / 0 GPU | COMPLETED / 0:0，51s；105 个模型 / 36 个 optimizer 张量有限，两份 teacher 各 31 张量逐值一致 |
+| 135679 | 09-21 22:29 | 同一前置验收第二次入口 | FAILED / 1:0，50s；张量检查后记录阶段缺少 git，可追溯记录未产出；修正为提交端核验版本 |
+| 135678 | 09-21 22:27 | 同一前置验收首次入口 | FAILED / 1:0，42s；独立入口缺少项目导入路径，读取 checkpoint 失败；非训练或数据损坏 |
 | 135666 | 09-21 22:15 | seed 43 pointwise validation-only 选权及独立复算，4 CPU / 0 GPU | COMPLETED / 0:0，42s；51 组 beta / 204 项指标复核通过，冻结 beta=0.50，未扩网格 |
 | 135665 | 09-21 22:14 | 135649 全量导出完整性及同 seed 输入对齐验收，1 CPU / 0 GPU | COMPLETED / 0:0，15s；347416 唯一用户，与 listwise 输入 / 目标逐用户一致 |
 | 135649 | 09-21 21:51 | seed 43 pointwise 全量 validation 导出，1 GPU / 4 CPU | COMPLETED / 0:0，13m38s；22:05:31 结束，347416 条完整性 / 来源 / CPU 采样验收通过 |
@@ -74,6 +78,18 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
+## 当前：seed 43 separate 全量 validation 导出
+
+原 133277 best 10000 固定不变，checkpoint SHA256 `4e5751819d402f366346499ae1e2479611bfbea4110adae0e2cd80000c1b270b`。09-15 的训练验收没有做冻结参数逐值核验，本次 135681 单核、无 GPU 补齐：105 个模型张量、36 个 optimizer 张量均有限；`teacher_model.` 和 `teacher.sid_model.` 各 31 张量 / 144183296 个值，与 seed 43 teacher best 100000 完全相同。配置 / preflight、四个必需训练源码、清单、SID / item2row / teacher 全文件哈希均通过；八个共享导出源码与已验收 pointwise 相同，无兼容豁免。原历史验收记录不改写。
+
+前置核验两次失败均是本次独立入口问题：135678 漏配项目导入路径；135679 在张量检查之后的版本记录阶段发现计算节点无 git。已补项目路径，将 Git 检查留在提交端，计算节点继续校验精确源码哈希及提交记录，135681 全步骤正常完成。失败脚本副本 / 日志及原 job ID 均保留，不冒充训练失败，也不将未写出验收记录的失败运行标为通过。
+
+135681 通过后仅提交 **135686**，09-21 22:33:32 开始，源码 `4a84521e186b3fd6e5af2e471828a715d97b5e43`、工作树干净；没有修改公共执行代码。1 task / 4 CPU / 1 GPU、20G，库线程 1、worker1、batch32、BF16；无 batch / sample 截断，目标 347416 个 validation 用户，输出 `separate_seed43_133277_val_full_v1.h5` / `.json`。未提交融合选权、test 或其他模型；正式输出须完成后另行验收。
+
+22:36:51 启动验收通过：9 个实际导出源码指纹匹配前置核验，checkpoint size / mtime 未变；主进程与 worker 的 14 个线程均绑定 `[10,11,26,27]` 四核，已输出 3700 batches / 118400 条，无致命日志。Separate 在 `setup()` 中重建冻结 teacher，因此初始化加载按既有 seed 42 相同路径报告 missing=0 / unexpected=62，额外键仅属于 `teacher` / `teacher_model` 两份状态；这 62 个张量已经逐值核对原 teacher，不是允许任意缺失 / 多余键。正式全量产物仍待完成后验收。
+
+证据：[前置核验与冻结 teacher](../logs/training_launch/full_validation_separate_seed43_prelaunch_2026-09-21.json)、[核验入口与失败追溯](../logs/training_launch/prepare_separate43_validation_launch_2026-09-21.json)、[最终核验脚本](../logs/training_launch/prepare_separate43_validation_2026-09-21.py)、[导出启动记录](../logs/training_launch/full_validation_separate_seed43_2026-09-21.json)、[启动验收](../logs/training_launch/full_validation_separate_seed43_startup_2026-09-21.json)、[stdout](../logs/slurm/GRID-ValSep43-CPU4-135686.out)、[stderr](../logs/slurm/GRID-ValSep43-CPU4-135686.err)。
+
 ## 已验收：seed 43 pointwise 全量 validation 与融合选权
 
 按作者中断后继续推进的确认，仅提交 **135649**，09-21 21:51:53 开始；未重复 listwise 导出 / 选权。提交时工作树干净，源码 `82f747fcd20dadfe4217f313a4651771fa2b96c2`，相对已验收运行仅有融合资源适配和文档变化；实际 8 个导出源码指纹与 135621 完全一致。没有修改模型、损失、checkpoint 或数据，该次导出提交时未另排选权 / test / 其他模型。
@@ -100,7 +116,7 @@
 | 原 runtime beta=0.1 | 0.285036 | 0.290680 | 0.261631 | 0.263456 |
 | Validation 选出 beta=0.5 | 0.288596 | 0.291921 | 0.264762 | 0.265853 |
 
-选权证据：[启动 / 来源绑定](../logs/training_launch/fusion_pointwise_seed43_2026-09-21.json)、[完整 51 组指标](../logs/analysis/paired_evaluation/pointwise_seed43_132793_fusion_val.md)、[冻结结果](../logs/analysis/paired_evaluation/pointwise_seed43_132793_fusion_val.json)、[独立复算验收](../logs/training_launch/pointwise_seed43_fusion_acceptance_2026-09-21.json)、[复算脚本](../logs/training_launch/accept_pointwise_fusion43_2026-09-21.py)。当前账号队列为空；下一阶段为 seed 43 separate 全量 validation，尚未提交。
+选权证据：[启动 / 来源绑定](../logs/training_launch/fusion_pointwise_seed43_2026-09-21.json)、[完整 51 组指标](../logs/analysis/paired_evaluation/pointwise_seed43_132793_fusion_val.md)、[冻结结果](../logs/analysis/paired_evaluation/pointwise_seed43_132793_fusion_val.json)、[独立复算验收](../logs/training_launch/pointwise_seed43_fusion_acceptance_2026-09-21.json)、[复算脚本](../logs/training_launch/accept_pointwise_fusion43_2026-09-21.py)。该阶段验收时队列为空；其后的 separate 43 进展见本页当前阶段。
 
 ## 已验收：seed 43 listwise 全量 validation 与融合选权
 

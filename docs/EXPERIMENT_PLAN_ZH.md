@@ -4,6 +4,22 @@
 
 2026-09-07 作者补充：继续意味着推进进程，不重复已通过的任务；准备就绪后可启动重训。提交节奏以 2026-09-11 最新确认优先：最多“1 个运行 + 1 个依赖等待”；已排队后继可在前序成功退出后自动启动，更后面的任务等验收并确认后再提交，不预排整串任务。详见 [开发与记录约定](DEVELOPMENT_WORKFLOW_ZH.md)。
 
+## 当前剩余工作总览（2026-09-21）
+
+三组 seed（42 / 43 / 44）的计划训练已经全部完成，不需要再排同一套长训练。Seed 42 全量评估已验收；新增 seed 的六个重排模型中，seed 43 listwise / pointwise 已完成 validation 与选权，余下四组尚未全部验收（包括正在导出的 separate 43）。以下是待办量，不是一次性提交清单。
+
+| 类别 | 剩余工作 / 数量 | 完成条件 |
+| --- | --- | --- |
+| 核心：validation / 选权 | 4 组：seed 43 separate；seed 44 listwise / pointwise / separate。135686 正在导出第一组 | 每组 347416 条完整性及输入对齐通过，再按固定 51 点 validation 网格独立选权并冻结；SID-only 不搜索 beta |
+| 核心：全量 test | 8 份：seed 43 / 44 各 SID、listwise、pointwise、separate | 每份 2061101 条；绑定既有 best 与相应已冻结选权，完整遍历 / 唯一用户 / 跨模型输入和目标对齐，不用 test 调参 |
+| 核心：配对统计 | 新增 2 个 seed 的四模型统计 | 沿用 seed 42 的 11 项比较及 Recall / NDCG@5、@10 区间；分析入口先适配四核、四模型，不能直接用旧三模型 / 8 核 launcher |
+| 核心：多 seed 汇总 | 一份可审阅的三 seed 主表 | 汇总 seed 42 / 43 / 44 各项指标及均值 / 标准差；逐用户配对区间与训练 seed 波动分开，不把 validation 调参提升写成 test 结论 |
+| 支撑主张：效率与解释 | 新 checkpoint 的延迟 / 显存、cache / no-cache 和独立 reranker 成本；必要的历史长度 / 自然 beam 命中分组与案例 | 同硬件 / batch / beam / 上下文条件；解释范围随主结果收敛，不自动扩全量消融网格；相关入口也须满足四核上限 |
+| 复现收尾 | 补上游快照身份与历史 SID 生成版本 / 参数绑定，冻结配置、指标和取数出处 | 固定资产到样本的链路已有文档；来源缺口未补齐前，不宣称已实现第三方从零复现 |
+| 论文与转投 | 作者确认结果后再更新 short 稿、逐项回应 review、导师审阅及投稿合规检查 | 实验先收尾，正文仍暂停；提交前重新核验官网 / 投稿系统要求 |
+
+当前只推进 135686；完成后先验收其导出，再做 separate 43 选权。其余任务按“最多 1 个运行 + 1 个依赖等待、验收后再推进”的节奏安排，不据此表批量排队。不追加 split 去重、beta 重训、lambda 全网格或新大规模 baseline 训练。
+
 ## 0. 已有基础
 
 - [x] 冻结 A + H1 + L2，完成正式数据构建和全量审计。
@@ -53,6 +69,7 @@
 - [x] Seed 43 pointwise 训练产物验收通过；达到 120000 步上限，best 100000，已重载测试，配置 / preflight / CSV / 文件指纹通过。
 - [x] Listwise 验收后，按 09-13 作者要求仅补交 seed 43 separate-small，作为 pointwise 的唯一依赖等待项；冻结同 seed SID teacher，具体新旧 job 关系见台账。
 - [x] Seed 43 separate 训练产物验收通过；正常早停 35000，best 10000，辅助日志有限，有限 batch test 的四项 beam 汇总指标与 teacher 一致；不等于冻结参数逐值核对或全量推理已通过。
+- [x] 补齐 seed 43 separate 冻结 teacher 逐张量核验：135681 通过，模型 / optimizer 张量有限，两份 teacher 状态与原 teacher 逐值一致；不修改 09-15 的历史验收记录。
 - [x] 09-15 seed 43 验收后，作者确认继续；仅启动 seed 44 listwise，并提交 pointwise 作为唯一依赖后继。共同初始化为 seed 44 SID teacher best 90000，预算 / 数据 / 损失不变。
 - [x] 09-16 作者确认整项 CPU 上限 4 核；修复为 3 rank × 1 核并实现完整状态续训，原 133873 / 133874 取消记录保留。
 - [x] CPU 预算 / 完整恢复短测 134290 验收通过：计算节点 88 项回归、3 rank 模型 / optimizer / scheduler / 早停与 best 状态、后代线程 affinity、100 个恢复后 optimizer steps 和真实验证均通过；不是仅检查退出码。
@@ -64,7 +81,7 @@
 - [x] 完成 seed 43 listwise 全量 validation：135621 导出、135643 验收通过，347416 唯一用户与 seed 42 输入 / 目标逐用户一致。
 - [x] 融合选权入口适配四核限制，39 项回归通过；135645 完成 listwise validation-only 选权与独立复算，冻结 beta=0.50，未扩网格。
 - [x] 完成 seed 43 pointwise 全量 validation 与选权：135649 导出、135665 完整性 / 同 seed 输入对齐验收通过；135666 独立校准并复算 204 项指标，冻结 beta=0.50，未扩网格。
-- [ ] 下一阶段完成 seed 43 separate 全量 validation / 同规则选权，再逐项安排 seed 44 三个重排模型；目前未提交，队列为空。配对分析旧入口运行前仍须适配 CPU 上限。
+- [ ] 完成 seed 43 separate 全量 validation / 同规则选权，再逐项安排 seed 44 三个重排模型；135686 仅运行 separate 43 validation，无后继等待。配对分析旧入口运行前仍须适配 CPU 上限。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游从 teacher 开始时均为 `LAUNCHER TEACHER_CKPT [SEED]`；listwise 现可另传第三个 `RESUME_CKPT` 作完整续训。历史的 09-10 seed 参数改动没有改模型 / 损失 / 数据，43 项启动测试通过；09-16 的 CPU 与恢复改动另有定向测试和真实短测，不将两次修改混作同一基线。资源预算见 [开发约定](DEVELOPMENT_WORKFLOW_ZH.md)。
