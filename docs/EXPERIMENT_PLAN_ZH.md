@@ -61,7 +61,7 @@
 - [x] 09-21 按作者确认提交 seed 44 separate-small 135459；实际配置、teacher / 源码、三 rank 与子进程 CPU 绑定及首批有限 loss 核验通过。仅这一项运行，无后继排队，原 132791 取消记录保留。
 - [x] 完成并验收 seed 44 separate-small：135618 单核验收通过，best 10000；模型 / optimizer 张量有限，两份冻结 teacher 状态逐值一致，辅助日志及重载测试通过。
 - [x] 全量导出入口适配整项 4 CPU 核；36 项回归与 135620 的 64 条真实导出短测通过，不改打分 / 配对 / 选权规则。
-- [ ] 首先完成 seed 43 listwise 的全量 validation 导出与验收，再分阶段安排其余模型；融合选权 / 配对分析旧入口在运行前也必须适配 CPU 上限。
+- [ ] 首先完成 seed 43 listwise 的全量 validation 导出与验收（135621 已启动、首批输出通过，最终验收待完成），再分阶段安排其余模型；融合选权 / 配对分析旧入口在运行前也必须适配 CPU 上限。
 - [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游从 teacher 开始时均为 `LAUNCHER TEACHER_CKPT [SEED]`；listwise 现可另传第三个 `RESUME_CKPT` 作完整续训。历史的 09-10 seed 参数改动没有改模型 / 损失 / 数据，43 项启动测试通过；09-16 的 CPU 与恢复改动另有定向测试和真实短测，不将两次修改混作同一基线。资源预算见 [开发约定](DEVELOPMENT_WORKFLOW_ZH.md)。

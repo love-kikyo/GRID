@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-09-21 19:26（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-21 19:31（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 135621 | 09-21 19:28 | seed 43 listwise 全量 validation 导出，1 GPU / 4 CPU | RUNNING；无截断，目标 347416 条；启动核验通过，最终验收待完成；无等待后继 |
 | 135620 | 09-21 19:24 | seed 43 listwise validation 导出短测，1 GPU / 4 CPU | COMPLETED / 0:0，1m30s；36 项回归、64 条真实样本与 CPU 绑定验收通过，非全量结果 |
 | 135618 | 09-21 19:20 | seed 44 separate 最终产物 / 冻结 teacher 核验，1 CPU / 0 GPU | COMPLETED / 0:0，2m39s；两份 teacher 状态逐值相同，产物验收通过 |
 | 135459 | 09-21 00:36 | 正式 separate-small，seed 44，3 GPU / 3 CPU | COMPLETED / 0:0，5h34m32s；06:10:39 结束，35000 早停、best 10000；最终产物验收通过 |
@@ -67,6 +68,16 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前：seed 43 listwise 全量 validation 导出
+
+135620 短测验收通过后，仅提交 **135621**，09-21 19:28:55 开始；无后继等待项。提交时工作树干净，源码 `fbeb7c2e6e182e407eb3aa234df784f495cb10b4`（相对短测只改文档）。固定既有 132786 best 100000，不重选 checkpoint、不重训，单 GPU / 总计 4 CPU、20G、batch32、worker1、BF16；`MAX_BATCHES` 显式清空，无 sample 截断，目标完整 347416 个 validation 用户。
+
+输出为 `listwise_seed43_132786_val_full_v1.h5` / `.json`；未完成时只存在 job 绑定的 `.incomplete.135621` 文件，不作为有效结果使用。未提交 beta 搜索或 test，也未提交其他模型导出。后续沿用预声明 beta=0.00–0.50、步长0.01、beam 权重1、按 NDCG@10 → NDCG@5 → Recall@10 → Recall@5、同分较小 beta 的 validation-only 规则，不搬用 seed 42 beta 或根据 test 扩网格。
+
+19:30:57 启动检查通过：正确加载 best（missing=0 / unexpected=0），已有 1100 batches / 35200 条；8 个实际导出源码指纹与已验收短测一致，checkpoint size / mtime 未变。主进程与 worker 共 14 个线程在 `[0,1,16,17]` 四核内，库线程上限 1。尚未验收全量数量、最终 sidecar / HDF5 或最终 CPU 采样，不凭首批输出认定全量通过。
+
+证据：[启动命令与冻结规则](../logs/training_launch/full_validation_listwise_seed43_2026-09-21.json)、[启动核验](../logs/training_launch/full_validation_listwise_seed43_startup_2026-09-21.json)、[stdout](../logs/slurm/GRID-ValList43-CPU4-135621.out)、[stderr](../logs/slurm/GRID-ValList43-CPU4-135621.err)。
 
 ## 已验收：seed 44 separate 最终产物与 4 核导出短测
 

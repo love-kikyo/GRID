@@ -1,10 +1,10 @@
 # 当前状态
 
-核验时间：2026-09-21 19:26，Asia/Shanghai。此页是状态快照，不是实时监控。
+核验时间：2026-09-21 19:31，Asia/Shanghai。此页是状态快照，不是实时监控。
 
 ## 一句话结论
 
-三个 seed 的计划训练均已结束；seed 44 separate 最终产物及冻结 teacher 逐值验收通过。全量导出已适配总计 4 CPU 核并通过 64 条真实短测，下一步仅提交 seed 43 listwise 全量 validation。Seed 42 全量结果保留，新增 seed 的完整评估仍未完成，论文继续暂停。
+三个 seed 的计划训练均已结束；seed 44 separate 最终产物及冻结 teacher 逐值验收通过。**135621 正在导出 seed 43 listwise 全量 validation**，1 GPU / 总计 4 CPU 核、启动核验通过；无等待后继。Seed 42 全量结果保留，新增 seed 的完整评估仍未完成，论文继续暂停。
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
@@ -26,12 +26,13 @@
 | Seed 44 pointwise | 134299 完成，产物验收通过 | 达到 120000 上限，best 100000；同 seed SID teacher 独立初始化 |
 | Seed 44 separate-small | 135459 完成，最终产物验收通过 | 35000 早停、best 10000；两份 teacher 状态各 31 张量与原 teacher 逐值相同 |
 | 4 核全量导出入口 | 135620 短测验收通过 | 36 项测试 + 64 条真实 validation；不是全量结果 |
-| 新增 seed 全量评估 | 即将分阶段启动 | 先做 seed 43 listwise 全量 validation；不直接搬用 seed 42 beta，不排整条队列 |
+| 新增 seed 全量评估 | 135621 validation 导出运行中 | 仅 seed 43 listwise，目标 347416 条；其他模型 / 选权 / test 未提交，不直接搬用 seed 42 beta |
 | 效率复测 / 必要解释分析 | 待开展 | 后续与训练统一安排 GPU 资源 |
 | 论文正文 | 暂停修改 | 等实验整体收尾，按作者要求执行 |
 
 ## 最近的任务到底在做什么
 
+- 135621：09-21 19:28:55 启动，seed 43 listwise best 100000 的全量 validation 导出；无 batch / sample 截断，19:30:57 已输出 35200 条。仅启动核验通过，待最终完整性验收。
 - 135620：09-21 19:25:42 完成，1m30s；4 核 / 单 GPU 导出短测及回归通过，无 checkpoint 缺失 / 多余参数；不构成正式评估结果。
 - 135618：09-21 19:23:07 完成，2m39s；单核、无 GPU 验收 separate，冻结 teacher 两份状态逐值一致。
 - 135459：09-21 06:10:39 完成，5h34m32s；35000 正常早停、best 10000，已重载测试并通过最终产物验收。
@@ -50,7 +51,7 @@
 - 132733：seed 44 SID teacher，09-11 13:10 完成；正常 early stopping，不是故障退出。
 - 132681–132685：seed 42 全量 test / 配对统计已验收，不重复执行。
 
-当前短测已结束；下一步只提交一项全量 validation，无后继等待；不代表核验了其他账号的 GPU 占用。
+当前只有一项全量 validation 导出运行，无后继等待；不代表核验了其他账号的 GPU 占用。
 
 详细作业记录、已完成模型的指标与 checkpoint 见 [Run 台账](RUN_LEDGER_ZH.md)。
 
@@ -58,7 +59,7 @@
 
 按 [实验计划](EXPERIMENT_PLAN_ZH.md) 分阶段推进，不重复已完成的 seed 42 训练、smoke 或全量推理：
 
-1. 提交 seed 43 listwise best 的全量 validation，完成后验收样本计数、身份、候选 / 分数和源码指纹；再分阶段安排其他模型与 validation-only 选权。
+1. 等 135621 完成后验收 347416 条样本的计数、身份、候选 / 分数和源码指纹；再分阶段安排其他模型与 validation-only 选权。
 2. 新 seed 各自使用相同 validation 网格选权与 test 配对协议，不直接搬用 seed 42 的 beta；逐用户区间与跨训练 seed 波动分开报告。
 3. [数据协议](DATA_PROTOCOL_ZH.md) 已补固定资产重建命令与逐步计数；上游下载快照和历史 SID 生成来源的完整绑定仍需补齐。论文正文继续暂停。
 
