@@ -1,13 +1,15 @@
 # Run 台账
 
-最后核验：2026-09-23 09:50（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-09-23 14:07（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 135922 | 未开始 | seed 43 pointwise 全量 test / 产物验收，1 GPU / 4 CPU | PENDING / afterok:135921；固定 best 100000 和 validation beta=0.50，为唯一等待项 |
-| 135921 | 09-23 09:45 | seed 43 listwise 全量 test / 产物验收，1 GPU / 4 CPU | RUNNING；固定 best 100000、validation beta=0.50；目标 2061101 条，前置绑定 / 首批四核检查通过，完整验收待完成 |
+| 135943 | 未开始 | seed 43 SID-only 全量 test / 产物验收，1 GPU / 4 CPU | PENDING / afterok:135942；原 best 100000，beam 基线，无选权；为唯一等待项 |
+| 135942 | 09-23 14:02 | seed 43 separate 全量 test / 产物验收，1 GPU / 4 CPU | RUNNING；原 best 10000、validation beta=0.50，24G；前置单核核验通过，完整性待验收 |
+| 135922 | 09-23 10:59 | seed 43 pointwise 全量 test / 产物验收，1 GPU / 4 CPU | COMPLETED / 0:0，1h12m57s；12:12:13 结束，2061101 唯一用户，完整性 / 输入对齐 / 来源验收通过 |
+| 135921 | 09-23 09:45 | seed 43 listwise 全量 test / 产物验收，1 GPU / 4 CPU | COMPLETED / 0:0，1h13m27s；10:59:16 结束，2061101 唯一用户，完整性 / 输入对齐 / 来源验收通过 |
 | 135920 | 09-23 09:42 | seed 44 已完成 validation / 选权产物哈希复核，1 CPU / 0 GPU | COMPLETED / 0:0，2s；三组 HDF5 / sidecar / 冻结选权与既有完整验收一致，不重复推理或搜索 |
 | 135703 | 09-21 23:23 | seed 44 separate 全量 validation / 验收 / 选权短阶段，1 GPU / 4 CPU | COMPLETED / 0:0，9m04s；23:32:46 结束，best 10000，完整性 / 对齐 / 独立复算通过，beta=0.50 |
 | 135702 | 09-21 23:09 | seed 44 pointwise 全量 validation / 验收 / 选权短阶段，1 GPU / 4 CPU | COMPLETED / 0:0，14m25s；23:23:42 结束，best 100000，完整性 / 对齐 / 独立复算通过，beta=0.50 |
@@ -85,9 +87,23 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 43 listwise / pointwise 全量 test
+## 当前：seed 43 separate / SID-only 全量 test
 
-09-23 作者确认推进后，先由 135920 核验已完成的 seed 44 三组 validation / 选权产物绑定，通过后仅提交 **135921 listwise → 135922 pointwise**。后项 `afterok:135921`、`--kill-on-invalid-dep=yes`，仍是“1 个运行 + 1 个依赖等待”；其余 6 份新增 seed test 未提交，没有自动补长链。两项均包含单核前置绑定、4 核单 GPU 全量 test 导出、单核完整产物验收，验收失败就不会启动后项。
+135921 / 135922 的产物完整验收通过后，按作者继续推进的要求，仅提交 **135942 separate → 135943 SID-only**；后项 `afterok:135942`、`--kill-on-invalid-dep=yes`。同一时刻 1 GPU / 整项 4 CPU，不新增训练、不重排全部长任务；seed 44 四份 test 尚未提交。
+
+固定 separate 133277 best 10000，checkpoint SHA256 `4e5751819d402f366346499ae1e2479611bfbea4110adae0e2cd80000c1b270b`，validation beta=0.50 / 选权 SHA256 `6fc35cfaa15b14c0d64c7cb4633b6a9eb348d3976264d063eabbed1c0faf7798`。SID 使用 132732 原 best 100000，SHA256 `6514f4a6af6811239f7d0ec66032eaaa8283c79f41f91c223b7657175df9e446`，仅报告 beam，不搜索 beta、不使用未训练重排头的输出作方法结果。Separate 保存的两份 teacher 状态已由 135681 逐值核对，本轮重绑其原验收和 checkpoint 哈希，不再次训练。
+
+提交源码 `af8ea7c6ddbf37086c7e4a756280f8a84a130a83`、工作树干净；公共 exporter / 模型 / 数据源码均不改。9 个公共执行源码与 3 个本阶段快照的 SHA256 绑定在 [冻结清单](../logs/training_launch/test43_baselines_2026-09-23/manifest.json)，清单 SHA256 `da39e3e59cc68ccb47b732d3d3bdb3e03452a41b62a793410b8084803980bf7f`；快照通过 shell 语法和 Python 编译检查。导出仍严格匹配训练所需源码，无新兼容豁免；SID 的老训练 launcher 与当前 CPU launcher 差异不影响所需模型 / 数据源码匹配。
+
+每项采用“单核前置绑定 → 4 核单 GPU 全量导出 → 单核产物验收”，全步骤通过才放行后继。目标各 **2061101 唯一用户**，batch32 / worker1 / BF16、无截断，库线程 1；separate 24G、SID 20G，walltime 上限 4h。产物需与已验收 seed 43 listwise 的用户 / 输入 hash / 目标 SID 完全对齐；SID 结束后还将按用户比较其与 separate 的完整 beam 候选和分数是否逐值一致，尚未执行前不宣称通过。该一致性检查不是要求 joint 方法共享 teacher 候选池。
+
+135942 于 14:02:39 启动，35s 单核前置核验通过：两份已完成 joint test 的 HDF5 / sidecar / 冻结选权指纹、separate validation / 冻结 teacher 验收、checkpoint / 原 teacher / SID / item2row / 配置 / preflight / 数据清单及执行源码均匹配；未重扫 TFRecords。14:07:35 首批验收通过：主进程及 worker 共 14 个线程均受 `[2,3,16,17]` 四核约束；加载 missing=0 / unexpected=62 仅为已验证的两个 teacher 别名，已导出 172800 / 2061101 条，无致命日志，最终产物仍待验收。135943 仅依赖等待，不另排 seed 44 或配对分析任务。
+
+证据：[提交命令与依赖](../logs/training_launch/test43_baselines_2026-09-23/launch.json)、[阶段入口](../logs/training_launch/test43_baselines_2026-09-23/run_stage.sh)、[separate 前置核验](../logs/training_launch/separate_seed43_test_prelaunch_2026-09-23.json)、[首批 / CPU 核验](../logs/training_launch/test43_baselines_2026-09-23/startup.json)、[本阶段验收脚本](../logs/training_launch/test43_baselines_2026-09-23/accept_test.py)、[stdout](../logs/slurm/GRID-TestSep43-CPU4-135942.out)、[stderr](../logs/slurm/GRID-TestSep43-CPU4-135942.err)。本组完成后先收尾 seed 43 四模型配对统计，分析入口需满足四核限制。
+
+## 已验收：seed 43 listwise / pointwise 全量 test 产物
+
+09-23 上午作者确认推进后，先由 135920 核验已完成的 seed 44 三组 validation / 选权产物绑定，通过后仅提交 **135921 listwise → 135922 pointwise**。后项 `afterok:135921`、`--kill-on-invalid-dep=yes`，当时其余 6 份新增 seed test 未提交；两项均包含单核前置绑定、4 核单 GPU 全量 test 导出、单核完整产物验收，验收失败就不会启动后项。
 
 固定原 seed 43 best 100000，listwise checkpoint SHA256 `dea447e38c839d457ec80ef4bc9134226954f238968fe364dc781371380f2467`、pointwise `5b7d4e9721c273339da97de6158ca31347698377d8fe1f71156317f8447b0f02`；各自选权 JSON SHA256 分别 `4c2076e0d151309f355fc012a90662f7454531251d4cba63260981ebd515cfda`、`a5176b2aec138ae461e7d9d1f1a67b5638fe9a14aface263500007ff1882fecf`，已由 validation 冻结 beta=0.50。本轮不换 checkpoint、不扩网格、不去重、不重训。
 
@@ -97,7 +113,11 @@
 
 与 seed 42 相同，导出保留原 runtime beta=0.1 的排序和原始 beam / rerank scores；后续正式 selected 指标必须按各模型冻结的 validation beta=0.50 做离线 FP32 排序，不能直接拿导出的 runtime `rerank_sid` 作为校准后结果。Test 不参与选权；也不在两模型尚未齐备时声称已完成四模型比较。
 
-135921 于 09:45:49 启动，前置单核核验耗时 52s，通过：重新读取 checkpoint / teacher、SID / item2row、配置 / preflight / 三份数据清单、validation 输入 / 选权及执行源码哈希，均与已冻结记录相符；未重扫 TFRecords、未反序列化重训。09:50:39 首批验收通过，加载 missing=0 / unexpected=0；主进程和 worker 共 14 个线程均受 `[2,3,16,17]` 四核约束，已导出 64000 / 2061101 条，无致命日志。135922 仍 Dependency 等待；这不是最终产物 / 指标验收。
+135921 于 09:45:49 启动、10:59:16 完成，1h13m27s，其中 GPU 导出 1h12m02s；135922 于 10:59:16 接续启动、12:12:13 完成，1h12m57s，其中 GPU 导出 1h11m55s。主作业及所有 steps 均 COMPLETED / 0:0，无 OOM / 致命异常；只读 NumPy 映射提示和遍历结束的 End of sequence 属于保留的非致命日志。两项 CPU 累计 / 阶段时间约 1.52 / 1.51 核；各自导出首尾主进程及 worker 的全部线程均受 `[2,3,16,17]` 四核约束。
+
+两项各 **2061101 唯一用户 / 输入身份哈希**，无截断；分别与同一份已验收 seed 42 listwise test 的用户、输入 hash、目标 SID 逐用户相同，因而两模型输入 / 目标也对齐。每行 20 个自然候选唯一，重排前后同一集合；SID 范围、分数有限 / 排序、原 checkpoint、配置 / preflight / 数据清单和 8 个实际源码哈希均通过。自然 beam@20 覆盖率分别 601903 / 2061101 = 0.292030、598832 / 2061101 = 0.290540；这不是最终 selected Recall / NDCG，更不是显著性结论。
+
+HDF5 SHA256：listwise `ae4c882d32961e9c5834edc6c06b9f27813fd099f7c5458f49d8fd091f1acc0e`；pointwise `21205502841b757331e563bddedaa6c9d48e456455b500f2beb0e751370f9054`。Sidecar 指纹、完整检查及两份冻结 validation 选权见 [listwise 产物验收](../logs/training_launch/listwise_seed43_test_acceptance_2026-09-23.json)、[pointwise 产物验收](../logs/training_launch/pointwise_seed43_test_acceptance_2026-09-23.json)。135942 前置检查再次读取两份 HDF5 / sidecar / 选权 SHA256，确认当前文件未变，不重复 GPU 推理。验收记录内 `frozen_selected.metrics` 来自 validation，仅为冻结来源，不能直接写入 test 主表；四模型 test 指标 / 11 项配对统计仍待执行。
 
 证据：[提交 / 命令与依赖](../logs/training_launch/test43_pair_2026-09-23/launch.json)、[阶段入口](../logs/training_launch/test43_pair_2026-09-23/run_stage.sh)、[test 验收脚本](../logs/training_launch/test43_pair_2026-09-23/accept_test.py)、[listwise 前置核验](../logs/training_launch/listwise_seed43_test_prelaunch_2026-09-23.json)、[首批 / CPU 核验](../logs/training_launch/test43_pair_2026-09-23/startup.json)、[stdout](../logs/slurm/GRID-TestList43-CPU4-135921.out)、[stderr](../logs/slurm/GRID-TestList43-CPU4-135921.err)。
 
