@@ -34,7 +34,7 @@
 | 输入、目标与用户 ID 组织 | [collate_functions.py](../src/data/loading/components/collate_functions.py)、[pre_processing.py](../src/data/loading/components/pre_processing.py) |
 | SID 与 joint 模型 | [tiger_generation_model.py](../src/models/modules/semantic_id/tiger_generation_model.py) |
 | 独立重排模型 | [separate_rerank_model.py](../src/models/modules/semantic_id/separate_rerank_model.py) |
-| 逐样本导出 / 配对统计 | [export](../scripts/export_paired_evaluation.py)、[analysis](../scripts/analyze_paired_evaluation.py) |
+| 逐样本导出 / 配对统计 | [export](../scripts/export_paired_evaluation.py)、[统计核心](../scripts/analyze_paired_evaluation.py)、[四核入口](../scripts/analyze_paired_cpu4.py) |
 | 效率 / 历史出现分析 | [profile](../scripts/profile_rerank_efficiency.py)、[history occurrence](../scripts/analyze_history_occurrence.py) |
 
 ## 当前协议的操作入口
@@ -58,7 +58,11 @@
 
 四个正式训练入口及 CPU resume smoke 使用整项作业 3 核（上限 4 核）。逐样本导出入口现使用 1 task / 4 CPU / 1 GPU，显式 core binding、库线程池 1、数据 worker 1，并把首次 / 结束时的进程树 CPU 绑定写入 sidecar；不改 batch=32、BF16 或打分公式。导出 sidecar 另绑定实际 iterator 和 CPU 控制源码，旧训练 preflight 未覆盖这些文件的范围仍按原记录保留，不假称旧 preflight 覆盖了全部依赖。
 
-融合选权入口 `run_select_score_fusion.sh` 使用 1 task / 4 CPU / 无 GPU，库线程池 1、显式 core binding；复用单 task 四核检查，把开始 / 结束的进程树采样与分析源码指纹写入结果，不改 validation 网格或打分 / 选优规则。直接调用脚本不自动启用资源检查；正式任务必须用受限 launcher。其他旧 smoke / 配对分析入口运行前仍须调整并核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
+融合选权入口 `run_select_score_fusion.sh` 使用 1 task / 4 CPU / 无 GPU，库线程池 1、显式 core binding；复用单 task 四核检查，把开始 / 结束的进程树采样与分析源码指纹写入结果，不改 validation 网格或打分 / 选优规则。直接调用选权脚本不自动启用资源检查；正式任务必须用受限 launcher。
+
+配对分析入口 `run_paired_analysis.sh` 同样使用 1 task / 4 CPU / 无 GPU、库线程池 1、显式绑定。参数为 `OUTPUT_TAG LISTWISE_TEST LISTWISE_SELECTION POINTWISE_TEST POINTWISE_SELECTION SEPARATE_TEST SEPARATE_SELECTION SID_TEST`（数据与选权路径均为绝对路径）。读取四份已验收 full-test 和三份冻结的 validation 选权，执行与 seed 42 相同顺序的 11 项比较、5000 次 bootstrap、batch500、随机 seed2027；SID 只使用 beam。新四核包装器记录首尾进程树、源码指纹和提交端传入的 `SOURCE_GIT_COMMIT`，统计核心不改。拒绝覆盖报告或使用截断样本，正式报告仍需独立复算验收；资源 / 数值一致性回归见 `tests/test_paired_cpu_budget.py`。
+
+其他未适配的旧 smoke 入口运行前仍须核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
 
 Listwise 可传第三个参数 `RESUME_CKPT`：先在新 run 内准备完整续训副本，仅迁移 best-checkpoint 路径；保留 optimizer / scheduler / early stopping，关闭 weights-only reset。父 run 和原 checkpoint 不覆盖、不删除。恢复时逐 rank 对比真实状态，训练结束后测试新选出的 best，而非最初的 resume 输入。数据读取游标未保存，worker 改变也影响训练顺序，不宣称与未中断训练逐步完全一致。
 
