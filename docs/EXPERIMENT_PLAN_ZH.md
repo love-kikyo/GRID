@@ -4,21 +4,21 @@
 
 2026-09-07 作者补充：继续意味着推进进程，不重复已通过的任务；准备就绪后可启动重训。2026-09-21 更新提交节奏：validation / 选权等短任务可一次提交多项，串行依赖且逐项自动验收；训练 / 全量 test 等长任务仍最多“1 个运行 + 1 个依赖等待”，不预排整串长任务。详见 [开发与记录约定](DEVELOPMENT_WORKFLOW_ZH.md)。
 
-## 当前剩余工作总览（2026-09-23）
+## 当前剩余工作总览（2026-09-24）
 
-三组 seed（42 / 43 / 44）的计划训练、各自三个重排模型的全量 validation / 选权均已完成。Seed 42 全量 test / 配对统计已验收；seed 43 listwise / pointwise 的全量 test 产物已验收，另两份 separate / SID 已串行提交。新增 seed 仍有 6 份 test 待完成，其中 seed 44 四份未提交。以下是待办量，不是一次性提交全部实验的清单。
+三组 seed（42 / 43 / 44）的计划训练、各自三个重排模型的全量 validation / 选权均已完成。Seed 42 / 43 的四模型全量 test 与配对统计已验收；只剩 seed 44 四份 test，其中 listwise / pointwise 已提交，separate / SID 尚未提交。以下是待办量，不是一次性提交全部实验的清单。
 
 | 类别 | 剩余工作 / 数量 | 完成条件 |
 | --- | --- | --- |
 | 已完成：validation / 选权 | 剩余 0 组；seed 44 三项均完成并验收，各自冻结 beta=0.50 | 每组 347416 条，51 点固定网格及 204 项指标独立复算通过；135920 复核产物哈希未变；SID-only 不搜索 beta |
-| 核心：全量 test | 6 份待完成：seed 43 separate 135942 运行、SID 135943 等待；seed 44 四模型未提交 | 每份 2061101 条；绑定既有 best 与相应已冻结选权，完整遍历 / 唯一用户 / 跨模型输入和目标对齐，不用 test 调参；SID 只用 beam |
-| 核心：配对统计 | 新增 2 个 seed 的四模型统计；先在本组 test 齐备后开展 seed 43 | 沿用 seed 42 的 11 项比较及 Recall / NDCG@5、@10 区间；分析入口先适配四核、四模型，不能直接用旧三模型 / 8 核 launcher |
+| 核心：全量 test | seed 44 四份待完成：136157 listwise 已启动，136158 pointwise 为唯一依赖等待项；separate / SID 未提交 | 每份 2061101 条；绑定既有 best 与相应已冻结选权，完整遍历 / 唯一用户 / 跨模型输入和目标对齐，不用 test 调参；SID 只用 beam |
+| 核心：配对统计 | 剩余 seed 44 一组四模型统计，待本组 test 齐备 | 沿用 11 项比较及 Recall / NDCG@5、@10 区间；四核入口与 seed 43 全量复算已验收，不改统计核心 |
 | 核心：多 seed 汇总 | 一份可审阅的三 seed 主表 | 汇总 seed 42 / 43 / 44 各项指标及均值 / 标准差；逐用户配对区间与训练 seed 波动分开，不把 validation 调参提升写成 test 结论 |
 | 支撑主张：效率与解释 | 新 checkpoint 的延迟 / 显存、cache / no-cache 和独立 reranker 成本；必要的历史长度 / 自然 beam 命中分组与案例 | 同硬件 / batch / beam / 上下文条件；解释范围随主结果收敛，不自动扩全量消融网格；相关入口也须满足四核上限 |
 | 复现收尾 | 补上游快照身份与历史 SID 生成版本 / 参数绑定，冻结配置、指标和取数出处 | 固定资产到样本的链路已有文档；来源缺口未补齐前，不宣称已实现第三方从零复现 |
 | 论文与转投 | 作者确认结果后再更新 short 稿、逐项回应 review、导师审阅及投稿合规检查 | 实验先收尾，正文仍暂停；提交前重新核验官网 / 投稿系统要求 |
 
-本轮验收 135921 / 135922 后，仅推进 135942 / 135943 两份全量 test，保持“1 个运行 + 1 个依赖等待”；前项产物完整验收通过才放行后项。SID 导出后另核对与 separate 的冻结 teacher 逐用户候选 / 分数一致性。Seed 44 test 待本组验收后再安排，不自动补长链。不追加 split 去重、beta 重训、lambda 全网格或新大规模 baseline 训练。
+本轮验收 seed 43 separate / SID 及完整配对统计后，仅推进 seed 44 的 136157 / 136158 两份全量 test，保持“1 个运行 + 1 个依赖等待”；前项产物完整验收通过才放行后项。Seed 43 冻结 teacher 的逐用户候选 / 分数一致性已通过；seed 44 待 separate / SID 齐备后同样检查。不自动补长链，不追加 split 去重、beta 重训、lambda 全网格或新大规模 baseline 训练。
 
 ## 0. 已有基础
 
@@ -83,10 +83,12 @@
 - [x] 完成 seed 43 pointwise 全量 validation 与选权：135649 导出、135665 完整性 / 同 seed 输入对齐验收通过；135666 独立校准并复算 204 项指标，冻结 beta=0.50，未扩网格。
 - [x] 完成 seed 43 separate 全量 validation / 同规则选权：135686 导出，135699 完整性 / 对齐验收及 204 项指标独立复算通过，冻结 beta=0.50；三种重排模型的 seed 43 validation 均已完成。
 - [x] 完成 seed 44 三个重排模型的全量 validation / 选权：135701 / 135702 / 135703 均完整验收，各自冻结 beta=0.50；135920 再核对现有产物与验收哈希绑定，不重复推理或搜索。
-- [x] 完成并验收 seed 43 listwise / pointwise 全量 test：135921 / 135922 各 2061101 唯一用户，输入 / 目标对齐，候选 / 分数及来源检查通过；不是四模型指标 / 配对统计已经完成。
-- [ ] 完成 seed 43 separate / SID 全量 test：135942 → 135943；随后四模型配对统计，运行前适配分析入口的 CPU 上限。
-- [ ] 分批完成 seed 44 四模型全量 test，目前均未提交。
-- [ ] 对新增 seed 分别沿用原 validation-only 网格选权与完整 test 评估，不能直接搬用 seed 42 选出的 beta，也不根据已见 test 扩网格；汇总 3 个训练 seed 的均值与波动。
+- [x] 完成并验收 seed 43 listwise / pointwise 全量 test：135921 / 135922 各 2061101 唯一用户，输入 / 目标对齐，候选 / 分数及来源检查通过；本项为产物验收，后续统计验收另列如下。
+- [x] 完成 seed 43 separate / SID 全量 test：135942 / 135943 产物与冻结生成器候选 / 分数一致性验收通过。
+- [x] 配对入口适配四核与完整四模型；136151 的 32 项回归通过，统计核心不改；136153 全量统计及 44 个差值区间 / 22 个 Recall 检验复算通过。
+- [ ] 分批完成 seed 44 四模型全量 test：136157 listwise → 136158 pointwise 已提交；separate / SID 尚未提交。
+- [ ] Seed 44 四份 test 齐备后完成同规则配对统计。
+- [ ] 全部 test 通过后汇总 3 个训练 seed 的均值与波动。各 run 的独立 validation-only 选权已完成，不直接搬用 seed 42 的 beta，也不根据已见 test 扩网格。
 
 启动接口：`run_sid_history_last_user_v1.sh [SEED]`，三个下游从 teacher 开始时均为 `LAUNCHER TEACHER_CKPT [SEED]`；listwise 现可另传第三个 `RESUME_CKPT` 作完整续训。历史的 09-10 seed 参数改动没有改模型 / 损失 / 数据，43 项启动测试通过；09-16 的 CPU 与恢复改动另有定向测试和真实短测，不将两次修改混作同一基线。资源预算见 [开发约定](DEVELOPMENT_WORKFLOW_ZH.md)。
 
@@ -109,7 +111,7 @@
 - [x] 11 项预声明比较的逐用户 Recall / NDCG@5、@10 差值与置信区间完成，44 个区间复算一致；beam-only、rerank-only、选权后结果分开。此项只完成 seed 42 用户统计，多 seed 波动仍待开展。
 - [x] 台账区分自然 beam@20 覆盖率、同一候选池排序和整体质量；保留 listwise 纯重排 NDCG 下降及 pointwise 融合 Recall@5 区间跨零的例外，不作未经验证的归因。
 
-当前四模型分析任务直接调用支持多模型的分析脚本，包含 generator-only 及三个重排模型；5000 次 bootstrap、95% CI、seed 2027。旧三模型 launcher 不代表完整主表。区间为逐项用户配对区间，不等同于多 seed 波动或多重比较同时置信保证。
+四模型分析包含 generator-only 及三个重排模型；5000 次 bootstrap、batch500、95% CI、seed 2027。09-24 launcher 已适配完整 11 项比较与四核限制，复用未改动的统计核心，seed 43 全量验收通过。区间为逐项用户配对区间，不等同于多 seed 波动或多重比较同时置信保证。
 
 参数区分：当前三个 reranker 均 `use_beam_score_in_rerank_loss=false`，推理融合 beta=`rerank_logit_weight` 不进入重排优化损失，但用于验证排序，因而可能改变 early stopping / checkpoint 选择。按作者决定不为此追加重训；没有测量其影响，不写成已证明为零。Joint 的 lambda=`rerank_loss_weight` 才是 SID 与重排损失的梯度权重。本轮不增加融合训练目标或 lambda 消融。
 
