@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-11 20:15（Asia/Shanghai）。当前队列为空；既有历史状态保留原核验记录，本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-12 00:14（Asia/Shanghai）。当前队列为空；既有历史状态保留原核验记录，10-11 的 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139020 | 10-12 00:11 | seed42 自然 beam 命中分组，4 CPU / 0 GPU | 00:13:12 全量分析、00:14:15 独立复核通过；2061101 用户 / 3 对比较 / 12 组，19 项回归通过；affinity `[2,3,6,7]`；队列为空，未另补核 Slurm 终态退出码 |
 | 138973 | 10-11 20:14 | seed44 自然 beam 命中分组，4 CPU / 0 GPU | 20:15:16 全量分析、20:15:46 独立复核通过；2061101 用户 / 3 对比较 / 12 个组；15 项回归通过，affinity `[28,29,32,33]`；队列为空，未另补核 Slurm 终态退出码 |
 | 138935 | 10-11 19:11 | seed 44 四模型统一 GPU 正式效率复测，1 GPU / 4 CPU | 19:42 完整产物、20:04 独立复核通过；12 个模型轮次 / 11 变体组 / 3300 measured batches，同一 4090 / affinity `[0,1,28,29]`；队列为空，未补核 Slurm 最终退出码 |
 | 138934 | 10-11 18:58 | seed 44 统一 GPU 效率修订短测，1 GPU / 4 CPU | 短测及独立复核通过：4 模型 / 11 变体 / 33 measured batches；18 项回归通过，affinity `[0,1,28,29]`；19:09 队列为空，未另补核终态退出码 |
@@ -99,6 +100,14 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
+## 当前：补齐自然 beam 分组的跨 seed 检查
+
+10-12 作者要求效率测试不扩其他 seed、继续下一步。本阶段只读 seed42 / 43 原预测，属于解释分析，0 GPU，不重测效率、不重复训练 / test。执行版本 `e7c24f702be99a9645e209d216643f5c7a565962` 仅扩既定 seed 身份核验和 seed42 原验收字段兼容；`ranks` / `accumulate` / `summarize_matrix` / `close` 的 AST 与已验收 seed44 完全相同，原配对统计核心未改，19 项回归通过。
+
+先提交 139020，原四份 HDF5 / sidecar / 选权 / Hydra 配置哈希与顶层 seed42 核验通过；00:13:12 全量扫描结束，00:14:15 独立审计重算 12 组成员约束、计数、四项指标与总体还原通过。未重写原 seed42 验收记录；兼容其 `verified_metrics` 字段，不将其改称原先已经做过新版本独立指标重算。下一项 seed43 尚未提交。
+
+证据：[seed42 分组结果](../logs/analysis/paired_evaluation/beam_cohorts_seed42_full_v1.json)、[独立验收](../logs/training_launch/beam_cohorts42_2026-10-12/acceptance.json)、[冻结清单](../logs/training_launch/beam_cohorts42_2026-10-12/manifest.json)、[提交记录](../logs/training_launch/beam_cohorts42_2026-10-12/launch.json)、[stdout](../logs/slurm/GRID-BeamCohort42-CPU4-139020.out)、[stderr](../logs/slurm/GRID-BeamCohort42-CPU4-139020.err)。
+
 ## 已验收：seed44 自然 beam 命中分组
 
 效率验收后，只提交 CPU 任务 **138973**，没有新 GPU 推理 / 训练 / 选权。执行源码 `db591f535a765e5440845f220d956bea13574d99`、工作树干净；清单 SHA256 `76c8ae076bdc36aeb5ef829dcecc437f3949461a0b39b0abb3448377206a8edb`。15 项本地与计算节点回归通过，整项 4 CPU / 0 GPU / 12G、库线程 1，首批及末批进程树受 `[28,29,32,33]` 约束。20:15:16 分析通过，20:15:46 独立 stdlib 审计通过；当前队列为空，未补核 Slurm 最终退出码。
@@ -132,6 +141,8 @@
 证据：[全精度分组与排名计数](../logs/analysis/paired_evaluation/beam_cohorts_seed44_full_v1.json)、[独立验收](../logs/training_launch/beam_cohorts44_2026-10-11/acceptance.json)、[审计脚本](../logs/training_launch/beam_cohorts44_2026-10-11/audit.py)、[冻结清单](../logs/training_launch/beam_cohorts44_2026-10-11/manifest.json)、[提交记录](../logs/training_launch/beam_cohorts44_2026-10-11/launch.json)、[stdout](../logs/slurm/GRID-BeamCohort44-CPU4-138973.out)、[stderr](../logs/slurm/GRID-BeamCohort44-CPU4-138973.err)。
 
 ## 已验收：统一硬件效率复测
+
+10-12 作者确认：本项已收尾，不扩展其他训练 seed 的耗时 / 显存复测。后续 seed42 / 43 自然 beam 分组属于只读解释分析，不是重复效率实验。
 
 正式任务 **138935** 于 19:11 启动、19:42 生成完整产物，20:04 单核独立复核通过，队列为空。沿用已验收 v2 清单及执行源码 `84dadbb`；实际提交 HEAD `61749a2`、工作树干净，与执行版本仅三份状态文档不同，16 份执行 / 测试源码未变。首尾线程 affinity `[0,1,28,29]`。同一 GPU 分配内顺序执行四模型 × 3 轮（12 个独立进程），每变体每轮 10 个 warmup、100 个 measured batches，共 11 变体 / 3300 次 measured batch 前向。没有重训或新权重搜索。
 
