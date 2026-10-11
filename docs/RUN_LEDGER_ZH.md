@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-11 15:57（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-11 16:04（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 138922 | 10-11 16:00 | seed 44 四模型配对统计 / 独立验收，4 CPU / 0 GPU | 16:03:49 完整验收通过，11 项比较 / 44 个差值区间 / 22 个 Recall 配对检验复核一致；16:04 队列为空，未另补核终态退出码 |
 | 138899 | 10-11 14:02 | seed 44 joint 已完成 test 的哈希 / 日志复核，1 CPU / 0 GPU | COMPLETED / 0:0（scontrol），10s；当前字节与原验收匹配，无新模型推理 |
 | 138898 | 10-11 15:01 | seed 44 SID-only 全量 test / 验收，1 GPU / 4 CPU | 15:56:47 完整产物验收通过，2061101 唯一用户；与 separate 的 beam 候选 / 分数逐值相同；15:57 队列为空，未另补核终态退出码 |
 | 138897 | 10-11 14:03 | seed 44 separate 全量 test / 验收，1 GPU / 4 CPU | 15:01:15 完整产物验收通过，2061101 唯一用户；依赖后继已正常启动；控制器后续已不保留本项，未虚填最终退出码 |
@@ -94,6 +95,48 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
+## 三 seed 主表
+
+以下均为完整 test 结果，每个模型 / seed 各 2061101 用户。重排方法使用各自 validation 冻结 beta=0.50 的 FP32 排序；SID 仅 beam。数值范围为 0–1；均值后为三个训练 seed 的**样本标准差（ddof=1）**，不是标准误或置信区间。
+
+| 方法 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| SID-only / beam | 0.267635 ± 0.001992 | 0.271904 ± 0.001812 | 0.250554 ± 0.001109 | 0.251938 ± 0.001054 |
+| Listwise / 融合 | 0.285825 ± 0.001335 | 0.288452 ± 0.001248 | 0.261916 ± 0.000663 | 0.262774 ± 0.000638 |
+| Pointwise / 融合 | 0.282881 ± 0.001999 | 0.286043 ± 0.001896 | 0.260270 ± 0.001075 | 0.261304 ± 0.001039 |
+| Separate-small / 融合 | 0.272726 ± 0.001688 | 0.274212 ± 0.001741 | 0.254607 ± 0.000794 | 0.255089 ± 0.000812 |
+
+逐 seed 主指标（每格依次为 Recall@5 / Recall@10 / NDCG@5 / NDCG@10）：
+
+| 方法 | Seed 42 | Seed 43 | Seed 44 |
+| --- | --- | --- | --- |
+| SID-only / beam | 0.267156 / 0.271581 / 0.250433 / 0.251868 | 0.269823 / 0.273857 / 0.251719 / 0.253026 | 0.265926 / 0.270275 / 0.249511 / 0.250921 |
+| Listwise / 融合 | 0.284292 / 0.287060 / 0.261166 / 0.262070 | 0.286737 / 0.289470 / 0.262422 / 0.263315 | 0.286447 / 0.288825 / 0.262161 / 0.262936 |
+| Pointwise / 融合 | 0.280813 / 0.284096 / 0.259177 / 0.260254 | 0.284802 / 0.287884 / 0.261326 / 0.262333 | 0.283029 / 0.286148 / 0.260305 / 0.261325 |
+| Separate-small / 融合 | 0.272527 / 0.274050 / 0.254558 / 0.255053 | 0.274504 / 0.276028 / 0.255425 / 0.255918 | 0.271147 / 0.272558 / 0.253839 / 0.254295 |
+
+Listwise 在三个 seed 的四项主指标上均高于 Pointwise，逐 seed 的这 12 个差值区间均严格高于零。按三 seed 均值之比，Recall@5 相对提高 **1.041%**（绝对 +0.002944，即 +0.2944 个百分点），NDCG@10 相对提高 **0.562%**（绝对 +0.001470）。仅三个训练 seed，不据此新增跨 seed 显著性声明。Seed 42 的 pointwise 融合相对纯重排 Recall@5 区间跨零例外继续保留，不能概括为所有消融差异均显著。
+
+汇总只读取已验收报告与选权 JSON，没有新推理或新搜索。三组验收 / 报告 / 选权哈希、固定统计口径和重复出现的指标一致性已核对；均值及样本标准差由标准库计算，并以 50 位 Decimal 的独立两遍公式复核，6 项算术 / 无效输入检查通过。原始 JSON 还保留所有 beam / click 变体、逐 seed 配对区间与候选覆盖；不将三个 seed 的相同用户当作三倍独立样本，不平均各 seed 的置信区间。
+
+限制继续保留：已知 split 重叠、validation 网格边界 beta、joint 方法会改变候选池、seed 44 listwise 续训游标未恢复，以及经作者同意的 4090 迁移。特别是不直接比较混合硬件下的任务时长作为效率结论。
+
+证据：[三 seed 全精度汇总与来源哈希](../logs/analysis/paired_evaluation/three_seed_summary_full_v1.json)、[只读汇总脚本](../logs/analysis/paired_evaluation/summarize_three_seeds_2026-10-11.py)。此处是核心效果实验收尾，不代表效率 / 解释 / 复现来源已完成，论文仍暂停。
+
+## 已验收：seed 44 四模型配对统计
+
+四份 test 全部验收、队列为空后，仅提交 138922，不重复 GPU 推理。源码 `35820066cea5ffa3dba2fc273a7686f97b3b28dc`、提交时工作树干净；5 个公共执行源码与 seed 43 已验收版本完全一致，沿用 136151 的 32 项回归。三份编排 / 验收快照仅调整 seed / 产物路径并增加混合硬件限制说明，shell / Python 语法检查通过；统计核心未改。
+
+阶段为单核输入绑定 → 四核统计 → 单核独立复核，0 GPU / 32G；冻结清单 SHA256 `ed256677b5dc3e8b5175e490c330eee76c867d87a5388e5fe2a8edadbf52b413`。沿用 11 项比较、5000 次 bootstrap / batch500、95% 区间、随机 seed2027、chunk65536；各模型使用原 validation 冻结 beta=0.50，SID 仅 beam。
+
+16:03:49 完整验收通过：四份各 2061101 唯一用户 / 相同输入和目标；完整候选与分数扫描、哈希绑定及单 GT 排名指标独立复算通过，44 个差值 / bootstrap 区间、22 个 Recall discordance / 精确检验一致。区间复核复用既有 bootstrap helper，并非独立重写抽样算法。首尾进程树受 `[0,1,4,5]` 四核约束，库线程 1。验收文件与 stdout 最终 JSON 相同；无新增 GPU 推理。
+
+本 seed 的 44 个区间均高于零。Listwise 相对 Pointwise 的 Recall@5 差值 +0.003418，95% CI `[+0.003308,+0.003529]`；NDCG@10 差值 +0.001611，CI `[+0.001536,+0.001686]`。这仍是单训练 seed 的用户配对区间，不是训练随机性的区间，也不提供多重比较同时覆盖保证；完整主指标与三 seed 汇总见上方主表。
+
+结果证据：[正式报告](../logs/analysis/paired_evaluation/paired_report_seed44_four_models_full_v1.md)、[原始统计 JSON](../logs/analysis/paired_evaluation/paired_report_seed44_four_models_full_v1.json)、[独立验收](../logs/analysis/paired_evaluation/test_acceptance_seed44_full_v1.json)。
+
+证据：[提交记录](../logs/training_launch/paired44_2026-10-11/launch.json)、[冻结清单](../logs/training_launch/paired44_2026-10-11/manifest.json)、[前置绑定](../logs/training_launch/paired44_2026-10-11/prelaunch.json)、[阶段入口](../logs/training_launch/paired44_2026-10-11/run_stage.sh)、[验收脚本](../logs/analysis/paired_evaluation/accept_test_seed44_full_v1.py)、[stdout](../logs/slurm/GRID-Paired44-CPU4-138922.out)、[stderr](../logs/slurm/GRID-Paired44-CPU4-138922.err)。
+
 ## 已验收：seed 44 separate / SID-only 全量 test
 
 10-11 验收两份 joint test 后，只提交 **138897 separate → 138898 SID**；后项 `afterok:138897`、`--kill-on-invalid-dep=yes`。各 1 GPU / 整项 4 CPU，separate 24G、SID 20G，4h 上限；库线程 1、worker1、batch32 / BF16。采用单核前置绑定 → 全量导出 → 单核验收，全步骤通过才放行后继。没有新训练、选权搜索或其他长任务。
@@ -108,7 +151,7 @@ Separate 固定 135459 原 best10000，SHA256 `00fec1959cd97c57b9f45d0f4cd77f002
 
 HDF5 SHA256：separate `623a5141b975a64d202e69ab762d373ad4c791cc50ee88be46e6af7e6401b263`；SID `54b805322f8542a529006d8a68a3ec79fa69aa4ff29fd4b30ef1a1ea33b2bad6`。两份最终验收 JSON 与日志末尾逐项相同。Separate 的一次只读诊断 step 因 `--gres=gpu:0` 下执行 `nvidia-smi` 无设备而返回 6；ps / affinity 检查成功，未增加资源，也非推理 / 验收失败。该辅助 step 与主任务产物结果分别记录，不宣称所有 steps 均为 0。
 
-硬件变化单独披露：本次两个 baseline 使用同一 4090 节点，此前 joint test 在原节点执行；不宣称四模型硬件完全相同或跨硬件逐位等价。正式配对指标尚未生成。后续效率比较必须在匹配硬件下重测，不能直接比较这些作业耗时。
+硬件变化单独披露：本次两个 baseline 使用同一 4090 节点，此前 joint test 在原节点执行；不宣称四模型硬件完全相同或跨硬件逐位等价。正式配对指标由后续 138922 验收，见上文。后续效率比较必须在匹配硬件下重测，不能直接比较这些作业耗时。
 
 验收证据：[separate 完整验收](../logs/training_launch/separate_seed44_test_acceptance_2026-10-11.json)、[SID 完整验收及冻结 beam 对齐](../logs/training_launch/sid_seed44_test_acceptance_2026-10-11.json)、[首批与辅助诊断](../logs/training_launch/test44_baselines_2026-10-11/startup.json)、[SID 前置绑定](../logs/training_launch/sid_seed44_test_prelaunch_2026-10-11.json)、[SID stdout](../logs/slurm/GRID-TestSID44-CPU4-138898.out)、[SID stderr](../logs/slurm/GRID-TestSID44-CPU4-138898.err)。
 
@@ -151,7 +194,7 @@ HDF5 SHA256：listwise `3e0ce1d2503b40659f8040fe9fb7974aa06440a74ae7d9bfc95b770d
 
 136151 的 32 项资源 / 数值回归通过后，以提交 `88bf29a` 启用四核包装器；统计核心 SHA256 仍为 `fd2c72d4bad871a353cee1574c83f2052f3a0ffad7983c0933f6649b432fff20`，未变更算法或历史选权绑定。136153 前置绑定 10s、分析 1m06s、单核独立验收 2m07s，整阶段 3m23s；开始 / 结束进程树均约束在 `[0,1,2,3]`。独立单 GT 排名指标和差值计数复算通过，44 个均值差 / 区间及 22 个 Recall discordance / 精确检验一致；bootstrap 区间核验复用了同一抽样 helper，不冒称完全独立的 bootstrap 实现。
 
-限制：这些是逐项用户重采样区间，不测量训练 seed 波动，也不提供多重比较同时覆盖保证；三个 seed 汇总仍待 seed 44 完成。已知 split 重叠保留；beta=0.50 是固定 validation 网格边界，非全局最优。精确检验记录中的 p=0 是数值下溢，不是数学上的零。
+限制：这些是逐项用户重采样区间，不测量训练 seed 波动，也不提供多重比较同时覆盖保证；三个 seed 的描述性汇总见本页主表。已知 split 重叠保留；beta=0.50 是固定 validation 网格边界，非全局最优。精确检验记录中的 p=0 是数值下溢，不是数学上的零。
 
 证据：[全量报告](../logs/analysis/paired_evaluation/paired_report_seed43_four_models_full_v1.md)、[原始统计 JSON](../logs/analysis/paired_evaluation/paired_report_seed43_four_models_full_v1.json)、[独立验收与全精度指标](../logs/analysis/paired_evaluation/test_acceptance_seed43_full_v1.json)、[验收脚本](../logs/analysis/paired_evaluation/accept_test_seed43_full_v1.py)、[提交记录](../logs/training_launch/paired43_2026-09-24/launch.json)、[清单](../logs/training_launch/paired43_2026-09-24/manifest.json)、[回归日志](../logs/slurm/GRID-PairedCPU4-Tests-136151.out)。
 
