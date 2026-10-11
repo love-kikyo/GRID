@@ -1,12 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-11 19:14（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-11 20:04（Asia/Shanghai）。当前队列为空；既有历史状态保留原核验记录，本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 138935 | 10-11 19:11 | seed 44 四模型统一 GPU 正式效率复测，1 GPU / 4 CPU | RUNNING，aias-compute-2；首个 SID 轮次 100 measured batches 通过，CPU / 同 GPU / 来源核验通过；完整计划 3 轮 / 11 变体，无其他后继；完整结果待验收 |
+| 138935 | 10-11 19:11 | seed 44 四模型统一 GPU 正式效率复测，1 GPU / 4 CPU | 19:42 完整产物、20:04 独立复核通过；12 个模型轮次 / 11 变体组 / 3300 measured batches，同一 4090 / affinity `[0,1,28,29]`；队列为空，未补核 Slurm 最终退出码 |
 | 138934 | 10-11 18:58 | seed 44 统一 GPU 效率修订短测，1 GPU / 4 CPU | 短测及独立复核通过：4 模型 / 11 变体 / 33 measured batches；18 项回归通过，affinity `[0,1,28,29]`；19:09 队列为空，未另补核终态退出码 |
 | 138929 | 10-11 18:51 | seed 44 四模型统一 GPU 效率首次短测，1 GPU / 4 CPU | 日志显示 step 退出 1；17 项回归及 SID 路径通过，listwise FP32 门槛通过、BF16 超限，未继续 pointwise / separate；18:55 队列为空，无正式复测后继 |
 | 138922 | 10-11 16:00 | seed 44 四模型配对统计 / 独立验收，4 CPU / 0 GPU | 16:03:49 完整验收通过，11 项比较 / 44 个差值区间 / 22 个 Recall 配对检验复核一致；16:04 队列为空，未另补核终态退出码 |
@@ -98,11 +98,33 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：统一硬件效率复测
+## 已验收：统一硬件效率复测
 
-正式任务 **138935** 于 19:11 提交并开始运行，当前唯一作业，无后继队列。沿用已验收 v2 清单及执行源码 `84dadbb`；实际提交 HEAD `61749a2`、工作树干净，与执行版本仅三份状态文档不同，16 份执行 / 测试源码未变。启动时 affinity `[0,1,28,29]`。同一 GPU 分配内顺序执行四模型 × 3 轮（12 个独立进程），每变体每轮 10 个 warmup、100 个 measured batches，共 11 变体 / 3300 次 measured batch 前向。参数与已验收短测一致，仅按预定方案增加预热 / 样本与重复数；没有重训或新权重搜索。按短测初始化耗时估计整项约半小时，不视为效率测量本身。
+正式任务 **138935** 于 19:11 启动、19:42 生成完整产物，20:04 单核独立复核通过，队列为空。沿用已验收 v2 清单及执行源码 `84dadbb`；实际提交 HEAD `61749a2`、工作树干净，与执行版本仅三份状态文档不同，16 份执行 / 测试源码未变。首尾线程 affinity `[0,1,28,29]`。同一 GPU 分配内顺序执行四模型 × 3 轮（12 个独立进程），每变体每轮 10 个 warmup、100 个 measured batches，共 11 变体 / 3300 次 measured batch 前向。没有重训或新权重搜索。
 
-结束后须核验正式 `acceptance.json` 及逐模型文件，再以只读 stdlib 审计器独立复算均值 / 中位数 / P95 / 吞吐 / 显存与重复轮次标准差。完成前不发布正式速度 / 显存结论。证据：[正式提交与精确命令](../logs/training_launch/efficiency44_2026-10-11_v2/formal_launch.json)、[正式 stdout](../logs/slurm/GRID-EffFormal44-CPU4-138935.out)、[正式 stderr](../logs/slurm/GRID-EffFormal44-CPU4-138935.err)。
+正式 `acceptance.json` SHA256 `565317002e6b89044ed2a8af4791dd4eca8f8a6be3c6351b24ebcf9e9d8b8f39`。独立 stdlib 审计逐批重算均值 / 中位数 / P95 / 吞吐 / 显存与轮次样本标准差，并验证全部 case / 清单 / 执行来源哈希、同输入 / 同 GPU / 同精度候选及 CPU 记录。`sacct` 仍拒绝连接，未虚填 Slurm 终态 / 退出码。
+
+四模型主比较均为 **BF16、batch32、beam20**，同一物理 RTX 4090；表中时间是同步的模型完整前向 wall time，不含加载、数据读取与 H2D。均值 ± 标准差中的标准差来自 **3 次计时轮次均值**，不是训练 seed 波动；P95 合并 300 次计时，显存为 PyTorch 最大 allocated（不是 reserved 或整卡占用）。
+
+| 方法 | ms / batch，均值 ± 轮次 SD | P95 ms | users/s | 峰值 allocated GiB |
+| --- | ---: | ---: | ---: | ---: |
+| SID-only / beam | 15.883 ± 0.116 | 15.956 | 2014.70 | 1.147 |
+| Listwise / cache 融合 | 36.301 ± 0.273 | 36.684 | 881.52 | 4.566 |
+| Pointwise / cache 融合 | 36.173 ± 0.191 | 36.551 | 884.64 | 4.566 |
+| Separate-small / 融合 | 17.070 ± 0.418 | 17.700 | 1874.64 | 1.342 |
+
+严格 cache 对照单独统一 **FP32、TF32 关闭**，不与 BF16 混算：
+
+| 方法 | cache ms / batch | no-cache ms / batch | 完整前向加速比 | 重排段 CUDA 加速比 | 峰值 allocated：cache / no-cache GiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Listwise | 62.145 | 122.645 | 1.974× | 2.443× | 7.119 / 6.772 |
+| Pointwise | 61.917 | 122.509 | 1.979× | 2.450× | 7.119 / 6.772 |
+
+结论边界：cache 加快当前联合模型的无缓存实现，但本配置下**不节省峰值 allocated 显存**；联合重排也**没有比 Separate-small 更快或更省显存**。与效果主表一起呈现质量 / 成本取舍，不能将“cache 有收益”写成“优于所有分离式方法”。BF16 cache / no-cache 数值差异及 FP32 短测等价门槛见下文，不宣称全部正式用户逐值等价。
+
+测量限制：固定 seed44 best、相同前 3200 个 measured 用户在三轮中复用，非全量 test 计时或在线单请求延迟；GPU 未锁频、未独占整节点，不剔除慢批（listwise beam-only 的最大 257.635ms 保留在原始结果中）。Separate 只把实际 teacher + reranker 放入 GPU，未使用的继承包装权重留在 CPU；这测量部署所需前向路径，不是原训练包装器全量搬入显存的成本。
+
+证据：[正式全精度结果与逐 case 哈希](../logs/profiles/efficiency44_2026-10-11_v2_formal/acceptance.json)、[独立复核](../logs/training_launch/efficiency44_2026-10-11_v2/formal_audit.json)、[只读审计器](../logs/training_launch/efficiency44_2026-10-11_v2/audit.py)、[正式提交与精确命令](../logs/training_launch/efficiency44_2026-10-11_v2/formal_launch.json)、[正式 stdout](../logs/slurm/GRID-EffFormal44-CPU4-138935.out)、[正式 stderr](../logs/slurm/GRID-EffFormal44-CPU4-138935.err)。
 
 19:14 启动 / 首个 SID 轮次核验通过：10 warmup + 100 measured batches，输入身份与正式 test 前缀对齐；CUDA UUID 与短测相同，首尾 CPU 线程受 `[0,1,28,29]` 约束，执行来源未变。这只是 12 个模型-轮次中的第一个，不能视为整套完成。[首轮快照](../logs/training_launch/efficiency44_2026-10-11_v2/formal_startup.json)。
 
