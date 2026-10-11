@@ -54,6 +54,7 @@
 | 逐样本导出 / 配对分析 | [export](../run_export_paired_evaluation.sh)、[paired analysis](../run_paired_analysis.sh) |
 | 统一硬件效率复测 | [profile CPU4](../run_profile_efficiency_cpu4.sh)；先 smoke，再用其验收记录放行 formal |
 | 历史出现分析 | [history occurrence](../run_history_occurrence.sh) |
+| 已验收 test 的自然 beam 分组 | [4 CPU / 0 GPU 入口](../run_beam_cohorts_cpu4.sh)、[流式分析](../scripts/analyze_beam_cohorts_cpu4.py)；不调用模型 |
 
 环境沿用 `/home/MMReco2021/.conda/envs/GRID/bin/python`。训练与较重测试在 Slurm 计算节点执行，不在登录节点直接跑训练。正式 launcher 使用 3 GPU DDP；需检查实际 world size，不能仅以申请了 3 GPU 判断用满三卡。
 
