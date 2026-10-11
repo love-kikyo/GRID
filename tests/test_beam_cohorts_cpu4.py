@@ -5,7 +5,9 @@ import subprocess
 
 import pytest
 
-from scripts.analyze_beam_cohorts_cpu4 import GROUPS, summarize_matrix, guard, close, ranks, accumulate
+from scripts.analyze_beam_cohorts_cpu4 import (
+    GROUPS, summarize_matrix, guard, close, ranks, accumulate, check_training_seed, accepted_metrics,
+)
 from src.runtime_cpu import THREAD_VARIABLES
 
 
@@ -93,3 +95,23 @@ def test_actual_stable_fusion_tie_and_absent_target():
     ranked = ranked_candidates(p, 'fusion@1@0.50')
     assert ranks(np.array([[4]]), ranked).tolist() == [6]
     assert ranks(np.array([[99]]), ranked).tolist() == [0]
+
+
+@pytest.mark.parametrize('seed', [42, 43, 44])
+def test_seed_bound_to_top_level_frozen_configuration(seed):
+    check_training_seed(seed, f'model:\n  seed: 0\nseed: {seed}\nother: 1\n')
+    with pytest.raises(ValueError):
+        check_training_seed(seed, 'seed: 0\n')
+    with pytest.raises(ValueError):
+        check_training_seed(seed, f'seed: {seed}\nseed: {seed}\n')
+    with pytest.raises(ValueError):
+        check_training_seed(str(seed), f'seed: {seed}\n')
+
+
+def test_legacy_metric_receipt_is_only_accepted_for_seed42():
+    fixture = {'verified_metrics': {'sid:beam': {'recall@5': .2}}}
+    assert accepted_metrics(fixture, 42) == fixture['verified_metrics']
+    with pytest.raises(ValueError):
+        accepted_metrics(fixture, 43)
+    for seed in (42, 43, 44):
+        assert accepted_metrics({'independently_recomputed_metrics': fixture['verified_metrics']}, seed) == fixture['verified_metrics']

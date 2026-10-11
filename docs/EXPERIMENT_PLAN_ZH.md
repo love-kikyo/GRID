@@ -119,6 +119,7 @@ Seed44 separate / SID 已按串行验收顺序完成；原节点故障后的作�
 ## 4. 仅补支撑主张的分析
 
 - [x] 新 checkpoint 上同硬件、batch、beam、上下文长度的 cache / no-cache 延迟与显存复测；138935 与独立复核通过，BF16 主比较 / FP32 cache 对照分开，独立 reranker 成本单列；没有整体更快 / 更省显存的证据则不宣称。
+  - 2026-10-12 作者明确：效率测试到此收尾，不在其他 seed 重测耗时 / 显存。下方跨 seed 的候选命中分析只读取已有预测，属于解释分析，不是效率测试或再次模型推理。
 - [ ] 根据核心结果决定是否需要 candidate-aware history 长度或历史重复项分析；不自动扩成全面消融网格。
 - [ ] 作者认可可解释性探索：先按预先定义的历史长度、GT 是否自然进入 beam 等分组分析，再展示代表性案例；案例不替代全样本配对统计，多 seed 波动也不由单 seed 用户 bootstrap 代替。
   - 本次先固定 seed44（沿用上一阶段，不按效果挑 seed），三个对照 SID / pointwise / separate 相对 listwise，各按自然 beam@20 的 GT 覆盖分为双方命中、仅 baseline 命中、仅 listwise 命中、双方未命中；四组穷尽且互斥。

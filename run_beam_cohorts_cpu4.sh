@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=GRID-BeamCohort44-CPU4
+#SBATCH --job-name=GRID-BeamCohort-CPU4
 #SBATCH --output=logs/slurm/%x-%j.out
 #SBATCH --error=logs/slurm/%x-%j.err
 #SBATCH --nodes=1

@@ -56,7 +56,7 @@
 | 历史出现分析 | [history occurrence](../run_history_occurrence.sh) |
 | 已验收 test 的自然 beam 分组 | [4 CPU / 0 GPU 入口](../run_beam_cohorts_cpu4.sh)、[流式分析](../scripts/analyze_beam_cohorts_cpu4.py)；不调用模型 |
 
-自然 beam 分组入口接受 `MANIFEST OUTPUT_JSON`，提交时绑定 `SOURCE_GIT_COMMIT` / `COHORT_MANIFEST_SHA256`。当前阶段显式限定 seed44，输入来自已验收配对报告及其验收文件；按两个模型是否各自覆盖 GT 分成四组，保存联合 GT 排名计数、组内指标与对全体差值的贡献。流式对齐 / 独立排名计数 / 原指标还原全部通过才输出 `passed`；分组是描述性的，不是共享同一候选池的反事实比较。历史长度不在当前 HDF5 中，不能由候选命中组推断历史长度。
+自然 beam 分组入口接受 `MANIFEST OUTPUT_JSON`，提交时绑定 `SOURCE_GIT_COMMIT` / `COHORT_MANIFEST_SHA256`。支持既定 seed42 / 43 / 44，逐模型核对冻结 Hydra 配置哈希及顶层 seed；兼容 seed42 原验收的 `verified_metrics` 字段，不重写旧记录。输入来自已验收配对报告及其验收文件；按两个模型是否各自覆盖 GT 分成四组，保存联合 GT 排名计数、组内指标与对全体差值的贡献。流式对齐 / 独立排名计数 / 原指标还原全部通过才输出 `passed`；分组是描述性的，不是共享同一候选池的反事实比较。历史长度不在当前 HDF5 中，不能由候选命中组推断历史长度。
 
 环境沿用 `/home/MMReco2021/.conda/envs/GRID/bin/python`。训练与较重测试在 Slurm 计算节点执行，不在登录节点直接跑训练。正式 launcher 使用 3 GPU DDP；需检查实际 world size，不能仅以申请了 3 GPU 判断用满三卡。
 

@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 
 from src.runtime_cpu import THREAD_VARIABLES
 from src.runtime_export_cpu import check_export_allocation, export_cpu_snapshot
@@ -34,6 +35,21 @@ def guard():
 def close(a, b):
     if not math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12):
         raise ValueError(f'Metric reconstruction mismatch: {a} vs {b}')
+
+
+def check_training_seed(seed, config_text):
+    # Read only the unambiguous top-level integer in the frozen Hydra YAML.
+    values = re.findall(r'^seed:[ \t]*([0-9]+)[ \t]*$', config_text, re.MULTILINE)
+    if type(seed) is not int or seed not in (42, 43, 44) or values != [str(seed)]:
+        raise ValueError('Training seed does not match the frozen Hydra config')
+
+
+def accepted_metrics(accepted, seed):
+    if 'independently_recomputed_metrics' in accepted:
+        return accepted['independently_recomputed_metrics']
+    if seed == 42 and 'verified_metrics' in accepted:
+        return accepted['verified_metrics']  # Original seed42 receipt schema; do not rewrite it.
+    raise ValueError('Missing accepted per-variant metrics')
 
 
 def summarize_matrix(matrix, population):
@@ -85,7 +101,8 @@ def run(manifest_path, output):
     manifest = json.loads(manifest_path.read_text())
     assert sha(manifest_path) == os.environ['COHORT_MANIFEST_SHA256']
     assert manifest['source_git_commit'] == os.environ['SOURCE_GIT_COMMIT']
-    assert manifest['training_seed'] == 44 and manifest['expected_samples'] == 2061101
+    seed = manifest['training_seed']
+    assert type(seed) is int and seed in (42, 43, 44) and manifest['expected_samples'] == 2061101
     for record in manifest['sources'] + [manifest['paired_report'], manifest['paired_acceptance']]:
         assert sha(record['path']) == record['sha256'], record['path']
     report = json.loads(Path(manifest['paired_report']['path']).read_text())
@@ -95,6 +112,7 @@ def run(manifest_path, output):
     assert n == accepted['num_samples_per_model'] == manifest['expected_samples']
     assert accepted['cross_model_user_hash_target_equal'] and accepted['duplicate_candidates_per_row'] == 0
     assert set(report['inputs']) == set(MODELS)
+    verified_metrics = accepted_metrics(accepted, seed)
     variants = {'sid': 'beam'}
     for model in MODELS:
         path = Path(report['inputs'][model]); identity = accepted['models'][model]
@@ -103,6 +121,9 @@ def run(manifest_path, output):
         assert meta['split'] == 'test' and meta['num_samples'] == n
         assert meta['checkpoint_sha256'] == identity['checkpoint_sha256']
         assert meta['limits'] == {'max_batches': None, 'max_samples': None}
+        config_path = Path(meta['run_dir']) / '.hydra/config.yaml'
+        assert sha(config_path) == meta['hydra_config_sha256']
+        check_training_seed(seed, config_path.read_text())
         if model != 'sid':
             selection = report['fusion_selections'][model]
             assert sha(selection['path']) == selection['sha256'] == identity['selection_sha256']
@@ -156,7 +177,7 @@ def run(manifest_path, output):
     for m in MODELS:
         assert coverage[m] == accepted['models'][m]['coverage_count_at_20']
         for metric, total in sums[m].items():
-            close(total / n, accepted['independently_recomputed_metrics'][m + ':' + variants[m]][metric])
+            close(total / n, verified_metrics[m + ':' + variants[m]][metric])
     for baseline, counts in hist.items():
         assert int(counts.sum()) == n
         groups = {name: summarize_matrix(counts[i].tolist(), n) for i, name in enumerate(GROUPS)}
@@ -175,7 +196,7 @@ def run(manifest_path, output):
         }
     output.parent.mkdir(parents=True, exist_ok=True)
     summary = dict(status='passed', checked_at=datetime.now().astimezone().isoformat(),
-                   training_seed=44, num_examples=n, comparisons=result, coverage=coverage,
+                   training_seed=seed, num_examples=n, comparisons=result, coverage=coverage,
                    source_git_commit=manifest['source_git_commit'], manifest_sha256=sha(manifest_path),
                    manifest_path=str(manifest_path.resolve()), cpu_budget=budget, cpu_process_tree_samples=snapshots,
                    scope='Descriptive post-hoc natural-beam cohorts; no new inference, selection, CI or causal claim',
@@ -183,7 +204,7 @@ def run(manifest_path, output):
                    validation='Input hashes/alignment; independent score-count rank; per-user vs rank-histogram metrics; accepted full-test metric reconstruction',
                    limitations=['Both-hit is not a shared identical candidate pool',
                                 'Model-dependent groups are descriptive, not a causal generator/reranker decomposition',
-                                'Single training seed44; no history-length or item-semantic explanation in this stage'])
+                                f'Single training seed{seed}; no history-length or item-semantic explanation in this stage'])
     with output.open('x') as stream:
         stream.write(json.dumps(summary, indent=2, allow_nan=False) + '\n')
     print('[passed]', output, flush=True)
