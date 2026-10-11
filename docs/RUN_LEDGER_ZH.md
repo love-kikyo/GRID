@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-11 16:04（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-11 18:55（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 138929 | 10-11 18:51 | seed 44 四模型统一 GPU 效率首次短测，1 GPU / 4 CPU | 日志显示 step 退出 1；17 项回归及 SID 路径通过，listwise FP32 门槛通过、BF16 超限，未继续 pointwise / separate；18:55 队列为空，无正式复测后继 |
 | 138922 | 10-11 16:00 | seed 44 四模型配对统计 / 独立验收，4 CPU / 0 GPU | 16:03:49 完整验收通过，11 项比较 / 44 个差值区间 / 22 个 Recall 配对检验复核一致；16:04 队列为空，未另补核终态退出码 |
 | 138899 | 10-11 14:02 | seed 44 joint 已完成 test 的哈希 / 日志复核，1 CPU / 0 GPU | COMPLETED / 0:0（scontrol），10s；当前字节与原验收匹配，无新模型推理 |
 | 138898 | 10-11 15:01 | seed 44 SID-only 全量 test / 验收，1 GPU / 4 CPU | 15:56:47 完整产物验收通过，2061101 唯一用户；与 separate 的 beam 候选 / 分数逐值相同；15:57 队列为空，未另补核终态退出码 |
@@ -94,6 +95,20 @@
 | 131855 | 09-04 22:18 | 新协议小规模构建与审计 | COMPLETED；不是全量数据 |
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
+
+## 当前：统一硬件效率复测
+
+10-11 作者明确要求进行统一硬件效率复测。只使用 seed 44 的四个已验收原 best：SID 132733 / 90000、listwise 134298 / 80000、pointwise 134299 / 100000、separate 135459 / 10000，不挑选最快 seed、不改训练 / 全量效果结果。旧 launcher 为 8 CPU / worker4 且全部 batch 常驻 GPU，不能直接沿用。新入口 `0395ff5` 保留模型 / 数据源码和原前向组件，增加四核限制、来源绑定、一批 GPU 输入、计时 / 显存记录、同 UUID / 用户输入 / 候选检查及 no-cache 数值门槛。
+
+短测 138929 固定 aias-compute-2 的单 GPU 分配，4 CPU / 32G，库线程 1、worker1；17 项本地轻量回归和计算节点回归均通过。四模型 / 共 9 个变体串行，每个模型独立进程；2 warmup + 3 measured batches。Listwise / pointwise 在首个真实 batch 上检查 cache / no-cache 的候选对齐 logits：FP32 atol/rtol=2e-4，BF16 atol=0.1 / rtol=0.01，并记录排序一致率；Separate 检查实际 teacher + reranker 路径与模型原 `_run_rerank` 输出相同。只有完整短测通过才提交正式任务。
+
+首次短测在 listwise 的 BF16 检查处停止：9 / 640 logits 超过原容差，最大绝对差 0.1875；同一实现先通过了 FP32 门槛。SID 部分成功不能视为完整效率验收，pointwise / separate 尚未执行。没有改模型 / checkpoint，也没有把短测数字作为效率结论。后续修订保留原 FP32 严格门槛和 BF16 诊断阈值，将计时拆成 BF16 主比较、FP32 cache / no-cache 对照，共 11 变体；BF16 no-cache 不进入正式计时，不跨精度计算加速比。修订后 18 项轻量回归通过，待新的真实短测验收。
+
+正式计划为 batch32 / beam20 / BF16、sequence_length32 / hist_itemkey_length100 / top_k_for_score10、各自冻结 validation beta=0.50（SID 仅 beam）；10 warmup + 100 measured batches × 3 轮，模型 / 变体顺序轮换。同次分配的 GPU UUID 必须始终相同，检测其他同 GPU 计算进程；不独占整节点、不锁频，记录 GPU / 驱动 / 温度和时钟。计时分别为生成 / 重排 CUDA events 和同步墙钟前向，排除数据加载 / H2D / checkpoint / 哈希校验；不是在线单请求延迟或全量 test 吞吐。显存包括一批输入和实际 GPU 模块，Separate 未使用的继承 wrapper 留在 CPU。3 轮计时不是 3 个训练 seed，不混入效果主表标准差。
+
+提交时工作树干净，源码 `0395ff5e407d0136ca58fd9819b2ace388712a11`；冻结清单 SHA256 `41adcbd29999f6463a4960a2f62287518b75bd42fa1753fa40dde728f1adff8c`，绑定 16 份执行 / 测试源码及四组 checkpoint、配置、preflight、正式 test 记录和选权。目前尚无可报告的正式效率数值。
+
+证据：[短测提交](../logs/training_launch/efficiency44_2026-10-11/smoke_launch.json)、[冻结清单](../logs/training_launch/efficiency44_2026-10-11/manifest.json)、[入口与口径](RECOCHAIN_PROJECT_GUIDE.md)、[stdout](../logs/slurm/GRID-EffSmoke44-CPU4-138929.out)、[stderr](../logs/slurm/GRID-EffSmoke44-CPU4-138929.err)。
 
 ## 三 seed 主表
 

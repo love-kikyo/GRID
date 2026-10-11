@@ -36,8 +36,8 @@ def test_resource_guard_before_numeric_imports(monkeypatch):
                     'assert "torch" not in sys.modules and "numpy" not in sys.modules'], check=True)
 
 
-def rows():
-    return [dict(batch_index=i, batch_size=32, gen_cuda_ms=8., rerank_cuda_ms=2., total_cuda_ms=10.,
+def rows(amp='bf16'):
+    return [dict(batch_index=i, batch_size=32, amp=amp, gen_cuda_ms=8., rerank_cuda_ms=2., total_cuda_ms=10.,
                  wall_ms=12., baseline_allocated_gib=1., peak_allocated_gib=3., peak_increment_gib=2.,
                  peak_reserved_gib=4., natural_beam_sha256=f'fixture-{i}') for i in range(3)]
 
@@ -47,7 +47,7 @@ def cases():
     return [dict(status='passed', model=model, repeat=0, phase='smoke', warmup_batches=2,
                  measure_batches=3, input_sha256='same-input', hardware_start=hardware.copy(),
                  hardware_end=hardware.copy(),
-                 variants={v: {'records': rows(), 'summary': summary(rows())} for v in variants})
+                 variants={v: {'records': rows('none' if v.endswith('_fp32') else 'bf16'), 'summary': summary(rows())} for v in variants})
             for model, variants in VARIANTS.items()]
 
 
@@ -62,6 +62,19 @@ def test_summary_reports_batch_latency_and_correct_throughput():
         r = rows(); r[0]['wall_ms'] = value
         with pytest.raises(ValueError, match='Invalid'):
             summary(r)
+
+
+def test_precision_groups_are_explicit_and_bf16_no_cache_is_not_timed():
+    c = cases()
+    assert 'rerank_no_cache' not in VARIANTS['listwise']
+    for case in c:
+        for variant, record in case['variants'].items():
+            if variant.endswith('_fp32'):
+                for row in record['records']:
+                    row['natural_beam_sha256'] += '-fp32'
+    assert validate_cases(c, 'smoke')
+    c[1]['variants']['rerank_no_cache_fp32']['records'][0]['amp'] = 'bf16'
+    with pytest.raises(AssertionError): validate_cases(c, 'smoke')
 
 
 @pytest.mark.parametrize('damage', ['gpu', 'input', 'candidate', 'count', 'summary', 'missing'])

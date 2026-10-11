@@ -20,8 +20,8 @@ from src.runtime_cpu import THREAD_VARIABLES, configure_torch
 from src.runtime_export_cpu import check_export_allocation, export_cpu_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
-VARIANTS = {'sid': ['beam_only'], 'listwise': ['beam_only', 'rerank_cache', 'rerank_no_cache'],
-            'pointwise': ['beam_only', 'rerank_cache', 'rerank_no_cache'],
+VARIANTS = {'sid': ['beam_only'], 'listwise': ['beam_only', 'rerank_cache', 'rerank_cache_fp32', 'rerank_no_cache_fp32'],
+            'pointwise': ['beam_only', 'rerank_cache', 'rerank_cache_fp32', 'rerank_no_cache_fp32'],
             'separate': ['beam_only', 'separate_rerank']}
 COUNTS = {'smoke': (2, 3, 1), 'formal': (10, 100, 3)}
 
@@ -172,14 +172,21 @@ def equivalence(model, batch, device, torch, p, e):
             beam = ids.reshape(32, 20, 4)
             av = e.align_rerank_logits_to_beam(beam, a[0], a[2])
             bv = e.align_rerank_logits_to_beam(beam, b[0], b[2])
-            torch.testing.assert_close(av, bv, atol=atol, rtol=rtol)
+            if amp == 'none':
+                torch.testing.assert_close(av, bv, atol=atol, rtol=rtol)
             results[amp] = {'atol': atol, 'rtol': rtol,
+                            'within_tolerance': bool(torch.isclose(av, bv, atol=atol, rtol=rtol).all()),
+                            'outside_tolerance_count': int((~torch.isclose(av, bv, atol=atol, rtol=rtol)).sum()),
+                            'num_candidate_logits': av.numel(),
+                            'scope': 'strict FP32 gate' if amp == 'none' else 'diagnostic only; BF16 no-cache excluded from timing comparison',
                             'max_abs_logit_error': float((av-bv).abs().max()),
                             'ranking_row_exact_fraction': float((a[0] == b[0]).all(-1).all(-1).float().mean())}
     return results
 
 
 def measure_one(model, batch, variant, torch, p, device):
+    amp = 'none' if variant.endswith('_fp32') else 'bf16'
+    path_variant = variant.removesuffix('_fp32')
     events = [torch.cuda.Event(enable_timing=True) for _ in range(3)]
     torch.cuda.synchronize()
     baseline = torch.cuda.memory_allocated()
@@ -187,18 +194,18 @@ def measure_one(model, batch, variant, torch, p, device):
     start = time.perf_counter()
     events[0].record()
     if variant == 'separate_rerank' or model.__class__.__name__ == 'SeparateRerankModule':
-        beam = p.run_separate_beam(model, batch, device, 'bf16')
+        beam = p.run_separate_beam(model, batch, device, amp)
         events[1].record()
-        out = p.run_separate_rerank(model, beam, batch, device, 'bf16') if variant == 'separate_rerank' else None
+        out = p.run_separate_rerank(model, beam, batch, device, amp) if variant == 'separate_rerank' else None
         candidate_ids, candidate_scores = beam['candidate_sid'], beam['beam_scores']
     else:
-        ids, scores, mask, cache = p.run_beam(model, batch, device, 'bf16')
+        ids, scores, mask, cache = p.run_beam(model, batch, device, amp)
         events[1].record()
-        if variant == 'rerank_cache':
-            out = p.rerank_with_cache(model, batch, ids, scores, mask, cache, device, 'bf16')
-        elif variant == 'rerank_no_cache':
+        if path_variant == 'rerank_cache':
+            out = p.rerank_with_cache(model, batch, ids, scores, mask, cache, device, amp)
+        elif path_variant == 'rerank_no_cache':
             del cache  # no artificial retention of the discarded generation KV cache
-            out = p.rerank_without_cache(model, batch, ids, scores, device, 'bf16')
+            out = p.rerank_without_cache(model, batch, ids, scores, device, amp)
             # Match the two lightweight accumulator updates in the cached implementation.
             model.click_log_prob_accumulator(torch.log_softmax(out[1], dim=-1).mean())
             model.beam_log_prob_accumulator(scores.mean())
@@ -216,7 +223,7 @@ def measure_one(model, batch, variant, torch, p, device):
         assert torch.isfinite(out[1]).all() and torch.isfinite(out[2]).all()
     digest = hashlib.sha256(candidate_ids.cpu().numpy().tobytes())
     digest.update(candidate_scores.float().cpu().numpy().tobytes())
-    return {'batch_size': 32, 'gen_cuda_ms': events[0].elapsed_time(events[1]),
+    return {'batch_size': 32, 'amp': amp, 'gen_cuda_ms': events[0].elapsed_time(events[1]),
             'rerank_cuda_ms': 0.0 if variant == 'beam_only' else events[1].elapsed_time(events[2]),
             'total_cuda_ms': events[0].elapsed_time(events[2]), 'wall_ms': wall_ms,
             'baseline_allocated_gib': baseline / 1024**3, 'peak_allocated_gib': peak / 1024**3,
@@ -294,7 +301,7 @@ def child(args, manifest, budget):
               'gpu_resident_parameter_count': sum(x.numel() for x in model.parameters() if x.device.type == 'cuda'),
               'equivalence_checks': checks, 'variants': reports, 'variant_execution_order': variants,
               'cpu_budget': budget, 'cpu_process_tree_samples': [first_cpu, export_cpu_snapshot(budget['allowed_cpus'])],
-              'inference_settings': {'batch_size': 32, 'beam': 20, 'amp': 'bf16', 'tf32': False,
+              'inference_settings': {'batch_size': 32, 'beam': 20, 'amp': 'BF16 main comparison; FP32 cache ablation', 'tf32': False,
                                      'sequence_length': 32, 'hist_itemkey_length': 100,
                                      'top_k_for_score': 10, 'active_top_k_for_score': None,
                                      'fusion_beta': .5 if args.model != 'sid' else None},
@@ -318,9 +325,11 @@ def validate_cases(cases, phase):
             rows = result['records']
             assert len(rows) == measured and [r['batch_index'] for r in rows] == list(range(measured))
             assert all(r['batch_size'] == 32 for r in rows)
+            amp = 'none' if variant.endswith('_fp32') else 'bf16'
+            assert all(r['amp'] == amp for r in rows)
             assert result['summary'] == summary(rows)
             fingerprints = [r['natural_beam_sha256'] for r in rows]
-            identity = 'teacher' if case['model'] in ('sid', 'separate') else case['model']
+            identity = ('teacher' if case['model'] in ('sid', 'separate') else case['model'], amp)
             assert beams.setdefault(identity, fingerprints) == fingerprints, 'Natural candidates/scores changed'
     return True
 
@@ -351,6 +360,7 @@ def main():
             smoke_cases.append(json.loads(Path(record['path']).read_text()))
         validate_cases(smoke_cases, 'smoke')
         assert all(c['equivalence_checks'] for c in smoke_cases if c['model'] != 'sid')
+        assert all(c['equivalence_checks']['none']['within_tolerance'] for c in smoke_cases if c['model'] in ('listwise', 'pointwise'))
     args.output.mkdir(parents=True, exist_ok=False)
     cases, records = [], []
     _, _, repeats = COUNTS[args.phase]
@@ -385,7 +395,8 @@ def main():
               'limitations': ['Fixed first test batches, batch32/beam20/BF16, not online single-request latency',
                               'One training seed; three timing repetitions are not training-seed replicates',
                               'Same allocated physical GPU throughout suite; node may host other GPUs/jobs; clocks not locked',
-                              'Cache/no-cache rebuilds the same candidate prefix; FP32 and BF16 tolerance gates in smoke, not bitwise equivalence',
+                              'Main model comparison is BF16; strict cache/no-cache timing comparison is separately FP32. No cross-precision speedup ratios.',
+                              'BF16 cache/no-cache differences retained as diagnostic only; BF16 no-cache is not timed. FP32 tolerance gate is not bitwise equivalence.',
                               'Frozen validation beta=0.50; model topk implementation timed, not offline full-test stable-sort analysis']}
     write_new(args.output / 'acceptance.json', result)
     print('[passed] efficiency suite', args.output, flush=True)

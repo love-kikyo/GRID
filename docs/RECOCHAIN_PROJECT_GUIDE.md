@@ -65,7 +65,7 @@
 
 效率入口参数为 `MANIFEST OUTPUT_DIR smoke|formal [SMOKE_ACCEPTANCE]`，提交环境绑定 `SOURCE_GIT_COMMIT` / `PROFILE_MANIFEST_SHA256`。固定 seed 44 的四个已验收 best，1 GPU / 整项 4 CPU、库线程 1、worker1；同一 GPU 分配内串行运行，逐模型 / 重复使用新进程，UUID 必须相同。模型与数据源码不修改；首批输入与对应正式 test HDF5 的用户 / 输入哈希核对。计时为 batch32 / beam20 / BF16，原 sequence_length=32、hist_itemkey_length=100、top_k_for_score=10；重排使用冻结 validation beta=0.50，无新选权。短测 2 warmup + 3 measured batches；正式 10 + 100 batches × 3 次重复，模型 / 变体顺序轮换。
 
-分别记录生成、重排 CUDA 时间及同步墙钟前向时间，数据加载、H2D、checkpoint 加载与验证不计时。一次只保留一个 GPU 输入 batch；报告 allocated / reserved 峰值及相对基线增量。Separate 仅实际 teacher + reranker 放入 GPU，未使用的继承 wrapper 留在 CPU，不能与旧脚本的原始整模块显存直接比较。Cache / no-cache 对同一自然候选检查 FP32 数值一致性（atol/rtol=2e-4）及 BF16 容差（atol=0.1、rtol=0.01），同时报告排序差异，不宣称跨精度逐位等价；短测不通过不得进入正式阶段。3 次计时重复不等于 3 个训练 seed，也不是在线单请求延迟。实际验收情况只看台账。
+分别记录生成、重排 CUDA 时间及同步墙钟前向时间，数据加载、H2D、checkpoint 加载与验证不计时。一次只保留一个 GPU 输入 batch；报告 allocated / reserved 峰值及相对基线增量。Separate 仅实际 teacher + reranker 放入 GPU，未使用的继承 wrapper 留在 CPU，不能与旧脚本的原始整模块显存直接比较。四模型主比较统一 BF16；严格 cache / no-cache 对照单独统一 FP32（关闭 TF32），同一自然候选 logits 须满足 atol/rtol=2e-4。首轮短测显示 BF16 no-cache 超出原容差，因此该路径不进入计时对照；原 BF16 阈值、超限个数 / 最大差和排序差异仅保留为诊断，不放宽其原阈值后混入结果。加速比只在同精度内计算，不宣称逐位等价；严格短测不通过不得进入正式阶段。3 次计时重复不等于 3 个训练 seed，也不是在线单请求延迟。实际验收情况只看台账。
 
 其他未适配的旧 smoke 入口运行前仍须核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
 
