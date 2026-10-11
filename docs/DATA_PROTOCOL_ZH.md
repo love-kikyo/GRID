@@ -73,9 +73,30 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 | [item2row](../../Taobao/cache/sid_item2row_scl_emb_int8_p90.pkl) | 原始历史 item ID → SID 数组行号 | `ad40ae0e1d2ebf7f149ef12b4c9bd600291b34e2acae23843b2376256bade1d9` |
 | [SID 数组](../data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy) | 行号 → 4 层 SID，形状 `[35458467,4]`、int32 | `02397277e46f1ac8f0c67e0ffe293af3ef35dc433be9e7fdd9a912b18bf2cf54` |
 
-上游提供 SCL embedding 的 keys / values；本地 [SID 生成入口](../../Taobao/src/generate_sid_taobao.py) 调用 [res_kmeans.py](../../Taobao/src/res_kmeans.py)，其 reindexing 逻辑给三层聚类编码追加桶内 item 排序编号。历史 launcher 配置为 `512 512 512`；它不是本模型四层均容量 4096 的配置，两者不能混淆。尚未把历史 SID 生成运行的全部版本 / 随机种子与当前固定数组逐项绑定，因此本轮精确复现以**分发并校验上述编码资产**为前提，不承诺重新聚类能按位生成同一 SID 数组。
+上游提供 SCL embedding 的 keys / values；本地 [SID 生成入口](../../Taobao/src/generate_sid_taobao.py) 调用 [res_kmeans.py](../../Taobao/src/res_kmeans.py)，其 reindexing 逻辑给三层聚类编码追加桶内 item 排序编号。历史 launcher 配置为 `512 512 512`；它不是本模型四层均容量 4096 的配置，两者不能混淆。以下新增来源记录不改变协议或资产；精确复现仍以**分发并校验上述编码资产**为前提，不承诺重新聚类能按位生成同一 SID 数组。
 
-同样，现有上游文件记录没有完整的下载 revision 与逐 shard SHA256；发布复现材料时应补齐所使用快照的身份，不把本地路径 / mtime 当作完整的下载版本证明。以下命令复现的是“同一上游 shards + 同一编码资产 → 处理后的样本”，不是已经完成第三方从零复现实验的声明。
+### 10-12 来源补查：证据与边界
+
+在 `Taobao/taobao/.cache/huggingface/download/` 找到了本地下载元数据。原构建 manifest 的 **161 个 train + 49 个 test 分片**，以及使用的 SCL keys / values，均记录 revision **`f185841b6e9612edd06f5112e06416f1bdf6c6d0`**。这补齐了此前未发现的下载身份线索，不是重新下载或变更数据。
+
+- 缓存每个文件记录三行：commit、ETag、下载时间。已核对当前安装的 `huggingface_hub/_local_folder.py` 与 `file_download.py`：64 位十六进制 ETag 按文件 SHA256 校验，40 位按 Git blob SHA1 校验（含 `blob <长度>\0` 前缀，不能直接对文本做普通 SHA1）。
+- [固定核验清单](../logs/training_launch/source_snapshot_2026-10-12/manifest.json) 列出 235 个明确文件及原 manifest 绑定、下载元数据哈希、预期身份和副本比较关系。全字节核验进度与结果见 [Run 台账](RUN_LEDGER_ZH.md#上游快照与编码资产来源核验)；不能将“找到 ETag”写成“当前文件内容全部一致”。
+- 该 revision 来自本地缓存，本轮没有访问远端核验该历史 commit。原构建时只记录了分片大小 / mtime，没有逐分片内容哈希；如今的哈希核验即使通过，也不能倒推为当时曾做过字节校验。应同时保留原构建 manifest 与新增报告。
+
+找到了历史 SID 运行的 [106364 标准输出](../../Taobao/src/outputs/output_106364.txt) 与 [106365 检查输出](../../Taobao/src/outputs/output_106365.txt)：
+
+| 可追溯内容 | 证据 / 限制 |
+| --- | --- |
+| Embedding 来源 | 106364 记录 `scl_emb_int8_p90_keys.npy` / `values.npy`，35458467 行、128 维 |
+| 编码参数 | 三层 `[512,512,512]`，`sid_output_mode=reindexing`，`cuda:0` |
+| 此次是否训练 codebook | 日志明确加载已有三层 K-Means 模型；106364 不是从零聚类训练记录 |
+| 追加第四层 | 106364 记录 bucket-local 编号，12390749 桶、最大桶 4020，输出 `[35458467,4]` int32；106365 记录四层 SID 无冲突。这是历史日志证据，不是本轮重算 |
+| 与正式资产关系 | 正式 SID / item2row 已有冻结 SHA256；本次另核验 cache SID 与正式 SID、上游 embedding 与模型副本是否同字节，结果见台账 |
+| 历史源码 / 随机性 | 当前 `res_kmeans.py` 修改时间晚于 106364 日志，且入口未提供随机种子参数；当前文件指纹不能冒充历史版本。原始 codebook 训练时的完整源码、随机状态和环境版本仍未绑定 |
+
+因此复现分两层：**固定上游快照与编码资产 → A + H1 + L2 样本 → 冻结实验配置**有明确入口和计数；**从 embedding 重新训练出逐位相同 codebook / SID**仍不作保证。不能只发布聚类脚本而省去固定编码资产，也不能将已找到历史日志等同于完整从零复现。
+
+以下命令复现的是“同一上游 shards + 同一编码资产 → 处理后的样本”，不是已完成第三方独立复现的声明。发布包需随附新增来源清单 / 核验报告和固定编码资产；本地 `logs/` 中的记录不会随普通 Git clone 自动提供。
 
 ### 环境与构建命令
 
