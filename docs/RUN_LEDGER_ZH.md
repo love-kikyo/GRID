@@ -1,11 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-12 00:14（Asia/Shanghai）。当前队列为空；既有历史状态保留原核验记录，10-11 的 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-12 00:16（Asia/Shanghai）。当前队列为空；既有历史状态保留原核验记录，10-11 的 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139021 | 10-12 00:15 | seed43 自然 beam 命中分组，4 CPU / 0 GPU | 00:16:10 全量分析、00:16:40 独立复核通过；2061101 用户 / 3 对比较 / 12 组，19 项回归通过；affinity `[2,3,6,7]`；队列为空，未另补核 Slurm 终态退出码 |
 | 139020 | 10-12 00:11 | seed42 自然 beam 命中分组，4 CPU / 0 GPU | 00:13:12 全量分析、00:14:15 独立复核通过；2061101 用户 / 3 对比较 / 12 组，19 项回归通过；affinity `[2,3,6,7]`；队列为空，未另补核 Slurm 终态退出码 |
 | 138973 | 10-11 20:14 | seed44 自然 beam 命中分组，4 CPU / 0 GPU | 20:15:16 全量分析、20:15:46 独立复核通过；2061101 用户 / 3 对比较 / 12 个组；15 项回归通过，affinity `[28,29,32,33]`；队列为空，未另补核 Slurm 终态退出码 |
 | 138935 | 10-11 19:11 | seed 44 四模型统一 GPU 正式效率复测，1 GPU / 4 CPU | 19:42 完整产物、20:04 独立复核通过；12 个模型轮次 / 11 变体组 / 3300 measured batches，同一 4090 / affinity `[0,1,28,29]`；队列为空，未补核 Slurm 最终退出码 |
@@ -100,11 +101,32 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：补齐自然 beam 分组的跨 seed 检查
+## 已验收：三 seed 自然 beam 命中分组
 
 10-12 作者要求效率测试不扩其他 seed、继续下一步。本阶段只读 seed42 / 43 原预测，属于解释分析，0 GPU，不重测效率、不重复训练 / test。执行版本 `e7c24f702be99a9645e209d216643f5c7a565962` 仅扩既定 seed 身份核验和 seed42 原验收字段兼容；`ranks` / `accumulate` / `summarize_matrix` / `close` 的 AST 与已验收 seed44 完全相同，原配对统计核心未改，19 项回归通过。
 
-先提交 139020，原四份 HDF5 / sidecar / 选权 / Hydra 配置哈希与顶层 seed42 核验通过；00:13:12 全量扫描结束，00:14:15 独立审计重算 12 组成员约束、计数、四项指标与总体还原通过。未重写原 seed42 验收记录；兼容其 `verified_metrics` 字段，不将其改称原先已经做过新版本独立指标重算。下一项 seed43 尚未提交。
+先提交 139020，原四份 HDF5 / sidecar / 选权 / Hydra 配置哈希与顶层 seed42 核验通过；00:13:12 全量扫描结束，00:14:15 独立审计重算 12 组成员约束、计数、四项指标与总体还原通过。未重写原 seed42 验收记录；兼容其 `verified_metrics` 字段，不将其改称原先已经做过新版本独立指标重算。
+
+Seed42 验收且队列为空后，才提交 **139021**；实际提交 HEAD `0716f16`、工作树干净，与执行版本仅两份状态文档不同。00:16:10 seed43 全量扫描通过，00:16:40 独立复核通过；同样 19 项回归、4 CPU / 0 GPU / 12G、库线程 1，CPU 首批 / 末批均绑定 `[2,3,6,7]`。每个 seed 2061101 用户 / 3 对比较 / 12 组，各组加权差值还原原正式报告，无新 GPU 推理 / 选权 / CI。
+
+00:16:41 只读三份已验收分组 JSON 汇总：绑定各报告 / 验收 / 清单 / 审计器哈希，确认同一数据协议和 selected beta、分组规则与指标；每 seed 及均值的组贡献都还原总体差值。均值 / 样本标准差为跨训练 seed 描述量，不合并三次出现的用户为独立样本，也不从单 seed 全量 CI 推导分组显著性。原 seed44 结果未覆盖或重跑。
+
+以下为**双方自然 beam@20 都包含 GT 的用户组内差值（Listwise − baseline）**，不是对全体的加权贡献，也不是百分比：
+
+| Baseline | 指标 | Seed42 | Seed43 | Seed44 |
+| --- | --- | ---: | ---: | ---: |
+| SID-only | Recall@5 | +0.017152 | +0.015278 | +0.016570 |
+| SID-only | NDCG@10 | +0.011483 | +0.011440 | +0.010906 |
+| Pointwise | Recall@5 | +0.002414 | +0.001215 | +0.002963 |
+| Pointwise | NDCG@10 | +0.001203 | +0.000541 | +0.000568 |
+| Separate-small | Recall@5 | -0.000760 | -0.000332 | -0.000776 |
+| Separate-small | NDCG@10 | +0.000702 | +0.001591 | -0.000669 |
+
+结论范围：对 Pointwise，共同覆盖组中的这两项提升在三个 seed 均为正；对 Separate，Recall@5 均略低，NDCG@10 正负不一致，不能将 seed44 的两个负差值外推为所有 seed。三 seed 均值中，Listwise 相对 Separate 的 Recall@5 总提升 +0.013099，其仅 Listwise 覆盖组贡献 +0.014069，仅 Separate 覆盖组 -0.000799，双方覆盖组 -0.000170；相对 Pointwise 的总提升 +0.002944，三组分别为 +0.003467、-0.001152、+0.000629。这些是描述性加法分解，不是因果拆解；双方命中依然不等于相同候选池。
+
+来源：[三 seed 全精度汇总](../logs/analysis/paired_evaluation/beam_cohorts_three_seed_summary_full_v1.json)（SHA256 `a4b83d3e71b89dffcdbe12f9fc62a38085ccb8dd8162a18d68155f97c67f1e6a`）、[只读汇总脚本](../logs/analysis/paired_evaluation/summarize_beam_cohorts_three_seeds_2026-10-12.py)。完整四指标、逐 seed 组计数 / 指标 / 对全体贡献及跨训练 seed 样本标准差均保留；该阶段没有历史长度信息或案例结果。
+
+Seed43 证据：[分组结果](../logs/analysis/paired_evaluation/beam_cohorts_seed43_full_v1.json)、[独立验收](../logs/training_launch/beam_cohorts43_2026-10-12/acceptance.json)、[冻结清单](../logs/training_launch/beam_cohorts43_2026-10-12/manifest.json)、[提交记录](../logs/training_launch/beam_cohorts43_2026-10-12/launch.json)、[stdout](../logs/slurm/GRID-BeamCohort43-CPU4-139021.out)、[stderr](../logs/slurm/GRID-BeamCohort43-CPU4-139021.err)。两项新任务的最终 Slurm 退出码未另补核；产物验收和队列退出分开记录。
 
 证据：[seed42 分组结果](../logs/analysis/paired_evaluation/beam_cohorts_seed42_full_v1.json)、[独立验收](../logs/training_launch/beam_cohorts42_2026-10-12/acceptance.json)、[冻结清单](../logs/training_launch/beam_cohorts42_2026-10-12/manifest.json)、[提交记录](../logs/training_launch/beam_cohorts42_2026-10-12/launch.json)、[stdout](../logs/slurm/GRID-BeamCohort42-CPU4-139020.out)、[stderr](../logs/slurm/GRID-BeamCohort42-CPU4-139020.err)。
 
