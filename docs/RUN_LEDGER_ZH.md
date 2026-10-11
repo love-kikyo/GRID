@@ -1,13 +1,16 @@
 # Run 台账
 
-最后核验：2026-09-24 10:11（Asia/Shanghai）。状态来自 `squeue` / `sacct`，模型用途来自 launcher、run 配置与日志；作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-11 15:57（Asia/Shanghai）。当前状态来自 `squeue` / `scontrol`，既有历史状态保留原核验记录；本日 `sacct` 记账库连接失败，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
 
 ## 新协议作业（最近在前）
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 136158 | 未开始 | seed 44 pointwise 全量 test / 产物验收，1 GPU / 4 CPU | PENDING / afterok:136157；原 best 100000、冻结 beta=0.50；唯一依赖等待项 |
-| 136157 | 09-24 10:04 | seed 44 listwise 全量 test / 产物验收，1 GPU / 4 CPU | RUNNING；原 best 80000、冻结 beta=0.50；单核前置绑定通过，完整产物待验收 |
+| 138899 | 10-11 14:02 | seed 44 joint 已完成 test 的哈希 / 日志复核，1 CPU / 0 GPU | COMPLETED / 0:0（scontrol），10s；当前字节与原验收匹配，无新模型推理 |
+| 138898 | 10-11 15:01 | seed 44 SID-only 全量 test / 验收，1 GPU / 4 CPU | 15:56:47 完整产物验收通过，2061101 唯一用户；与 separate 的 beam 候选 / 分数逐值相同；15:57 队列为空，未另补核终态退出码 |
+| 138897 | 10-11 14:03 | seed 44 separate 全量 test / 验收，1 GPU / 4 CPU | 15:01:15 完整产物验收通过，2061101 唯一用户；依赖后继已正常启动；控制器后续已不保留本项，未虚填最终退出码 |
+| 136158 | 09-24（日志） | seed 44 pointwise 全量 test / 产物验收，1 GPU / 4 CPU | 产物验收通过：12:30:56 记录生成，2061101 唯一用户；10-11 哈希复核通过；历史 Slurm 终态 / 退出码未补核 |
+| 136157 | 09-24 10:04 | seed 44 listwise 全量 test / 产物验收，1 GPU / 4 CPU | 产物验收通过：11:18:30 记录生成，2061101 唯一用户；10-11 哈希复核通过；历史 Slurm 终态 / 退出码未补核 |
 | 136153 | 09-24 09:59 | seed 43 四模型配对统计 / 独立验收，4 CPU / 0 GPU | COMPLETED / 0:0，3m23s；10:03:16 结束，11 项比较 / 44 个差值及区间 / 22 个 Recall 配对检验复核通过 |
 | 136151 | 09-24 | 四核配对入口回归，4 CPU / 0 GPU | COMPLETED / 0:0，27s；32 passed，数值 / 区间一致性与资源限制回归通过 |
 | 135943 | 09-23 14:44 | seed 43 SID-only 全量 test / 产物验收，1 GPU / 4 CPU | COMPLETED / 0:0，1h11m40s；15:56:20 结束，2061101 唯一用户；与 separate 的 beam 候选 / 分数逐值相同 |
@@ -91,15 +94,39 @@
 
 本表年份均为 2026。较早的七月训练、124632–124637 等旧数据导出见 [历史归档](archive/README.md)，不属于新协议正式结果。
 
-## 当前：seed 44 listwise / pointwise 全量 test
+## 已验收：seed 44 separate / SID-only 全量 test
 
-09-24 seed 43 完整配对统计验收通过、队列为空后，仅提交 **136157 listwise → 136158 pointwise**；后项 `afterok:136157`、`--kill-on-invalid-dep=yes`。同一时刻 1 GPU / 整项 4 CPU、20G，库线程 1、worker1、batch32 / BF16，单核前置绑定 → 全量导出 → 单核验收，全步骤通过才放行后项。Separate / SID 尚未提交，不自动补长链。
+10-11 验收两份 joint test 后，只提交 **138897 separate → 138898 SID**；后项 `afterok:138897`、`--kill-on-invalid-dep=yes`。各 1 GPU / 整项 4 CPU，separate 24G、SID 20G，4h 上限；库线程 1、worker1、batch32 / BF16。采用单核前置绑定 → 全量导出 → 单核验收，全步骤通过才放行后继。没有新训练、选权搜索或其他长任务。
 
-固定 seed 44 原 best：listwise 134298 step80000、pointwise 134299 step100000，checkpoint SHA256 分别 `494287038e220b5032b331dd887c28a7519a31f980e3b349846cea60eab93c9e`、`122ad80cc9506b3f677b77406ed7ac7ff12be104c0cbaf8ed255450a61b46d20`。三组 validation 已完整验收，本对各自冻结 beta=0.50；不重训、不在 test 搜索权重、不改数据。每份目标 2061101 条，完整性和跨模型输入对齐通过后才算完成；当前并无 seed 44 test 指标。
+Separate 固定 135459 原 best10000，SHA256 `00fec1959cd97c57b9f45d0f4cd77f0026e2ace1fefb97f81874b28cdd0181a6`；validation 选权 SHA256 `549cf9fb1f0d58822776164e19675d4a45179439ca8ff616910a2decd0b37ba9`、beta=0.50。SID 固定 132733 原 best90000，SHA256 `3f8b60dad3172ffc666b71d5ad0708e348363c44589d31f9d6eb3639c8d85da4`，只报告 beam，不使用未训练重排头。Separate 冻结 teacher 的两份别名各 31 张量已由 135618 逐值核验，本轮重绑该验收与完整文件哈希，不重复训练或张量载入。
 
-提交源码 `88bf29aac7d67238779d1fe8b0c40edcf6ac7077`、工作树干净；exporter / 模型 / 数据源码不改。本阶段复用已验收 test 编排，另绑定 seed 43 最终配对验收。清单 SHA256 `505da72a9b8dab3112e6a22688f126d266f58637f8d5e31605eb2e71f47d8033`，8 个公共源码和 3 个阶段快照冻结，shell / Python 编译检查通过。136157 单核前置绑定通过，导出启动时 affinity `[10,11,26,27]`、库线程 1；完整推理和产物待验收。
+提交源码 `a330c0cc08b0d99945e2f9c88cce027f28c06a90`、工作树干净，九个公共执行源码与已验收的 seed 43 baseline 指纹一致；三份本轮编排快照仅调整 seed / 路径 / teacher step，shell / Python 编译检查通过。冻结清单 SHA256 `66d1afb8b4b8f0b607ba9ea21b4cb24fa9d0d73314c670c06b5d03453b3b74c9`。前置绑定重新核对已完成 joint test 的字节、separate validation / 选权、checkpoint、原 teacher、SID / item2row、配置 / preflight、数据清单和执行源码；未重扫 TFRecord。
 
-10:11 首批核验通过：加载 missing=0 / unexpected=0，主进程与 worker 的 14 个线程均受四核绑定，执行源码指纹未变；快照已导出 131200 / 2061101 条，无致命日志；这不是最终产物验收。
+两项 13:58:13 提交后，原指定 `aias-compute-01` 为 `DOWN+NOT_RESPONDING`，原因 `Node unexpectedly rebooted [slurm@2026-10-10T14:32:29]`，未开始推理。该节点当前调度登记 `gpu:3090:8`；`aias-compute-2` 登记 `gpu:4090:7` 且可用。作者明确确认“迁移到空闲的 4090 节点”，故以 `scontrol update ... ReqNodeList=aias-compute-2` 先改 SID 再改 separate，保留 job ID、依赖和资源数量；不改已冻结脚本。138897 于 14:03:38 在新节点启动，15:01:15 产物验收通过；138898 于 15:01:20 接续启动，15:56:47 验收通过。138899 的单核复核先于两项迁移执行结束，未与四核推理叠加。
+
+两份各 2061101 唯一用户 / 输入身份，与 seed 44 listwise 的用户、输入 hash、目标 SID 对齐。有限分数 / 候选集合 / 排序 / 来源检查通过；首尾全部进程线程均受 `[0,1,28,29]` 四核约束，库线程 1。Separate missing=0 / unexpected=62 为已验证 teacher 别名，SID missing=0 / unexpected=0。SID 与 separate 的 beam 候选及分数逐值一致；自然 beam@20 均命中 565542，覆盖率 0.274388，不是融合后的主表指标。
+
+HDF5 SHA256：separate `623a5141b975a64d202e69ab762d373ad4c791cc50ee88be46e6af7e6401b263`；SID `54b805322f8542a529006d8a68a3ec79fa69aa4ff29fd4b30ef1a1ea33b2bad6`。两份最终验收 JSON 与日志末尾逐项相同。Separate 的一次只读诊断 step 因 `--gres=gpu:0` 下执行 `nvidia-smi` 无设备而返回 6；ps / affinity 检查成功，未增加资源，也非推理 / 验收失败。该辅助 step 与主任务产物结果分别记录，不宣称所有 steps 均为 0。
+
+硬件变化单独披露：本次两个 baseline 使用同一 4090 节点，此前 joint test 在原节点执行；不宣称四模型硬件完全相同或跨硬件逐位等价。正式配对指标尚未生成。后续效率比较必须在匹配硬件下重测，不能直接比较这些作业耗时。
+
+验收证据：[separate 完整验收](../logs/training_launch/separate_seed44_test_acceptance_2026-10-11.json)、[SID 完整验收及冻结 beam 对齐](../logs/training_launch/sid_seed44_test_acceptance_2026-10-11.json)、[首批与辅助诊断](../logs/training_launch/test44_baselines_2026-10-11/startup.json)、[SID 前置绑定](../logs/training_launch/sid_seed44_test_prelaunch_2026-10-11.json)、[SID stdout](../logs/slurm/GRID-TestSID44-CPU4-138898.out)、[SID stderr](../logs/slurm/GRID-TestSID44-CPU4-138898.err)。
+
+证据：[原始提交与依赖](../logs/training_launch/test44_baselines_2026-10-11/launch.json)、[冻结清单](../logs/training_launch/test44_baselines_2026-10-11/manifest.json)、[迁移授权 / 命令与控制器快照](../logs/training_launch/test44_baselines_2026-10-11/migration.json)、[阶段入口](../logs/training_launch/test44_baselines_2026-10-11/run_stage.sh)、[separate 前置绑定](../logs/training_launch/separate_seed44_test_prelaunch_2026-10-11.json)、[stdout](../logs/slurm/GRID-TestSep44-CPU4-138897.out)、[stderr](../logs/slurm/GRID-TestSep44-CPU4-138897.err)。
+
+## 已验收：seed 44 listwise / pointwise 全量 test 产物
+
+09-24 seed 43 完整配对统计验收通过、队列为空后，仅提交 **136157 listwise → 136158 pointwise**；后项 `afterok:136157`、`--kill-on-invalid-dep=yes`。同一时刻 1 GPU / 整项 4 CPU、20G，库线程 1、worker1、batch32 / BF16，单核前置绑定 → 全量导出 → 单核验收，全步骤通过才放行后项。当时 separate / SID 未提交，两份 joint 均在 09-24 生成完整验收记录。
+
+固定 seed 44 原 best：listwise 134298 step80000、pointwise 134299 step100000，checkpoint SHA256 分别 `494287038e220b5032b331dd887c28a7519a31f980e3b349846cea60eab93c9e`、`122ad80cc9506b3f677b77406ed7ac7ff12be104c0cbaf8ed255450a61b46d20`。三组 validation 已完整验收，本对各自冻结 beta=0.50；不重训、不在 test 搜索权重、不改数据。每份完整 2061101 唯一用户，与 seed 42 listwise 的用户 / 输入 hash / GT 对齐；因此两份也相互对齐。其余两份 test 后续由 138897 / 138898 补齐，见上文；正式 selected 指标 / 配对统计另行验收。
+
+提交源码 `88bf29aac7d67238779d1fe8b0c40edcf6ac7077`、工作树干净；exporter / 模型 / 数据源码不改。本阶段复用已验收 test 编排，另绑定 seed 43 最终配对验收。清单 SHA256 `505da72a9b8dab3112e6a22688f126d266f58637f8d5e31605eb2e71f47d8033`，8 个公共源码和 3 个阶段快照冻结，shell / Python 编译检查通过。首尾 CPU 记录通过：listwise affinity `[10,11,26,27]`，pointwise `[0,1,16,17]`，库线程 1。
+
+09-24 11:18:30 / 12:30:56 分别生成完整产物验收：有限分数、候选集合与排序、唯一用户、来源和 CPU 记录通过；两份日志均有完整导出和最终验收 JSON，未见致命异常。自然 beam@20 命中数分别为 600290 / 595263，覆盖率 0.291247 / 0.288808；这里只是生成候选覆盖，不是融合后的 Recall@5 或 NDCG。验收记录的 `frozen_selected.metrics` 来自 validation，不能写入 test 主表。
+
+HDF5 SHA256：listwise `3e0ce1d2503b40659f8040fe9fb7974aa06440a74ae7d9bfc95b770d77b3f4f7`；pointwise `cfe4c2f9276dcb1d433d1e2de526f96007ec4f524f40071574f09f973320aca8`。10-11 的单核 138899 复核两份完整 test / validation、sidecar、冻结选权、源码和清单哈希，且日志末尾 JSON 与验收文件一致；无新模型推理。控制器确认该复核任务 COMPLETED / 0:0、10s。`sacct` 对 aias-db:6819 连接拒绝，且 `scontrol` 已不留存 136157 / 136158，因此原两项的最终 Slurm 状态 / 退出码不补写为已核验；这不改变完整产物字节与原验收一致的结论。
+
+验收证据：[listwise 完整验收](../logs/training_launch/listwise_seed44_test_acceptance_2026-09-24.json)、[pointwise 完整验收](../logs/training_launch/pointwise_seed44_test_acceptance_2026-09-24.json)、[本次哈希 / 日志复核](../logs/training_launch/test44_joint_recheck_2026-10-11.json)、[复核脚本](../logs/training_launch/test44_joint_recheck_2026-10-11.py)、[复核日志](../logs/slurm/GRID-Test44-Recheck-138899.out)。
 
 证据：[提交与命令](../logs/training_launch/test44_pair_2026-09-24/launch.json)、[冻结清单](../logs/training_launch/test44_pair_2026-09-24/manifest.json)、[阶段入口](../logs/training_launch/test44_pair_2026-09-24/run_stage.sh)、[listwise 前置绑定](../logs/training_launch/listwise_seed44_test_prelaunch_2026-09-24.json)、[首批 / CPU 核验](../logs/training_launch/test44_pair_2026-09-24/startup.json)、[stdout](../logs/slurm/GRID-TestList44-CPU4-136157.out)、[stderr](../logs/slurm/GRID-TestList44-CPU4-136157.err)。
 
