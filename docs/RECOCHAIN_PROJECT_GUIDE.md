@@ -35,7 +35,7 @@
 | SID 与 joint 模型 | [tiger_generation_model.py](../src/models/modules/semantic_id/tiger_generation_model.py) |
 | 独立重排模型 | [separate_rerank_model.py](../src/models/modules/semantic_id/separate_rerank_model.py) |
 | 逐样本导出 / 配对统计 | [export](../scripts/export_paired_evaluation.py)、[统计核心](../scripts/analyze_paired_evaluation.py)、[四核入口](../scripts/analyze_paired_cpu4.py) |
-| 效率 / 历史出现分析 | [profile](../scripts/profile_rerank_efficiency.py)、[history occurrence](../scripts/analyze_history_occurrence.py) |
+| 效率 / 历史出现分析 | [四核同 GPU profile](../scripts/profile_efficiency_cpu4.py)、[原前向组件](../scripts/profile_rerank_efficiency.py)、[history occurrence](../scripts/analyze_history_occurrence.py) |
 
 ## 当前协议的操作入口
 
@@ -52,6 +52,7 @@
 | 3 核完整续训短测 | [CPU resume smoke](../run_smoke_cpu_resume.sh)；100 optimizer steps + 短验证，不构成正式结果 |
 | Separate-small | [separate](../run_rerank_small_history_last_user_v1.sh) |
 | 逐样本导出 / 配对分析 | [export](../run_export_paired_evaluation.sh)、[paired analysis](../run_paired_analysis.sh) |
+| 统一硬件效率复测 | [profile CPU4](../run_profile_efficiency_cpu4.sh)；先 smoke，再用其验收记录放行 formal |
 | 历史出现分析 | [history occurrence](../run_history_occurrence.sh) |
 
 环境沿用 `/home/MMReco2021/.conda/envs/GRID/bin/python`。训练与较重测试在 Slurm 计算节点执行，不在登录节点直接跑训练。正式 launcher 使用 3 GPU DDP；需检查实际 world size，不能仅以申请了 3 GPU 判断用满三卡。
@@ -61,6 +62,10 @@
 融合选权入口 `run_select_score_fusion.sh` 使用 1 task / 4 CPU / 无 GPU，库线程池 1、显式 core binding；复用单 task 四核检查，把开始 / 结束的进程树采样与分析源码指纹写入结果，不改 validation 网格或打分 / 选优规则。直接调用选权脚本不自动启用资源检查；正式任务必须用受限 launcher。
 
 配对分析入口 `run_paired_analysis.sh` 同样使用 1 task / 4 CPU / 无 GPU、库线程池 1、显式绑定。参数为 `OUTPUT_TAG LISTWISE_TEST LISTWISE_SELECTION POINTWISE_TEST POINTWISE_SELECTION SEPARATE_TEST SEPARATE_SELECTION SID_TEST`（数据与选权路径均为绝对路径）。读取四份已验收 full-test 和三份冻结的 validation 选权，执行与 seed 42 相同顺序的 11 项比较、5000 次 bootstrap、batch500、随机 seed2027；SID 只使用 beam。新四核包装器记录首尾进程树、源码指纹和提交端传入的 `SOURCE_GIT_COMMIT`，统计核心不改。拒绝覆盖报告或使用截断样本，正式报告仍需独立复算验收；资源 / 数值一致性回归见 `tests/test_paired_cpu_budget.py`。
+
+效率入口参数为 `MANIFEST OUTPUT_DIR smoke|formal [SMOKE_ACCEPTANCE]`，提交环境绑定 `SOURCE_GIT_COMMIT` / `PROFILE_MANIFEST_SHA256`。固定 seed 44 的四个已验收 best，1 GPU / 整项 4 CPU、库线程 1、worker1；同一 GPU 分配内串行运行，逐模型 / 重复使用新进程，UUID 必须相同。模型与数据源码不修改；首批输入与对应正式 test HDF5 的用户 / 输入哈希核对。计时为 batch32 / beam20 / BF16，原 sequence_length=32、hist_itemkey_length=100、top_k_for_score=10；重排使用冻结 validation beta=0.50，无新选权。短测 2 warmup + 3 measured batches；正式 10 + 100 batches × 3 次重复，模型 / 变体顺序轮换。
+
+分别记录生成、重排 CUDA 时间及同步墙钟前向时间，数据加载、H2D、checkpoint 加载与验证不计时。一次只保留一个 GPU 输入 batch；报告 allocated / reserved 峰值及相对基线增量。Separate 仅实际 teacher + reranker 放入 GPU，未使用的继承 wrapper 留在 CPU，不能与旧脚本的原始整模块显存直接比较。Cache / no-cache 对同一自然候选检查 FP32 数值一致性（atol/rtol=2e-4）及 BF16 容差（atol=0.1、rtol=0.01），同时报告排序差异，不宣称跨精度逐位等价；短测不通过不得进入正式阶段。3 次计时重复不等于 3 个训练 seed，也不是在线单请求延迟。实际验收情况只看台账。
 
 其他未适配的旧 smoke 入口运行前仍须核验 CPU 预算。登录环境不支持当前 TensorFlow 二进制所需的指令，依赖 TensorFlow 的测试放在计算节点执行。
 
