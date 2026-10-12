@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/facebookresearch/liger",
+  "commit": "b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524",
+  "files": {
+    "src/tiger.py": "be78150fe8b2c90b49f59992765a587046e932fafba306be9d6a93ae9354d8e3",
+    "src/evaluation.py": "cbe9df83443a350801f9a007cd4c56e4647dde94b64668583f128415c246e48a",
+    "src/load_data.py": "94d1600da66bc82605dcb879e6764c32ddf441b5a2cf8840d3a1843b1367674b",
+    "src/training.py": "161ccdf3e6e0424e3223e0850deeebdf6ae7da1485acc027f173e9f589b75cff",
+    "configs/method/base.yaml": "edaf53165763a6a87c3a2a1b019493f861a492d6de65ad85478541a2bd1cb9e1",
+    "configs/method/setting.yaml": "04f59e1c2c24e05de31dac16e4d5628bf6becc710e48a23fbe6f5cc0dd5f03a0",
+    "configs/dataset/amazon.yaml": "369033aaea88543f7a40e08906c00c831c6b2d860a9282cf54323ab71d50e054",
+    "LICENSE": "bc8f60ee50544b2dd70b4bc90e22de503aa23b317d284046a479811f2e06f396"
+  }
+}
