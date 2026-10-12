@@ -48,7 +48,15 @@ def test_launcher_is_bounded_offline_and_not_a_formal_training_entry():
                      '#SBATCH --gres=gpu:1', '#SBATCH --time=00:20:00',
                      '--cpu-bind=verbose,threads', 'GRID_CPU_BUDGET=4',
                      'HF_HUB_OFFLINE=1', 'TRANSFORMERS_OFFLINE=1',
+                     'PYTHONFAULTHANDLER=1',
                      'BASELINE_MANIFEST_SHA256', 'SOURCE_GIT_COMMIT', 'set -euo pipefail']:
         assert required in text
     assert '-m src.train' not in text and 'sbatch ' not in '\n'.join(text.splitlines()[16:])
     assert 'pip install' not in text and 'conda env' not in text
+
+
+def test_probe_initializes_torch_before_tensorflow_fixture():
+    import inspect
+    body = inspect.getsource(probe.run_probe)
+    assert body.index('import torch') < body.index('read_train_fixture(m)')
+    assert body.index('configure_torch(torch)') < body.index('read_train_fixture(m)')

@@ -137,13 +137,16 @@ def run_probe(m, report):
         stat = Path(asset['path']).stat()
         require(stat.st_size == asset['size_bytes'] and stat.st_mtime_ns == asset['mtime_ns'],
                 'Audited asset stat changed')
-    sequences, report['fixture'] = read_train_fixture(m)
+    print('[liger-probe] initialize PyTorch before TensorFlow, matching GRID runtime', flush=True)
     import numpy as np
     import torch
+    configure_torch(torch)
+    print('[liger-probe] reading 32 frozen train records', flush=True)
+    sequences, report['fixture'] = read_train_fixture(m)
+    print('[liger-probe] fixture decoded; loading Transformers and mmap assets', flush=True)
     from transformers import T5Config, __version__ as transformers_version
     from omegaconf import OmegaConf
     from src.baselines.liger_inputs import pack_sequences, catalog_memory_lower_bounds
-    configure_torch(torch)
     torch.manual_seed(m['seed'])
     require(torch.cuda.is_available() and torch.cuda.device_count() == 1, 'Expected one allocated GPU')
     props = torch.cuda.get_device_properties(0)
@@ -167,6 +170,7 @@ def run_probe(m, report):
     report['asset_rows_not_verified_active_catalog'] = len(content)
     report['catalog_buffer_lower_bounds'] = catalog_memory_lower_bounds(len(content))
     batch = {k: torch.from_numpy(v) for k, v in packed.items()}
+    print('[liger-probe] create GPU diagnostic catalog and official model', flush=True)
     labels = torch.from_numpy(np.searchsorted(rows, targets)).long().cuda()
     catalog = torch.from_numpy(content[rows].astype(np.float32)).cuda()
     upstream = Path(m['upstream_root'])
@@ -191,6 +195,7 @@ def run_probe(m, report):
     report['steps'] = []
     torch.cuda.reset_peak_memory_stats()
     for step in range(m['steps']):
+        print(f'[liger-probe] optimizer step {step + 1}', flush=True)
         model.train()
         optimizer.zero_grad(set_to_none=True)
         started = time.monotonic()
@@ -215,6 +220,7 @@ def run_probe(m, report):
                                 'elapsed_seconds_not_benchmark': time.monotonic() - started,
                                 'gradient_tensors': len(gradients)})
     model.eval()
+    print('[liger-probe] beam generation API check', flush=True)
     with torch.no_grad():
         # API smoke only: no trie/cold-start catalog and no effectiveness claims.
         one = {k: v[:1] for k, v in batch.items()}
