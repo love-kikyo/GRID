@@ -1,12 +1,18 @@
 # Run 台账
 
-最后核验：2026-10-12 23:14（Asia/Shanghai）。LIGER 首次短测 139443 段错误退出，正在修正独立入口并准备重试；已有四模型结果不变。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-12 23:22（Asia/Shanghai）。LIGER 重试短测 139448 已验收，队列为空；已有四模型结果不变，正式外部 baseline 训练尚未放行。
 
 ## 外部基线短测
 
+139448：23:14:56 启动，23:16:48 COMPLETED / 0:0，耗时 1m52s；23:22 单核独立报告复核通过。23 项回归、32 条冻结 train 样本、2048 行诊断目录、2 optimizer steps、beam20 生成接口均通过。SID / dense 损失及 152 个梯度张量有限，encoder / decoder / 内容投影均有非零梯度。实际 1 张 RTX4090、整项 4 CPU，首尾线程 affinity 均限制在 `[4,5,28,29]`；未升级环境、未保存正式 checkpoint、未运行 validation / test 或提交后继。
+
+执行版本 `5f97bd2`；[启动记录](../logs/training_launch/liger_probe_2026-10-12_v2/launch.json)、[manifest](../logs/training_launch/liger_probe_2026-10-12_v2/manifest.json)、[报告](../logs/training_launch/liger_probe_2026-10-12_v2/probe.json)、[独立验收](../logs/training_launch/liger_probe_2026-10-12_v2/acceptance.json)、[验收脚本](../logs/training_launch/liger_probe_2026-10-12_v2/accept_probe.py)。报告 SHA256 `f172a23778a455de3c358912b92605beeb390d0e949cbdb70fb8334f1bccefe3`；官方版本及运行依赖未变，首次崩溃在 PyTorch 优先初始化后未再复现，不据此认定已完全查明底层根因。
+
+边界：本次是固定 SID / SCL 的兼容性短测，诊断目录不是正式候选目录；无 trie 的生成只验证 API，不评价有效物品或 Recall。资产行数 35458467 不是经核实的训练活跃目录规模。按该全表估算，原广播乘法的一个 FP16 buffer 为 290475761664 bytes，内容投影第一隐藏层的一个 FP32 buffer 为 108928410624 bytes；不是实测峰值。矩阵乘法等价性回归不等于解决全部投影 / softmax 规模问题，`full_training_ready=false`。后续需定义 seen / cold-start 目录、保留原损失的分块方案和正式 item-level 评估。
+
 139443：LIGER 官方模型兼容性检查，1 张 4090 / 整项 4 CPU，aias-compute-2；23:10 提交，AllocCPUS=4，22 项回归通过。23:12:12 控制器确认 FAILED / 139:0，耗时 1m42s；末条业务日志为 TensorFlow 记录读取 API 提示，未产生 `probe.json`。底层崩溃点尚未确定，不推断为模型或数据问题。重试将初始化顺序改为与 GRID 一致的 PyTorch → TensorFlow，并启用 faulthandler / 阶段日志；未改变数据或训练目标。
 
-执行版本 `3033d94`、提交时工作树干净；[启动记录](../logs/training_launch/liger_probe_2026-10-12_v1/launch.json)、[manifest](../logs/training_launch/liger_probe_2026-10-12_v1/manifest.json)（SHA256 `930f6ae944b86e3b10845fa1b793f4dccceee95f6745d65819f3557be9591c0e`）；官方源码固定 `b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524`，许可证与执行文件哈希绑定。短测日志：[stdout](../logs/slurm/GRID-LIGER-Probe-139443.out)、[stderr](../logs/slurm/GRID-LIGER-Probe-139443.err)。最终结果待验收，不能把小目录运行成功解释为全目录可行。
+执行版本 `3033d94`、提交时工作树干净；[启动记录](../logs/training_launch/liger_probe_2026-10-12_v1/launch.json)、[manifest](../logs/training_launch/liger_probe_2026-10-12_v1/manifest.json)（SHA256 `930f6ae944b86e3b10845fa1b793f4dccceee95f6745d65819f3557be9591c0e`）；官方源码固定 `b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524`，许可证与执行文件哈希绑定。短测日志：[stdout](../logs/slurm/GRID-LIGER-Probe-139443.out)、[stderr](../logs/slurm/GRID-LIGER-Probe-139443.err)；[失败记录](../logs/training_launch/liger_probe_2026-10-12_v1/failure.json)，由 139448 替代，无正式训练结果。
 
 ## 内部实验冻结交付（待作者确认）
 
@@ -30,7 +36,8 @@
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 139443 | 10-12 23:10 | LIGER 官方模型兼容性短测，1 GPU / 4 CPU | FAILED / 139:0，1m42s；22 项回归通过，运行时段错误，无模型报告；准备重试 |
+| 139448 | 10-12 23:14 | LIGER 官方模型兼容性重试，1 GPU / 4 CPU | COMPLETED / 0:0，1m52s；23 项回归、真实 train fixture、2-step 及生成 API 通过并独立验收；不是正式训练 |
+| 139443 | 10-12 23:10 | LIGER 官方模型兼容性短测，1 GPU / 4 CPU | FAILED / 139:0，1m42s；22 项回归通过，运行时段错误，无模型报告；139448 替代 |
 | 139022 | 10-12 00:39 | 上游快照 / SID 资产只读哈希核验，1 CPU / 0 GPU | 00:53:20 全量通过，22:18:24 独立复核通过；235 文件 / 79.5 GB / 13m54s，affinity `[0]`；队列为空，记账库故障未补核终态退出码 |
 | 139021 | 10-12 00:15 | seed43 自然 beam 命中分组，4 CPU / 0 GPU | 00:16:10 全量分析、00:16:40 独立复核通过；2061101 用户 / 3 对比较 / 12 组，19 项回归通过；affinity `[2,3,6,7]`；队列为空，未另补核 Slurm 终态退出码 |
 | 139020 | 10-12 00:11 | seed42 自然 beam 命中分组，4 CPU / 0 GPU | 00:13:12 全量分析、00:14:15 独立复核通过；2061101 用户 / 3 对比较 / 12 组，19 项回归通过；affinity `[2,3,6,7]`；队列为空，未另补核 Slurm 终态退出码 |
