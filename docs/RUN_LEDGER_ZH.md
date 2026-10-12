@@ -1,6 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-12 22:18（Asia/Shanghai）。139022 产物与独立复核通过，当前队列为空；`sacct` 记账库仍拒绝连接，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+最后核验：2026-10-12 22:23（Asia/Shanghai）。139022 及内部取数索引验收通过，当前队列为空；`sacct` 记账库仍拒绝连接，不据此虚填未留存的终态。作业退出码为 0 不自动表示完成了正式训练。
+
+## 内部实验冻结交付（待作者确认）
+
+10-12 22:23 对已验收结果建立 [取数索引](../logs/analysis/paired_evaluation/experiment_freeze_index_2026-10-12.json)，SHA256 `7ba5a731353b4c51cd237dba8a10d0924f5e22ebb035866cf5233ba3552bf956`。97 个小文件哈希复核通过，关联 12 个 checkpoint / 完整 test、9 份独立 validation 选权、3 份配对报告、统一硬件效率、三 seed 自然 beam 分组和来源核验；checkpoint 当前大小 / mtime 与原导出记录相符。大 checkpoint / HDF5 哈希继承先前验收，不重复全量扫描，不新增训练 / 推理 / 选权 / 统计实验。
+
+索引是内部冻结候选，作者批准状态仍为 pending；人工审阅入口见 [实验冻结清单](EXPERIMENT_PLAN_ZH.md#实验冻结清单待作者确认)。原始 JSON、计数、指标与旧验收记录未覆盖。对外匿名复现包尚未制作，原始路径不能直接发布到匿名材料。
 
 ## 上游快照与编码资产来源核验
 
@@ -251,7 +257,7 @@ Listwise 在三个 seed 的四项主指标上均高于 Pointwise，逐 seed 的�
 
 限制继续保留：已知 split 重叠、validation 网格边界 beta、joint 方法会改变候选池、seed 44 listwise 续训游标未恢复，以及经作者同意的 4090 迁移。特别是不直接比较混合硬件下的任务时长作为效率结论。
 
-证据：[三 seed 全精度汇总与来源哈希](../logs/analysis/paired_evaluation/three_seed_summary_full_v1.json)、[只读汇总脚本](../logs/analysis/paired_evaluation/summarize_three_seeds_2026-10-11.py)。此处是核心效果实验收尾，不代表效率 / 解释 / 复现来源已完成，论文仍暂停。
+证据：[三 seed 全精度汇总与来源哈希](../logs/analysis/paired_evaluation/three_seed_summary_full_v1.json)、[只读汇总脚本](../logs/analysis/paired_evaluation/summarize_three_seeds_2026-10-11.py)。本节只记录核心效果；截至 10-12，约定范围内的效率 / 分组 / 来源核验也已分别验收，统一见本页顶部的内部冻结交付。论文仍等待作者确认后恢复。
 
 ## 已验收：seed 44 四模型配对统计
 

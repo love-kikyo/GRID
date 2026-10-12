@@ -5,7 +5,7 @@
 | 想知道什么 | 唯一维护位置 |
 | --- | --- |
 | 现在完成了什么、是否有任务在跑 | [当前状态](CURRENT_STATUS_ZH.md) |
-| 下一步做什么、何时算完成 | [实验收尾计划](EXPERIMENT_PLAN_ZH.md) |
+| 审阅实验冻结范围、确认下一阶段 | [实验冻结清单](EXPERIMENT_PLAN_ZH.md#实验冻结清单待作者确认)；历史步骤见同页收尾计划 |
 | 某个 job 跑的模型、成败、指标与原始证据 | [Run 台账](RUN_LEDGER_ZH.md) |
 | A + H1 + L2 的准确含义、数据规模与边界 | [数据协议](DATA_PROTOCOL_ZH.md) |
 | 模型区别、关键代码和脚本入口 | [代码与模型说明](RECOCHAIN_PROJECT_GUIDE.md) |
