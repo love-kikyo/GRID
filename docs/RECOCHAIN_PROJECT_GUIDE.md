@@ -14,6 +14,21 @@
 
 `training_task=click` 是历史命名，当前标签来自 next-item GT 与候选匹配，不是上游曝光 click label。配置里出现 `rerank_objective=listwise` 也不保证启用了该损失，必须同时看 `training_task`。
 
+### Separate 的历史与 SIM 的区别
+
+10-12 核对所有现存分支中相关文件的历史：`d713c35` 的离线候选版和 `bf38cf0` 的在线 teacher 版均采用历史均值池化；`56c6761` 将后者增强为候选相关历史注意力，并增加候选 SID 表示、交互特征和外部 beam 分数融合。当前版本还包含后续候选 / 损失与日志修复。归档称早期结果为 `DIN-style`，但完整训练日志已缺失；尚未定位到可证明“标准 SIM 重排后下降”的代码与完整 run，不能据此否定作者对未留存实验的记忆，也不能把旧协议指标作为新协议证据。
+
+| 结构 | 当前 Separate-small | SIM-soft 的核心结构 |
+| --- | --- | --- |
+| 历史筛选 | 对全部有效 `hist_itemkey` 做单头点积注意力，无 Top-K 搜索阶段 | GSU 通过学习到的相关性选 Top-K 历史 |
+| 历史精排 | 上述一次注意力汇聚后送入 MLP | ESU 对搜索子序列做多头目标注意力 |
+| 训练 | 自定义 next-item listwise 目标及 no-hit 辅助列表 | 原文包含 GSU 与 ESU 两个预测损失；迁移任务时须说明适配 |
+| 增强特征 | SID 向量及其交互、候选原始名次 embedding、beam 分数 | 不能将这些自定义增强默认为原版 SIM 的组成部分 |
+
+原文依据：[SIM 第 3 节](https://arxiv.org/abs/2006.05639)。因此补 SIM 不等于简单关闭几个 Separate 特征。新基线计划见 [实验计划](EXPERIMENT_PLAN_ZH.md#外部基线扩展)。
+
+输入细节必须按代码解释：当前 `sequence_length=32` 是包含 GT 的 **SID token 数**，四级编码下生成器最多看到 7 个历史物品；`hist_itemkey_length=100` 是 padding 下限，不是截断上限，独立排序器可看到保留的全部历史。Joint 的现用检索由可训练 `DualHashEmbedding` 进行点积 Top-K，不是直接检索冻结 SCL 向量；SCL 仍用于固定 SID 编码资产。论文旧描述与口头调研不得覆盖这一实现事实。
+
 ## 数据与计算路径
 
 1. TFRecord 的 `sequence_data` 经 SID 映射 / collate 拆出目标和输入历史。
