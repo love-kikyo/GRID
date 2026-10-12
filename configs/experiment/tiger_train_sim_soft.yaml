@@ -1,0 +1,22 @@
+# @package _global_
+# Task-adapted SID + SIM-soft, not the original feature-rich CTR system.
+training_task: rerank_small
+tags: [sid-sim-soft]
+model:
+  _target_: src.models.modules.semantic_id.sim_rerank_model.SIMRerankModule
+  sid_teacher_ckpt_path: ???
+  sim_embedding_dim: 128
+  sim_num_hash_buckets: 300000
+  sim_top_k: 10
+  sim_num_heads: 4
+  sim_gsu_loss_weight: 1.0
+  rerank_objective: pointwise
+  rerank_logit_weight: 0.1
+  beam_log_prob_weight: 1.0
+  use_beam_score_in_rerank_loss: false
+  use_no_hit_aux_loss: true
+  no_hit_aux_loss_weight: 0.5
+  rerank_loss_weight: 1.0
+  load_only_weights: false
+trainer:
+  max_steps: 120000
