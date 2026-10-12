@@ -8,6 +8,7 @@ from torch import nn
 from src.baselines.sim_soft import SIMSoftScorer
 from src.models.modules.huggingface.transformer_base_module import ModelMode
 from src.models.modules.semantic_id.sim_rerank_model import SIMRerankModule
+from src.models.modules.semantic_id.separate_rerank_model import SeparateRerankModule
 
 
 class TinyEmbedding(nn.Embedding):
@@ -51,6 +52,15 @@ def batch(targets=(4, 9)):
 def test_train_mode_never_enables_teacher_training():
     model = adapter().train()
     assert model.reranker.training and not model.teacher.training
+
+
+def test_setup_freezes_new_teacher_wrapper_even_without_later_train_call(monkeypatch):
+    model = adapter()
+    def create_teacher(self, stage):
+        self.teacher = FakeTeacher().train()
+    monkeypatch.setattr(SeparateRerankModule, 'setup', create_teacher)
+    model.setup('fit')
+    assert not model.teacher.training
 
 
 def test_targets_never_change_inference_candidates_or_scores():

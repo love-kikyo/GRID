@@ -30,6 +30,12 @@ class SIMRerankModule(SeparateRerankModule):
         self.teacher_model = self.teacher = None
         self._set_trainable_params()
 
+    def setup(self, stage=None):
+        super().setup(stage)
+        # FrozenSIDTeacher is newly constructed in setup, after train() may
+        # already have run. Freeze the wrapper's mode as well as its SID model.
+        self.teacher.eval()
+
     def train(self, mode=True):
         super().train(mode)
         # Lightning's recursive train() must never reactivate teacher dropout.
