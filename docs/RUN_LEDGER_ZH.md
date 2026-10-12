@@ -1,8 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-12 23:43（Asia/Shanghai）。SIM-soft 短测 139472 FAILED / 1:0，启动期 teacher 包装器模式检查失败；已有四模型结果不变，正式外部 baseline 训练尚未放行。
+最后核验：2026-10-12 23:51（Asia/Shanghai）。SIM-soft 短测 139475 COMPLETED / 0:0，并通过独立验收，可放行 seed42 正式训练；已有四模型结果不变。
 
 ## 外部基线短测
+
+139475：23:46:29 提交 / 启动，23:49:40 COMPLETED / 0:0，3m11s；23:51 单核独立报告验收通过。执行版本 `3efcbcf`，提交时工作树干净。25 项回归、三 rank 各 2 optimizer steps / 2 validation batches 通过；每 rank 校验 144183296 个 teacher 参数训练前后逐值相同，GSU / ESU 投影及预测头、共享 embedding 共 24 个参数张量均有有限非零梯度。自然候选 / beam 分数与 teacher 逐值相同，改变 GT 不改变候选或推理得分。
+
+实际 aias-compute-2 / 3 张 4090 / 整项 3 CPU；三 rank 及全部子进程线程分别固定在 `[4]`、`[28]`、`[29]`。短测未保存正式 checkpoint，也未产生完整 validation / test 效果结果。[启动记录](../logs/training_launch/sim_soft_seed42_139475.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139475.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139475.err)、[preflight](../logs/training_preflight/sim_soft_smoke_seed42_139475.json)、[独立验收](../logs/stage_smoke/sim_soft_139475/acceptance.json)。验收脚本 `scripts/accept_sim_smoke.py` 的 7 项回归通过；收据绑定六份逐 rank 报告、源码哈希、日志和 preflight，Slurm 终态另由控制器确认。
 
 139472：23:38:57 提交、23:38:58 启动、23:42:22 FAILED / 1:0，耗时 3m24s。aias-compute-2，3 张 4090、3 tasks × 1 CPU。执行版本 `92b3f9c`，提交时工作树干净；24 项计算节点回归及三 rank teacher 参数逐值初始化通过，但首个 batch 前的 teacher 包装器模式断言失败，未完成优化更新。修复仅为 SIM.setup 后将新建包装器也置为 eval，并补启动顺序回归；未改原 Separate 或 teacher checkpoint。失败产物保留，无正式结果。
 
@@ -40,6 +44,7 @@
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139475 | 10-12 23:46 | SID + SIM-soft 修复后 DDP 两步短测，3 GPU / 3 CPU | COMPLETED / 0:0，3m11s；25 项回归、三 rank 训练 / 验证 / 冻结 / 候选 / CPU 检查及独立验收通过 |
 | 139472 | 10-12 23:38 | SID + SIM-soft 首次 DDP 短测，3 GPU / 3 CPU | FAILED / 1:0，3m24s；24 项回归及 teacher 加载通过，包装器模式断言失败；未完成更新，无正式 checkpoint |
 | 139448 | 10-12 23:14 | LIGER 官方模型兼容性重试，1 GPU / 4 CPU | COMPLETED / 0:0，1m52s；23 项回归、真实 train fixture、2-step 及生成 API 通过并独立验收；不是正式训练 |
 | 139443 | 10-12 23:10 | LIGER 官方模型兼容性短测，1 GPU / 4 CPU | FAILED / 139:0，1m42s；22 项回归通过，运行时段错误，无模型报告；139448 替代 |
