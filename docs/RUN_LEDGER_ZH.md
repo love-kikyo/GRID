@@ -1,8 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-12 23:22（Asia/Shanghai）。LIGER 重试短测 139448 已验收，队列为空；已有四模型结果不变，正式外部 baseline 训练尚未放行。
+最后核验：2026-10-12 23:43（Asia/Shanghai）。SIM-soft 短测 139472 FAILED / 1:0，启动期 teacher 包装器模式检查失败；已有四模型结果不变，正式外部 baseline 训练尚未放行。
 
 ## 外部基线短测
+
+139472：23:38:57 提交、23:38:58 启动、23:42:22 FAILED / 1:0，耗时 3m24s。aias-compute-2，3 张 4090、3 tasks × 1 CPU。执行版本 `92b3f9c`，提交时工作树干净；24 项计算节点回归及三 rank teacher 参数逐值初始化通过，但首个 batch 前的 teacher 包装器模式断言失败，未完成优化更新。修复仅为 SIM.setup 后将新建包装器也置为 eval，并补启动顺序回归；未改原 Separate 或 teacher checkpoint。失败产物保留，无正式结果。
+
+[启动记录](../logs/training_launch/sim_soft_seed42_139472.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139472.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139472.err)、[preflight](../logs/training_preflight/sim_soft_smoke_seed42_139472.json)；没有生成通过报告。当前数据、seed42 teacher 不变，GSU/ESU 双 BCE 及特征适配规则在计划中固定；不修改旧 Separate。
 
 139448：23:14:56 启动，23:16:48 COMPLETED / 0:0，耗时 1m52s；23:22 单核独立报告复核通过。23 项回归、32 条冻结 train 样本、2048 行诊断目录、2 optimizer steps、beam20 生成接口均通过。SID / dense 损失及 152 个梯度张量有限，encoder / decoder / 内容投影均有非零梯度。实际 1 张 RTX4090、整项 4 CPU，首尾线程 affinity 均限制在 `[4,5,28,29]`；未升级环境、未保存正式 checkpoint、未运行 validation / test 或提交后继。
 
@@ -36,6 +40,7 @@
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139472 | 10-12 23:38 | SID + SIM-soft 首次 DDP 短测，3 GPU / 3 CPU | FAILED / 1:0，3m24s；24 项回归及 teacher 加载通过，包装器模式断言失败；未完成更新，无正式 checkpoint |
 | 139448 | 10-12 23:14 | LIGER 官方模型兼容性重试，1 GPU / 4 CPU | COMPLETED / 0:0，1m52s；23 项回归、真实 train fixture、2-step 及生成 API 通过并独立验收；不是正式训练 |
 | 139443 | 10-12 23:10 | LIGER 官方模型兼容性短测，1 GPU / 4 CPU | FAILED / 139:0，1m42s；22 项回归通过，运行时段错误，无模型报告；139448 替代 |
 | 139022 | 10-12 00:39 | 上游快照 / SID 资产只读哈希核验，1 CPU / 0 GPU | 00:53:20 全量通过，22:18:24 独立复核通过；235 文件 / 79.5 GB / 13m54s，affinity `[0]`；队列为空，记账库故障未补核终态退出码 |

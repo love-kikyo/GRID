@@ -49,6 +49,7 @@
 | 输入、目标与用户 ID 组织 | [collate_functions.py](../src/data/loading/components/collate_functions.py)、[pre_processing.py](../src/data/loading/components/pre_processing.py) |
 | SID 与 joint 模型 | [tiger_generation_model.py](../src/models/modules/semantic_id/tiger_generation_model.py) |
 | 独立重排模型 | [separate_rerank_model.py](../src/models/modules/semantic_id/separate_rerank_model.py) |
+| SID + SIM-soft 任务适配 | [独立 scorer](../src/baselines/sim_soft.py)、[冻结 teacher 外壳](../src/models/modules/semantic_id/sim_rerank_model.py)；双 BCE / 特征适配规则见实验计划 |
 | 逐样本导出 / 配对统计 | [export](../scripts/export_paired_evaluation.py)、[统计核心](../scripts/analyze_paired_evaluation.py)、[四核入口](../scripts/analyze_paired_cpu4.py) |
 | 效率 / 历史出现分析 | [四核同 GPU profile](../scripts/profile_efficiency_cpu4.py)、[原前向组件](../scripts/profile_rerank_efficiency.py)、[history occurrence](../scripts/analyze_history_occurrence.py) |
 
@@ -66,6 +67,7 @@
 | Joint listwise / pointwise | [listwise](../run_click_listwise_history_last_user_v1.sh)、[pointwise](../run_click_pointwise_history_last_user_v1.sh) |
 | 3 核完整续训短测 | [CPU resume smoke](../run_smoke_cpu_resume.sh)；100 optimizer steps + 短验证，不构成正式结果 |
 | Separate-small | [separate](../run_rerank_small_history_last_user_v1.sh) |
+| SID + SIM-soft | [SIM launcher](../run_sim_soft_history_last_user_v1.sh)；显式传 `smoke` 或 `train`、teacher、seed；整项 3 CPU，短测验收后才放行 train |
 | 逐样本导出 / 配对分析 | [export](../run_export_paired_evaluation.sh)、[paired analysis](../run_paired_analysis.sh) |
 | 统一硬件效率复测 | [profile CPU4](../run_profile_efficiency_cpu4.sh)；先 smoke，再用其验收记录放行 formal |
 | 历史出现分析 | [history occurrence](../run_history_occurrence.sh) |
