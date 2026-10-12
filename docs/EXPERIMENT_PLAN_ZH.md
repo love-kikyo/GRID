@@ -16,11 +16,20 @@
 | --- | --- | --- |
 | 1 实现与来源核对 | 查明 Separate 演变；固定 LIGER 官方版本、许可证和执行源码哈希 | 历史已核对；官方版本 `b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524` 已下载至相邻 `liger-upstream`，未安装或升级环境 |
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
-| 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 待实现；无类别特征不采用 SIM-hard，无时间戳不伪造真实时间间隔 |
+| 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现独立 scorer / adapter，10 项纯 Torch 回归通过；真实入口短测待验收 |
 | 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | 尚未放行，不预排长任务 |
 | 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | 待进行；弱结果照实保留，不以增强到获胜为目标 |
 
-SIM 实现拟复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
+SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
+
+SIM 首轮规则固定如下，源码入口为 `sim_rerank_model.py` / `sim_soft.py`，配置为 `tiger_train_sim_soft.yaml`：
+
+- 按 [SIM 原文第 3 节](https://arxiv.org/pdf/2006.05639) 保留 GSU 可学习双投影内积、原始内积加权求和辅助分支、TopK 后 ESU 多头注意力及共享 item embedding。GSU 与 ESU 各用 BCE，权重均为 1；不是把现有 Separate 改名或只增加一次 TopK。
+- ID-only 适配：沿用 DualHashEmbedding（两张 300000 桶表，输出 128 维），ESU 固定 4 头、每头 128 维；两个预测 MLP 均为 200 → 80 → 1、PReLU。没有类别、时间戳或用户画像，故不加类别检索 / 时间间隔 embedding / 短期 DIEN 分支；采用精确 TopK，不实现线上近似索引。以上不能称原始工业 CTR 系统的完整复现。
+- 标签是历史末项 next-item，不是曝光点击。自然 beam 命中行计算 mean BCE；未命中行只在独立候选副本随机替换一个位置为 GT，计算同一双 BCE，辅助列表权重 0.5。GSU loss 与 no-hit loss 是两个不同概念。推理不注入 GT；SIM scorer 不读 beam，因此损失路径无须为插入项另算 teacher 分数。
+- Teacher 输入仍为最多 7 个历史 item；SIM 看完整保留历史，最多 999 项，padding 不参与检索或聚合。训练仅更新 SIM scorer；teacher 的权重及 eval 模式均冻结。每候选独立预测，候选顺序不能成为特征。
+- 沿用 AdamW（lr=1e-5、weight_decay=1e-4、warmup20000 / cosine120000）、每卡 batch32、累积 4、3-GPU DDP、120000 optimizer-step 上限；每 20000 microbatches 验证、最多 5000 validation batches，按 runtime beta=0.1 的 val/Recall@5 选 checkpoint、patience=5。整项为 3 tasks × 1 CPU。先同配置 2-step DDP 短测，不生成正式 checkpoint；正式训练不附带有限 batch test。
+- 后续独立 full validation 使用已有 beta 0.00–0.50 / 步长 0.01 / 既有 tie-break，锁定后 full test；同时报告 beam-only、纯 ESU 重排、选权融合。BCE 与现有 Separate 的 listwise 不同，该外部基线是方法级比较，不是只改结构的受控消融。不为 beta 重训、不根据 test 扩网格。
 
 LIGER 保留“生成损失 + 稠密分类损失、生成候选后稠密排序”的方法结构。官方代码在 `get_target_embed` 使用逐元素广播，且对全目录执行可训练内容投影；直接按 35458467 行资产搬到 4090 不可行。先验证等价矩阵乘法的数值和梯度，后续仍需解决投影 / 全目录损失的分块与计算预算，不能擅自改成 sampled softmax。资产行数不是已核实的训练活跃物品数。
 
