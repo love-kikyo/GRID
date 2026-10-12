@@ -80,7 +80,7 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 在 `Taobao/taobao/.cache/huggingface/download/` 找到了本地下载元数据。原构建 manifest 的 **161 个 train + 49 个 test 分片**，以及使用的 SCL keys / values，均记录 revision **`f185841b6e9612edd06f5112e06416f1bdf6c6d0`**。这补齐了此前未发现的下载身份线索，不是重新下载或变更数据。
 
 - 缓存每个文件记录三行：commit、ETag、下载时间。已核对当前安装的 `huggingface_hub/_local_folder.py` 与 `file_download.py`：64 位十六进制 ETag 按文件 SHA256 校验，40 位按 Git blob SHA1 校验（含 `blob <长度>\0` 前缀，不能直接对文本做普通 SHA1）。
-- [固定核验清单](../logs/training_launch/source_snapshot_2026-10-12/manifest.json) 列出 235 个明确文件及原 manifest 绑定、下载元数据哈希、预期身份和副本比较关系。全字节核验进度与结果见 [Run 台账](RUN_LEDGER_ZH.md#上游快照与编码资产来源核验)；不能将“找到 ETag”写成“当前文件内容全部一致”。
+- [固定核验清单](../logs/training_launch/source_snapshot_2026-10-12/manifest.json) 列出 235 个明确文件及原 manifest 绑定、下载元数据哈希、预期身份和副本比较关系。139022 全量字节核验与 [独立报告验收](../logs/training_launch/source_snapshot_2026-10-12/acceptance.json) 均通过：215 个上游文件匹配缓存 ETag，210 个分片大小 / mtime 匹配原 manifest；正式 SID / item2row 匹配冻结哈希，两对 SID / embedding 副本同字节。详见 [Run 台账](RUN_LEDGER_ZH.md#上游快照与编码资产来源核验)。
 - 该 revision 来自本地缓存，本轮没有访问远端核验该历史 commit。原构建时只记录了分片大小 / mtime，没有逐分片内容哈希；如今的哈希核验即使通过，也不能倒推为当时曾做过字节校验。应同时保留原构建 manifest 与新增报告。
 
 找到了历史 SID 运行的 [106364 标准输出](../../Taobao/src/outputs/output_106364.txt) 与 [106365 检查输出](../../Taobao/src/outputs/output_106365.txt)：
