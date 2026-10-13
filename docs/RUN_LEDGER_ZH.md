@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-13 21:34（Asia/Shanghai）。SIM-soft seed42 checkpoint 与 64 条缓存候选重排均已验收；139789 COMPLETED / 0:0，队列为空，未提交全量评估，旧四模型结果不变。
+最后核验：2026-10-13 21:57（Asia/Shanghai）。SIM-soft seed42 全量缓存 validation / 选权任务 139804 正在运行，前置回归通过；checkpoint 与 64 条短测不重跑。未提交 test 或新 seed，旧四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -9,6 +9,12 @@
 [启动及放行记录](../logs/training_launch/sim_soft_seed42_139478.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139478.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139478.err)、[训练 preflight](../logs/training_preflight/sim_soft_train_seed42_139478.json)。Run 为 `logs/train/runs/2026-10-12/sim-soft-train-seed42-139478`，仅保留 `checkpoint_000_010000.ckpt`。复用 seed42 SID teacher，自然 beam20、GSU TopK10、ESU4头、双 BCE；详细固定规则见计划。checkpoint 张量 / teacher 验收已通过；独立评估候选来源确认并验收后，再进入完整 validation / 选权、full test 与配对统计。
 
 ## SIM 独立评估接入
+
+139804：SIM seed42 完整 validation / 选权，执行版本 `bbdfee8`，提交时工作树干净；复核 139789 收据、产物及源码哈希后放行。21:57 队列确认 RUNNING，aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G、1h 上限；前置 16 项计算节点回归通过，本地另含 validation 验收共 22 项定向回归通过，不相加计数。
+
+本项串行执行 347416 条缓存候选重排 → 独立完整性验收（用户 / 输入 / GT / 候选 / 分数及首 64 条与短测精确一致）→ 原有 51 点 beta 网格 → 204 项指标独立复算。另记录纯 SIM ESU 排序，并用排序与 GT 名次计数两种实现复核；选权仍只按既定网格和优先级，不将纯 ESU 加入 beta 搜索。失败即停止，无 test / 新 seed / 依赖后继。
+
+[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_full_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-FullVal-139804.out)、[stderr](../logs/slurm/GRID-SIM-FullVal-139804.err)。预期产物为 `sim_soft_seed42_139478_val_cached_full_v1.h5` 与 sidecar、`cached_full_v1.json` 完整性收据、`sim_soft_seed42_139478_fusion_val.json` / `.md` 和 `fusion_v1.json` 独立选权验收；尚不能记为已生成或通过。
 
 139789：作者同意的 64 条缓存候选重排短测，版本 `55ec385`，提交时工作树干净。21:26:59–21:30:21，控制器确认 COMPLETED / 0:0，3m22s；aias-compute-2 / 1 张 4090 / 整项 4 CPU，推理 affinity `[0,1,28,29]`，测试与独立验收分别绑定 1 CPU。44 项本地及计算节点回归均通过，不相加计数。
 
@@ -78,6 +84,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139804 | 10-13 提交 | SIM 全量缓存 validation / 选权及独立验收，1 GPU / 4 CPU | RUNNING；16 项计算节点回归通过，后续阶段受完整性验收门槛约束 |
 | 139789 | 10-13 21:26 | SIM 64 条缓存自然候选重排验收，1 GPU / 4 CPU | COMPLETED / 0:0，3m22s；44 项回归、输入 / 候选对齐、原推理入口等价、GT 不泄漏及独立分数复算通过 |
 | 139784 | 10-13 提交 | SID-only 后端差异诊断，1 GPU / 4 CPU | 报告与源码绑定复核通过；可用注意力后端均未复现旧 beam，CuDNN-only 不支持；非全量评估 |
 | 139783 | 10-13 20:20 | SIM / Separate / SID-only 同卡同输入诊断，1 GPU / 4 CPU | COMPLETED / 0:0，3m13s；三路径在 BF16 / FP32 下分别逐值一致，但 BF16 与旧缓存不同 |
