@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-13 19:46（Asia/Shanghai）。SIM-soft seed42 训练日志正常早停，正在通过 139771 验收最优 checkpoint 与独立导出入口；此前队列为空，没有重复提交。旧四模型结果不变。
+最后核验：2026-10-13 20:18（Asia/Shanghai）。SIM-soft seed42 checkpoint 已验收，139776 独立导出的候选对齐未通过；队列为空，未提交全量评估。旧四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -9,6 +9,12 @@
 [启动及放行记录](../logs/training_launch/sim_soft_seed42_139478.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139478.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139478.err)、[训练 preflight](../logs/training_preflight/sim_soft_train_seed42_139478.json)。Run 为 `logs/train/runs/2026-10-12/sim-soft-train-seed42-139478`，仅保留 `checkpoint_000_010000.ckpt`。复用 seed42 SID teacher，自然 beam20、GSU TopK10、ESU4头、双 BCE；详细固定规则见计划。checkpoint 张量 / teacher 及独立评估验收完成后，再进入完整 validation / 选权、full test 与配对统计。
 
 ## SIM 独立评估接入
+
+139776：修复路径处理后重试，执行版本 `bd154a3`，提交时工作树干净；计算节点 46 项回归通过。19:57:21 [checkpoint 验收](../logs/training_launch/sim_seed42_validation_2026-10-13/checkpoint_acceptance_v2.json) 通过：117 个模型 / 72 个 optimizer 张量有限，两套 teacher 别名各 31 张量、144183296 个值与原 teacher 逐值相同；best step10000、早停及来源核验通过。Checkpoint SHA256 `c05ca238c9ba550ea324f6ca9b683e7460e109c86f14e11fa2fbb78c2132525c`。
+
+随后 SIM 严格加载 missing=0 / unexpected=0，64 条 [导出](../logs/analysis/paired_evaluation/sim_soft_seed42_139478_val_smoke_v2.json) 完成；同 seed user ID / 输入哈希 / GT 与旧 Separate 全量 validation 对齐，但候选排序仅 2/64 行完全一致，1280/1280 个 beam 分数不同，最大绝对差 1.0663976669311523。验收断言失败、srun step 退出 1；控制器已不保留 job，未补核调度器终态。此差异不能据此归因为模型、数据或硬件；下一步同卡同输入逐路径诊断，不改权重、不放宽门槛。未生成 validation 通过收据，未提交全量 validation。
+
+[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/smoke_v2_launch.json)、[stdout](../logs/slurm/GRID-SIM-Val-139776.out)、[stderr](../logs/slurm/GRID-SIM-Val-139776.err)。实际 1 张 4090 / 整项 4 CPU、affinity `[0,1,28,29]`。
 
 139771：19:46:46 提交 / 启动，19:47:50 FAILED / 1:0，1m04s；最优 checkpoint 验收和 64 条 validation 导出短测，执行版本 `d4cb4ed`，提交时工作树干净，1 张 4090 / 整项 4 CPU。计算节点 45 项回归通过，随后验收脚本给哈希函数传入字符串路径导致 AttributeError，读取权重前退出，无 checkpoint 验收或导出结果。统一 JSON 路径转换并补回归后重试，不改模型 / checkpoint。
 
@@ -58,6 +64,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139776 | 10-13 提交 | SIM checkpoint 验收 / 64 条 validation 短测重试，1 GPU / 4 CPU | RUNNING；46 项回归通过，正在验收权重与来源 |
 | 139771 | 10-13 19:46 | SIM 最优 checkpoint 验收 / 导出短测首次入口，1 GPU / 4 CPU | FAILED / 1:0，1m04s；45 项回归通过，验收脚本路径类型错误，未产生导出 |
 | 139478 | 10-12 23:52 | SID + SIM-soft seed42 正式训练，3 GPU / 3 CPU | 日志 10-13 05:14 正常早停，停止35000 / best10000；checkpoint 待验收，调度终态退出码未补核 |
 | 139475 | 10-12 23:46 | SID + SIM-soft 修复后 DDP 两步短测，3 GPU / 3 CPU | COMPLETED / 0:0，3m11s；25 项回归、三 rank 训练 / 验证 / 冻结 / 候选 / CPU 检查及独立验收通过 |
