@@ -143,10 +143,15 @@ def instantiate_model(cfg: Any, checkpoint: Path, device: torch.device) -> Any:
     import hydra
 
     model = hydra.utils.instantiate(cfg.model)
+    model_target = str(cfg.model._target_)
+    is_sim = model_target.rsplit('.', 1)[-1] == 'SIMRerankModule'
+    # SIM checkpoints include both registered teacher aliases. Construct them
+    # before loading so strict loading covers the complete saved model.
+    if is_sim:
+        model.setup(stage="validate")
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False, mmap=True)
     state_dict = payload.get("state_dict", payload)
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    model_target = str(cfg.model._target_)
+    missing, unexpected = model.load_state_dict(state_dict, strict=is_sim)
 
     if missing:
         print(f"[model] missing keys: {missing[:20]}")
@@ -169,6 +174,19 @@ def instantiate_model(cfg: Any, checkpoint: Path, device: torch.device) -> Any:
     )
     model.eval().to(device)
     return model
+
+
+def frozen_reranker_sources(model_target: str) -> List[Path]:
+    """Keep the original Separate source contract; bind every new SIM source."""
+    name = model_target.rsplit('.', 1)[-1]
+    if name not in {'SeparateRerankModule', 'SIMRerankModule'}:
+        return []
+    sources = [ROOT / 'src/models/modules/semantic_id/separate_rerank_model.py']
+    if name == 'SIMRerankModule':
+        sources += [ROOT / 'src/models/modules/semantic_id/sim_rerank_model.py',
+                    ROOT / 'src/baselines/sim_soft.py',
+                    ROOT / 'configs/experiment/tiger_train_sim_soft.yaml']
+    return sources
 
 
 def unwrap_batch(batch: Any) -> Any:
@@ -219,7 +237,7 @@ def infer_batch(model: Any, batch: Any, device: torch.device, amp: str) -> Dict[
 
     model_batch = move_batch_to_device(batch, device)
     with torch.inference_mode(), autocast_context(device, amp):
-        if model.__class__.__name__ == "SeparateRerankModule":
+        if model.__class__.__name__ in {"SeparateRerankModule", "SIMRerankModule"}:
             return model.model_step(model_input=model_batch, mode=ModelMode.INFER)
 
         sid = model_batch.transformed_sequences["sequence_data"].long()
@@ -414,10 +432,7 @@ def validate_provenance(
         ROOT / "src/data/loading/components/interfaces.py",
         ROOT / "src/models/modules/semantic_id/tiger_generation_model.py",
     ]
-    if str(cfg.model._target_).endswith("SeparateRerankModule"):
-        required_training_sources.append(
-            ROOT / "src/models/modules/semantic_id/separate_rerank_model.py"
-        )
+    required_training_sources.extend(frozen_reranker_sources(str(cfg.model._target_)))
     preflight_sources = {
         str(Path(entry["path"]).resolve()): entry
         for entry in preflight.get("source_files", [])
@@ -614,10 +629,7 @@ def main() -> None:
         ROOT / "src/data/loading/components/interfaces.py",
         ROOT / "src/models/modules/semantic_id/tiger_generation_model.py",
     ]
-    if str(cfg.model._target_).endswith("SeparateRerankModule"):
-        source_paths.append(
-            ROOT / "src/models/modules/semantic_id/separate_rerank_model.py"
-        )
+    source_paths.extend(frozen_reranker_sources(str(cfg.model._target_)))
     source_file_records = [
         {"path": str(path), "sha256": file_sha256(path)}
         for path in source_paths
