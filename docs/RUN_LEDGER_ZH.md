@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-13 20:50（Asia/Shanghai）。SIM-soft seed42 checkpoint 已验收，同卡三路径诊断一致，但未复现旧自然 beam；缓存候选评估方案待作者确认。队列为空，未提交全量评估，旧四模型结果不变。
+最后核验：2026-10-13 21:34（Asia/Shanghai）。SIM-soft seed42 checkpoint 与 64 条缓存候选重排均已验收；139789 COMPLETED / 0:0，队列为空，未提交全量评估，旧四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -10,13 +10,19 @@
 
 ## SIM 独立评估接入
 
+139789：作者同意的 64 条缓存候选重排短测，版本 `55ec385`，提交时工作树干净。21:26:59–21:30:21，控制器确认 COMPLETED / 0:0，3m22s；aias-compute-2 / 1 张 4090 / 整项 4 CPU，推理 affinity `[0,1,28,29]`，测试与独立验收分别绑定 1 CPU。44 项本地及计算节点回归均通过，不相加计数。
+
+64 个唯一用户的输入哈希 / GT 与旧 Separate 全量 validation 对齐，只读取其 frozen-teacher 自然 `beam_sid` / `beam_score`，不读取旧重排预测、不重新生成候选。SIM 最优 checkpoint 严格加载 missing=0 / unexpected=0；缓存重排与原 SIM INFER 入口使用相同候选时逐值一致，修改 GT 不改变输出；重排前后候选集合完全一致，所有分数有限，BF16 runtime beta=0.1 融合分数由独立进程精确复算通过。自然 beam 命中 21/64 仅作短测结构记录，不是正式效果指标；未搜索 beta、未运行 full validation / test 或提交后继。
+
+[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_smoke_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-Cached-139789.out)、[stderr](../logs/slurm/GRID-SIM-Cached-139789.err)、[导出 metadata](../logs/analysis/paired_evaluation/sim_soft_seed42_139478_val_cached_smoke_v1.json)、[独立验收](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_smoke_v1.json)。验收 SHA256 `40ab3a813edc226e19cc5b33dc241092baf1ed2377904a00b7a3f223ffdf8c2b`；导出 / sidecar 与 10 份执行源码哈希在结束后再次核对通过。后续全量需接入缓存专用入口，不将此收据用于旧的重新生成候选路径，也不将缓存重排耗时解释为端到端效率。
+
 139783：同卡三路径诊断，版本 `34becb2`，20:20:30–20:23:43，控制器确认 COMPLETED / 0:0，3m13s。同一 4090 / 4 CPU、同一 64 条 validation 输入，分别加载 SIM、旧 Separate 和原 SID-only；实际 teacher 参数均与原 checkpoint 相同、所有模块均处于 eval，buffer / decoder 配置无差异。三者的输入 embedding、首层生成 logits、beam SID 与分数在各自 BF16 / FP32 下逐值一致；BF16 也精确复现 139776。说明该批差异不是 SIM 特有的 teacher 恢复或前向路径造成，但不等于复现历史执行环境。
 
 与旧缓存比较：64 行输入哈希一致，候选集合完全相同 30/64 行、整个排序相同 2/64 行，top1 相同 63/64 行，平均候选重合率 96.5625%。这些只是诊断样本的候选一致性，不是推荐效果指标。来源：[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v1_launch.json)、[报告](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v1.json)、[日志](../logs/slurm/GRID-SIM-Probe-139783.out)。报告 SHA256 `91e74cbe4f57be183fc0e5f25ef31d70bfdf7d76e53262e2d58b38f7f91a81cd`。
 
 139784：SID-only 注意力后端隔离诊断，版本 `e150539`，20:31:40 生成完整报告。默认 BF16 与强制 Flash Attention 逐值相同；Math / Efficient 也不能复现旧输出，CuDNN-only 因生成阶段 sequence_length=1 不支持而记录为不可用。报告完整性及执行版本源码哈希经单核复核；后续控制器已不保留 job，未补核最终调度器退出码。实际 1 张 4090 / 整项 4 CPU，未改模型或旧结果。[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v2_launch.json)、[报告](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v2.json)、[日志](../logs/slurm/GRID-SIM-Probe-139784.out)；报告 SHA256 `eb8a06757c63bb79e7f74382fb06ad01d78aaf4127790b8b58dfd665a32b3033`。两个诊断入口的 2 项轻量回归均通过。
 
-诊断结论边界：新旧执行输出不一致，尚未唯一定位到硬件、驱动、矩阵乘法或其他底层因素；原 aias-compute-01 仍 DOWN，不能在原节点交叉复现。不放宽逐值门槛，不据 64 条样本推断全量指标变化。下一步建议仅在独立评估使用旧已验收的同 seed 自然 beam 缓存，严格共享候选；详细边界列在计划中，待作者确认，未实施缓存重排或全量评估。
+诊断结论边界：新旧执行输出不一致，尚未唯一定位到硬件、驱动、矩阵乘法或其他底层因素；原 aias-compute-01 仍 DOWN，不能在原节点交叉复现。不据 64 条样本推断全量指标变化。作者认为跨 GPU 候选差异不构成阻碍，同意先做缓存重排验收；结果见 139789。本轮不再追加底层诊断，数据 / checkpoint / 训练不变。
 
 139776：修复路径处理后重试，执行版本 `bd154a3`，提交时工作树干净；计算节点 46 项回归通过。19:57:21 [checkpoint 验收](../logs/training_launch/sim_seed42_validation_2026-10-13/checkpoint_acceptance_v2.json) 通过：117 个模型 / 72 个 optimizer 张量有限，两套 teacher 别名各 31 张量、144183296 个值与原 teacher 逐值相同；best step10000、早停及来源核验通过。Checkpoint SHA256 `c05ca238c9ba550ea324f6ca9b683e7460e109c86f14e11fa2fbb78c2132525c`。
 
@@ -72,6 +78,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 139789 | 10-13 21:26 | SIM 64 条缓存自然候选重排验收，1 GPU / 4 CPU | COMPLETED / 0:0，3m22s；44 项回归、输入 / 候选对齐、原推理入口等价、GT 不泄漏及独立分数复算通过 |
 | 139784 | 10-13 提交 | SID-only 后端差异诊断，1 GPU / 4 CPU | 报告与源码绑定复核通过；可用注意力后端均未复现旧 beam，CuDNN-only 不支持；非全量评估 |
 | 139783 | 10-13 20:20 | SIM / Separate / SID-only 同卡同输入诊断，1 GPU / 4 CPU | COMPLETED / 0:0，3m13s；三路径在 BF16 / FP32 下分别逐值一致，但 BF16 与旧缓存不同 |
 | 139776 | 10-13 提交 | SIM checkpoint 验收 / 64 条 validation 短测重试，1 GPU / 4 CPU | 46 项回归与 checkpoint 验收通过；导出候选对齐断言失败，srun step 退出 1，无 validation 通过收据 |
