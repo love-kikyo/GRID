@@ -1,18 +1,26 @@
 # Run 台账
 
-最后核验：2026-10-13 20:18（Asia/Shanghai）。SIM-soft seed42 checkpoint 已验收，139776 独立导出的候选对齐未通过；队列为空，未提交全量评估。旧四模型结果不变。
+最后核验：2026-10-13 20:50（Asia/Shanghai）。SIM-soft seed42 checkpoint 已验收，同卡三路径诊断一致，但未复现旧自然 beam；缓存候选评估方案待作者确认。队列为空，未提交全量评估，旧四模型结果不变。
 
 ## 外部基线正式训练
 
 139478：SID + SIM-soft seed42，执行版本 `977f29a`，提交时工作树干净；139475 短测与独立收据通过后提交。实际 aias-compute-2 / 3 张 4090 / 整项 3 CPU，初始 affinity `[4,28,29]`。10-13 05:14:03 日志正常结束，35000 optimizer steps / 7 次验证，patience=5；最优为 step10000、runtime val/Recall@5=0.2718885838985443。该分数来自训练时有限 batch 验证，不是完整 validation / test 指标。19:35 队列为空，记账数据库拒绝连接、控制器不再保留旧 job，未补核最终退出码。
 
-[启动及放行记录](../logs/training_launch/sim_soft_seed42_139478.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139478.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139478.err)、[训练 preflight](../logs/training_preflight/sim_soft_train_seed42_139478.json)。Run 为 `logs/train/runs/2026-10-12/sim-soft-train-seed42-139478`，仅保留 `checkpoint_000_010000.ckpt`。复用 seed42 SID teacher，自然 beam20、GSU TopK10、ESU4头、双 BCE；详细固定规则见计划。checkpoint 张量 / teacher 及独立评估验收完成后，再进入完整 validation / 选权、full test 与配对统计。
+[启动及放行记录](../logs/training_launch/sim_soft_seed42_139478.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139478.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139478.err)、[训练 preflight](../logs/training_preflight/sim_soft_train_seed42_139478.json)。Run 为 `logs/train/runs/2026-10-12/sim-soft-train-seed42-139478`，仅保留 `checkpoint_000_010000.ckpt`。复用 seed42 SID teacher，自然 beam20、GSU TopK10、ESU4头、双 BCE；详细固定规则见计划。checkpoint 张量 / teacher 验收已通过；独立评估候选来源确认并验收后，再进入完整 validation / 选权、full test 与配对统计。
 
 ## SIM 独立评估接入
 
+139783：同卡三路径诊断，版本 `34becb2`，20:20:30–20:23:43，控制器确认 COMPLETED / 0:0，3m13s。同一 4090 / 4 CPU、同一 64 条 validation 输入，分别加载 SIM、旧 Separate 和原 SID-only；实际 teacher 参数均与原 checkpoint 相同、所有模块均处于 eval，buffer / decoder 配置无差异。三者的输入 embedding、首层生成 logits、beam SID 与分数在各自 BF16 / FP32 下逐值一致；BF16 也精确复现 139776。说明该批差异不是 SIM 特有的 teacher 恢复或前向路径造成，但不等于复现历史执行环境。
+
+与旧缓存比较：64 行输入哈希一致，候选集合完全相同 30/64 行、整个排序相同 2/64 行，top1 相同 63/64 行，平均候选重合率 96.5625%。这些只是诊断样本的候选一致性，不是推荐效果指标。来源：[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v1_launch.json)、[报告](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v1.json)、[日志](../logs/slurm/GRID-SIM-Probe-139783.out)。报告 SHA256 `91e74cbe4f57be183fc0e5f25ef31d70bfdf7d76e53262e2d58b38f7f91a81cd`。
+
+139784：SID-only 注意力后端隔离诊断，版本 `e150539`，20:31:40 生成完整报告。默认 BF16 与强制 Flash Attention 逐值相同；Math / Efficient 也不能复现旧输出，CuDNN-only 因生成阶段 sequence_length=1 不支持而记录为不可用。报告完整性及执行版本源码哈希经单核复核；后续控制器已不保留 job，未补核最终调度器退出码。实际 1 张 4090 / 整项 4 CPU，未改模型或旧结果。[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v2_launch.json)、[报告](../logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_v2.json)、[日志](../logs/slurm/GRID-SIM-Probe-139784.out)；报告 SHA256 `eb8a06757c63bb79e7f74382fb06ad01d78aaf4127790b8b58dfd665a32b3033`。两个诊断入口的 2 项轻量回归均通过。
+
+诊断结论边界：新旧执行输出不一致，尚未唯一定位到硬件、驱动、矩阵乘法或其他底层因素；原 aias-compute-01 仍 DOWN，不能在原节点交叉复现。不放宽逐值门槛，不据 64 条样本推断全量指标变化。下一步建议仅在独立评估使用旧已验收的同 seed 自然 beam 缓存，严格共享候选；详细边界列在计划中，待作者确认，未实施缓存重排或全量评估。
+
 139776：修复路径处理后重试，执行版本 `bd154a3`，提交时工作树干净；计算节点 46 项回归通过。19:57:21 [checkpoint 验收](../logs/training_launch/sim_seed42_validation_2026-10-13/checkpoint_acceptance_v2.json) 通过：117 个模型 / 72 个 optimizer 张量有限，两套 teacher 别名各 31 张量、144183296 个值与原 teacher 逐值相同；best step10000、早停及来源核验通过。Checkpoint SHA256 `c05ca238c9ba550ea324f6ca9b683e7460e109c86f14e11fa2fbb78c2132525c`。
 
-随后 SIM 严格加载 missing=0 / unexpected=0，64 条 [导出](../logs/analysis/paired_evaluation/sim_soft_seed42_139478_val_smoke_v2.json) 完成；同 seed user ID / 输入哈希 / GT 与旧 Separate 全量 validation 对齐，但候选排序仅 2/64 行完全一致，1280/1280 个 beam 分数不同，最大绝对差 1.0663976669311523。验收断言失败、srun step 退出 1；控制器已不保留 job，未补核调度器终态。此差异不能据此归因为模型、数据或硬件；下一步同卡同输入逐路径诊断，不改权重、不放宽门槛。未生成 validation 通过收据，未提交全量 validation。
+随后 SIM 严格加载 missing=0 / unexpected=0，64 条 [导出](../logs/analysis/paired_evaluation/sim_soft_seed42_139478_val_smoke_v2.json) 完成；同 seed user ID / 输入哈希 / GT 与旧 Separate 全量 validation 对齐，但候选排序仅 2/64 行完全一致，1280/1280 个 beam 分数不同，最大绝对差 1.0663976669311523。验收断言失败、srun step 退出 1；控制器已不保留 job，未补核调度器终态。后续同卡诊断见上文。未生成 validation 通过收据，未提交全量 validation。
 
 [启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/smoke_v2_launch.json)、[stdout](../logs/slurm/GRID-SIM-Val-139776.out)、[stderr](../logs/slurm/GRID-SIM-Val-139776.err)。实际 1 张 4090 / 整项 4 CPU、affinity `[0,1,28,29]`。
 
@@ -20,7 +28,7 @@
 
 SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / joint 加载行为不变，SIM scorer / adapter / 配置均纳入训练来源核验。需逐值检查 checkpoint 内两套 teacher 别名与原 teacher 相同，再核对同 seed 的输入身份、候选和分数；无其他 seed / test / 依赖后继。
 
-[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/smoke_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-Val-139771.out)、[stderr](../logs/slurm/GRID-SIM-Val-139771.err)。本地 exporter 及配对 / CPU 回归 30 项通过，checkpoint / validation 验收与 launcher 回归 10 项通过；计算节点结果待验收。
+[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/smoke_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-Val-139771.out)、[stderr](../logs/slurm/GRID-SIM-Val-139771.err)。本地 exporter 及配对 / CPU 回归 30 项通过，checkpoint / validation 验收与 launcher 回归 10 项通过；计算节点短测结果见上文。
 
 ## 外部基线短测
 
@@ -64,9 +72,11 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 139776 | 10-13 提交 | SIM checkpoint 验收 / 64 条 validation 短测重试，1 GPU / 4 CPU | RUNNING；46 项回归通过，正在验收权重与来源 |
+| 139784 | 10-13 提交 | SID-only 后端差异诊断，1 GPU / 4 CPU | 报告与源码绑定复核通过；可用注意力后端均未复现旧 beam，CuDNN-only 不支持；非全量评估 |
+| 139783 | 10-13 20:20 | SIM / Separate / SID-only 同卡同输入诊断，1 GPU / 4 CPU | COMPLETED / 0:0，3m13s；三路径在 BF16 / FP32 下分别逐值一致，但 BF16 与旧缓存不同 |
+| 139776 | 10-13 提交 | SIM checkpoint 验收 / 64 条 validation 短测重试，1 GPU / 4 CPU | 46 项回归与 checkpoint 验收通过；导出候选对齐断言失败，srun step 退出 1，无 validation 通过收据 |
 | 139771 | 10-13 19:46 | SIM 最优 checkpoint 验收 / 导出短测首次入口，1 GPU / 4 CPU | FAILED / 1:0，1m04s；45 项回归通过，验收脚本路径类型错误，未产生导出 |
-| 139478 | 10-12 23:52 | SID + SIM-soft seed42 正式训练，3 GPU / 3 CPU | 日志 10-13 05:14 正常早停，停止35000 / best10000；checkpoint 待验收，调度终态退出码未补核 |
+| 139478 | 10-12 23:52 | SID + SIM-soft seed42 正式训练，3 GPU / 3 CPU | 日志 10-13 05:14 正常早停，停止35000 / best10000；checkpoint 已由 139776 验收，调度终态退出码未补核 |
 | 139475 | 10-12 23:46 | SID + SIM-soft 修复后 DDP 两步短测，3 GPU / 3 CPU | COMPLETED / 0:0，3m11s；25 项回归、三 rank 训练 / 验证 / 冻结 / 候选 / CPU 检查及独立验收通过 |
 | 139472 | 10-12 23:38 | SID + SIM-soft 首次 DDP 短测，3 GPU / 3 CPU | FAILED / 1:0，3m24s；24 项回归及 teacher 加载通过，包装器模式断言失败；未完成更新，无正式 checkpoint |
 | 139448 | 10-12 23:14 | LIGER 官方模型兼容性重试，1 GPU / 4 CPU | COMPLETED / 0:0，1m52s；23 项回归、真实 train fixture、2-step 及生成 API 通过并独立验收；不是正式训练 |
