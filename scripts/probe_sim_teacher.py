@@ -4,6 +4,7 @@ This is diagnostic evidence, never a validation acceptance or metric selection.
 No model, checkpoint, or existing export is changed.
 """
 import argparse
+from contextlib import nullcontext
 from datetime import datetime
 import gc
 import hashlib
@@ -48,6 +49,7 @@ def tensor_record(t):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--kernel-sweep', action='store_true', help='SID-only numerical backend isolation')
     args = p.parse_args()
     assert not args.output.exists()
     budget = configure_export_cpu(torch, 1)
@@ -83,7 +85,8 @@ def main():
     results = {}
     teacher_path = Path('logs/train/runs') / RUNS['sid'][0] / 'checkpoints/checkpoint_000_090000.ckpt'
     teacher_state = torch.load(teacher_path, map_location='cpu', weights_only=False, mmap=True)['state_dict']
-    for label, (run, step) in RUNS.items():
+    selected_runs = {'sid': RUNS['sid']} if args.kernel_sweep else RUNS
+    for label, (run, step) in selected_runs.items():
         print('[probe] loading ' + label, flush=True)
         run = Path('logs/train/runs') / run
         model = export.instantiate_model(export.load_run_config(run),
@@ -101,21 +104,36 @@ def main():
         )
         assert not different, different
         model.to(device)
-        for amp in ('bf16', 'none'):
+        variants = [('bf16', None), ('none', None)]
+        if args.kernel_sweep:
+            from torch.nn.attention import SDPBackend, sdpa_kernel
+            variants += [('bf16', b) for b in (SDPBackend.MATH, SDPBackend.FLASH_ATTENTION,
+                                              SDPBackend.EFFICIENT_ATTENTION, SDPBackend.CUDNN_ATTENTION)]
+        for amp, backend in variants:
+            key = label + '/' + amp + (('/' + backend.name) if backend is not None else '')
             chunks = {k: [] for k in ('beam_sid', 'beam_score', 'embeds', 'initial_logits')}
             for batch in batches:
                 b = export.move_batch_to_device(batch, device)
                 sid = b.transformed_sequences['sequence_data'][:, :-4].long().contiguous()
                 mask = b.mask[:, :-4].contiguous()
-                with torch.inference_mode(), export.autocast_context(device, amp):
-                    emb, _ = teacher.build_sid_block_embeds(sid, mask, add_bos_token=True)
-                    initial, _, _ = teacher._forward_history_for_next_sid(sid, mask)
-                    beam, score, _, _ = teacher._beam_search_semantic_ids(sid, mask)
+                try:
+                    with torch.inference_mode(), export.autocast_context(device, amp), \
+                            (sdpa_kernel(backend) if backend is not None else nullcontext()):
+                        emb, _ = teacher.build_sid_block_embeds(sid, mask, add_bos_token=True)
+                        initial, _, _ = teacher._forward_history_for_next_sid(sid, mask)
+                        beam, score, _, _ = teacher._beam_search_semantic_ids(sid, mask)
+                except RuntimeError as error:
+                    if backend is None:
+                        raise
+                    report['comparisons'][key] = {'backend_error': str(error)}
+                    print('[probe] ' + key + ' unavailable: ' + str(error), flush=True)
+                    break
                 chunks['beam_sid'].append(beam.reshape(32, 20, 4).cpu().numpy())
                 chunks['beam_score'].append(score.float().cpu().numpy())
                 chunks['embeds'].append(emb.float().cpu().numpy())
                 chunks['initial_logits'].append(initial.float().cpu().numpy())
-            key = label + '/' + amp
+            if len(chunks['beam_sid']) != len(batches):
+                continue
             results[key] = {k: np.concatenate(v) for k, v in chunks.items()}
             report['comparisons'][key + '_vs_saved'] = {
                 ref: {k: compare(results[key][k], data[k]) for k in data}

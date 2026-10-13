@@ -12,7 +12,12 @@
 #SBATCH --time=00:20:00
 set -euo pipefail
 cd /mnt/beegfs/home/MMReco2021/liuyu/GRID
-[[ $# == 1 && $1 =~ ^v[0-9]+$ ]] || exit 2
+[[ $# -ge 1 && $# -le 2 && $1 =~ ^v[0-9]+$ ]] || exit 2
+PROBE_EXTRA=()
+if [[ $# == 2 ]]; then
+  [[ $2 == kernel-sweep ]] || exit 2
+  PROBE_EXTRA=(--kernel-sweep)
+fi
 : "${SOURCE_GIT_COMMIT:?Missing source binding}"
 export PYTHONPATH=$PWD PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
 export GRID_EXPORT_CPU_BUDGET=4 GRID_CPU_BUDGET=4
@@ -25,4 +30,4 @@ export MPLCONFIGDIR=/tmp/matplotlib-${USER}-${SLURM_JOB_ID}
 mkdir -p "$MPLCONFIGDIR"
 srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
  /home/MMReco2021/.conda/envs/GRID/bin/python -m scripts.probe_sim_teacher \
- --output "logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_$1.json"
+ --output "logs/training_launch/sim_seed42_validation_2026-10-13/teacher_probe_$1.json" "${PROBE_EXTRA[@]}"
