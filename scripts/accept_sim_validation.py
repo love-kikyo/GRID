@@ -8,7 +8,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from scripts.export_paired_evaluation import file_sha256
+from scripts.accept_sim_checkpoint import file_sha256
 
 
 def check_candidates(arrays):

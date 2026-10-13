@@ -10,9 +10,14 @@ from pathlib import Path
 import torch
 import yaml
 
-from scripts.export_paired_evaluation import file_sha256
+from scripts.export_paired_evaluation import file_sha256 as _file_sha256
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def file_sha256(path):
+    """Manifest JSON contains strings; exporter internals require Path objects."""
+    return _file_sha256(Path(path))
 
 
 def identity(path):

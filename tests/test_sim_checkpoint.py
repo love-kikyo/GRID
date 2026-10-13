@@ -1,7 +1,13 @@
 import pytest
 import torch
 
-from scripts.accept_sim_checkpoint import finite, frozen_teacher_checks
+from scripts.accept_sim_checkpoint import finite, frozen_teacher_checks, file_sha256
+
+
+def test_manifest_string_paths_hash_identically_to_path_objects(tmp_path):
+    path = tmp_path / 'manifest.json'
+    path.write_text('{}')
+    assert file_sha256(str(path)) == file_sha256(path)
 
 
 def test_tensor_finiteness_including_nested_optimizer_state():
