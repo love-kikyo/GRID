@@ -18,13 +18,15 @@
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
 | 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现；139475 的 25 项回归、三 rank 两步训练 / 验证及独立报告验收通过 |
 | 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 训练及 best checkpoint 验收通过；LIGER 尚未放行，不预排其他 seed |
-| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM 缓存全量入口已接入，139804 正在运行 validation → 完整性验收 → 选权 → 独立复算；test / 新 seed 未提交，弱结果照实保留 |
+| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM 139804 全量 validation / 选权及独立复算通过，锁定 beta=0.09；推进 seed42 full test，之后再配对统计，不自动排新 seed，弱结果照实保留 |
 
 SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
 
-10-13 作者同意缓存候选重排短测，验收后再次要求推进，现进入全量 validation / 选权，不继续追查跨硬件候选差异。评估接入方案：独立 validation / test 从既有、已验收的同 seed 导出读取自然 `beam_sid` / `beam_score`（validation 可用 Separate 的 frozen-teacher beam 字段），按 user ID、完整输入哈希与 GT 校验逐条对齐；SIM 仅对历史和这些候选打分，不读取旧 rerank logits、不按 test 标签筛候选、不注入 GT。该方案保持与旧 Separate 完全相同的候选池，而不要求新硬件重新生成时逐位复现旧输出；不改 SIM 训练、best checkpoint 或既定选权规则。选权验收并锁定前不提交 test。缓存重排耗时不能当作包含生成阶段的端到端效率。
+10-13 作者同意缓存候选重排短测，10-14 全量 validation / 选权验收后推进 test，不继续追查跨硬件候选差异。评估接入方案：独立 validation / test 从既有、已验收的同 seed 导出读取自然 `beam_sid` / `beam_score`（validation 使用 Separate 的 frozen-teacher beam 字段，test 使用 SID-only；旧收据已证实其与 Separate 逐值相同），按 user ID、完整输入哈希与 GT 校验逐条对齐；SIM 仅对历史和这些候选打分，不读取旧 rerank logits、不按 test 标签筛候选、不注入 GT。该方案保持与旧 Separate 完全相同的候选池，而不要求新硬件重新生成时逐位复现旧输出；不改 SIM 训练、best checkpoint 或既定选权规则。缓存重排耗时不能当作包含生成阶段的端到端效率。
 
 64 条短测已通过。全量使用 `run_sim_cached_validation_cpu4.sh` 缓存专用入口，延续候选来源与逐样本身份检查，逐值核对全量导出前 64 条与已验收短测，并对所有样本独立复算 runtime 融合分数；本次缓存收据不能用作原 `run_sim_seed42_validation_cpu4.sh full` 重新生成候选路径的放行凭证。
+
+全量 validation 与选权现已验收，seed42 selected beta 固定 **0.09**，不是原三种重排方法的 0.50。Test 使用 `run_sim_cached_test_cpu4.sh`，1 GPU / 整项 4 CPU；运行前验证选权收据、checkpoint 与 test 缓存哈希，覆盖 2061101 条，包括最后 13 条不足 batch。导出仍保存 runtime beta=0.1 的排序与原始 logits；后续正式指标按冻结 beta=0.09 在 FP32 分数上重排。独立完整性验收后才做配对统计，不在 test 搜索或自动提交新 seed。
 
 SIM 首轮规则固定如下，源码入口为 `sim_rerank_model.py` / `sim_soft.py`，配置为 `tiger_train_sim_soft.yaml`：
 

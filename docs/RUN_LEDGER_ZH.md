@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-13 21:57（Asia/Shanghai）。SIM-soft seed42 全量缓存 validation / 选权任务 139804 正在运行，前置回归通过；checkpoint 与 64 条短测不重跑。未提交 test 或新 seed，旧四模型结果不变。
+最后核验：2026-10-14 14:00（Asia/Shanghai）。SIM-soft seed42 全量缓存 validation / 选权任务 139804 产物验收通过，锁定 beta=0.09，正在接入全量 test；checkpoint 与 64 条短测不重跑。旧四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -10,11 +10,22 @@
 
 ## SIM 独立评估接入
 
-139804：SIM seed42 完整 validation / 选权，执行版本 `bbdfee8`，提交时工作树干净；复核 139789 收据、产物及源码哈希后放行。21:57 队列确认 RUNNING，aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G、1h 上限；前置 16 项计算节点回归通过，本地另含 validation 验收共 22 项定向回归通过，不相加计数。
+139804：SIM seed42 完整 validation / 选权，执行版本 `bbdfee8`，提交时工作树干净；复核 139789 收据、产物及源码哈希后放行。10-13 22:07:55 全量完整性收据通过，22:09:02 选权独立复算通过；10-14 复核产物 / 收据及源码哈希一致。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，affinity `[0,1,28,29]`；前置 16 项计算节点回归通过，本地另含 validation 验收共 22 项定向回归通过，不相加计数。当前队列为空；记账库不可用，未补核 Slurm 最终退出码，不把产物验收等同于记账终态已查到。
 
 本项串行执行 347416 条缓存候选重排 → 独立完整性验收（用户 / 输入 / GT / 候选 / 分数及首 64 条与短测精确一致）→ 原有 51 点 beta 网格 → 204 项指标独立复算。另记录纯 SIM ESU 排序，并用排序与 GT 名次计数两种实现复核；选权仍只按既定网格和优先级，不将纯 ESU 加入 beta 搜索。失败即停止，无 test / 新 seed / 依赖后继。
 
-[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_full_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-FullVal-139804.out)、[stderr](../logs/slurm/GRID-SIM-FullVal-139804.err)。预期产物为 `sim_soft_seed42_139478_val_cached_full_v1.h5` 与 sidecar、`cached_full_v1.json` 完整性收据、`sim_soft_seed42_139478_fusion_val.json` / `.md` 和 `fusion_v1.json` 独立选权验收；尚不能记为已生成或通过。
+[启动记录](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_full_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-FullVal-139804.out)、[stderr](../logs/slurm/GRID-SIM-FullVal-139804.err)。[完整性收据](../logs/training_launch/sim_seed42_validation_2026-10-13/cached_full_v1.json) 验收 347416 唯一用户、97015 个自然 beam 命中；候选 / 分数与缓存、前 64 条与短测逐值相同，所有 runtime 融合分数独立复算通过。[选权文件](../logs/analysis/paired_evaluation/sim_soft_seed42_139478_fusion_val.json) 及 [独立复算](../logs/training_launch/sim_seed42_validation_2026-10-13/fusion_v1.json) 均通过，51 点 / 204 项指标最大绝对误差 `1.11e-15`。选定 beta=0.09，非网格边界；纯 ESU 另以两种实现复核，不参与选权。
+
+Validation 指标（0–1 标度；**不是 test 结果**）：
+
+| 排序 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | --- | --- | --- | --- |
+| SID-only beam | 0.270555 | 0.274973 | 0.253747 | 0.255180 |
+| SIM 纯 ESU | 0.072892 | 0.142811 | 0.043074 | 0.065403 |
+| SIM selected beta=0.09（FP32） | 0.270529 | 0.275025 | 0.253741 | 0.255197 |
+| SIM beta=0.10（FP32 对照，非 BF16 runtime） | 0.270523 | 0.275016 | 0.253737 | 0.255193 |
+
+纯 SIM 重排明显较弱，融合几乎持平 beam；不因弱结果改训练、换 checkpoint 或扩网格。全量 validation HDF5 SHA256 `d4993a9e95edd34c39ed644dfc445060f78c848faee078194ffcac56f601ecdd`；选权 SHA256 `fa5e14edd35c1923be86d955ebd4356874fa164a150185720cf93ccb39570285`；选权验收 SHA256 `c30d11e9a27fcb59eefa8fc4ad7614b04550e705d92cf38fe44f3e22e7bfbe19`。后续 test 入口绑定这些收据，不重跑 validation / 搜索。
 
 139789：作者同意的 64 条缓存候选重排短测，版本 `55ec385`，提交时工作树干净。21:26:59–21:30:21，控制器确认 COMPLETED / 0:0，3m22s；aias-compute-2 / 1 张 4090 / 整项 4 CPU，推理 affinity `[0,1,28,29]`，测试与独立验收分别绑定 1 CPU。44 项本地及计算节点回归均通过，不相加计数。
 
