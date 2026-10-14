@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-14 14:00（Asia/Shanghai）。SIM-soft seed42 全量缓存 validation / 选权任务 139804 产物验收通过，锁定 beta=0.09，正在接入全量 test；checkpoint 与 64 条短测不重跑。旧四模型结果不变。
+最后核验：2026-10-14 14:03（Asia/Shanghai）。SIM-soft seed42 全量缓存 validation / 选权任务 139804 产物验收通过，锁定 beta=0.09，全量 test 任务 139967 已运行；checkpoint 与 64 条短测不重跑。旧四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -10,7 +10,13 @@
 
 ## SIM 独立评估接入
 
-139804：SIM seed42 完整 validation / 选权，执行版本 `bbdfee8`，提交时工作树干净；复核 139789 收据、产物及源码哈希后放行。10-13 22:07:55 全量完整性收据通过，22:09:02 选权独立复算通过；10-14 复核产物 / 收据及源码哈希一致。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，affinity `[0,1,28,29]`；前置 16 项计算节点回归通过，本地另含 validation 验收共 22 项定向回归通过，不相加计数。当前队列为空；记账库不可用，未补核 Slurm 最终退出码，不把产物验收等同于记账终态已查到。
+139967：SIM seed42 完整 test 与独立完整性验收，执行版本 `f481f1c`，提交时工作树干净。14:02:33 队列确认 RUNNING，aias-compute-2 / 1 GPU / 整项 4 CPU / 24G，4h 上限；本地及计算节点各 26 项回归通过，不相加计数。启动绑定 / 数据 / 缓存哈希通过，checkpoint 严格加载 missing=0 / unexpected=0，首批 32 条打分通过；推理 CPU mask `0x300003000`，即 `[12,13,32,33]`，首批进程树 affinity 检查通过。只提交本项，无依赖后继。完成后再做正式指标与配对统计，当前不记作 test 已通过。
+
+锁定 SIM best step10000 与 validation beta=0.09；使用已有 SID-only test 自然候选缓存，其与旧 Separate 的候选和 beam 分数逐值相同，原收据与当前 HDF5 / sidecar 哈希均已核对。完整 2061101 条逐用户校验输入 / GT，再用已验收 scorer 打分；不重新生成候选、不注入 GT、不重训或在 test 选权。最后独立进程检查唯一用户 / 输入、候选集合、分数有限性及所有 runtime 融合分数。导出的 runtime beta=0.1 与后续正式 FP32 selected beta=0.09 分开。
+
+[启动记录](../logs/training_launch/sim_seed42_test_2026-10-14/cached_full_v1_launch.json)、[stdout](../logs/slurm/GRID-SIM-FullTest-139967.out)、[stderr](../logs/slurm/GRID-SIM-FullTest-139967.err)。预期产物 `sim_soft_seed42_139478_test_cached_full_v1.h5` / sidecar 与 `logs/training_launch/sim_seed42_test_2026-10-14/cached_full_v1.json` 验收收据；完成前不并入正式主表。
+
+139804：SIM seed42 完整 validation / 选权，执行版本 `bbdfee8`，提交时工作树干净；复核 139789 收据、产物及源码哈希后放行。10-13 22:07:55 全量完整性收据通过，22:09:02 选权独立复算通过；10-14 复核产物 / 收据及源码哈希一致。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，affinity `[0,1,28,29]`；前置 16 项计算节点回归通过，本地另含 validation 验收共 22 项定向回归通过，不相加计数。10-14 提交 test 前队列为空；记账库不可用，未补核 Slurm 最终退出码，不把产物验收等同于记账终态已查到。
 
 本项串行执行 347416 条缓存候选重排 → 独立完整性验收（用户 / 输入 / GT / 候选 / 分数及首 64 条与短测精确一致）→ 原有 51 点 beta 网格 → 204 项指标独立复算。另记录纯 SIM ESU 排序，并用排序与 GT 名次计数两种实现复核；选权仍只按既定网格和优先级，不将纯 ESU 加入 beta 搜索。失败即停止，无 test / 新 seed / 依赖后继。
 

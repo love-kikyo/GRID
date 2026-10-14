@@ -1,10 +1,10 @@
 # 当前状态
 
-核验时间：2026-10-14 14:00，Asia/Shanghai。此页是状态快照，不是实时监控。
+核验时间：2026-10-14 14:03，Asia/Shanghai。此页是状态快照，不是实时监控。
 
 ## 一句话结论
 
-**SID + SIM-soft seed42 的全量 validation 与选权已验收，锁定 beta=0.09；正在接入全量 test。** [新增计划](EXPERIMENT_PLAN_ZH.md#外部基线扩展)。Validation 上融合后几乎持平 SID-only，纯 SIM 重排较弱，尚不是 test 结论。Checkpoint 与短测不重跑。LIGER 全目录训练方案仍待核验。已有四模型结果与 [冻结清单](EXPERIMENT_PLAN_ZH.md#实验冻结清单待作者确认) 保留，论文仍暂停；不恢复历史相关分析或其他 seed 效率测试。
+**SID + SIM-soft seed42 的全量 validation 与选权已验收，锁定 beta=0.09；全量 test 任务 139967 已运行。** [新增计划](EXPERIMENT_PLAN_ZH.md#外部基线扩展)。Validation 上融合后几乎持平 SID-only，纯 SIM 重排较弱，尚不是 test 结论。Checkpoint 与短测不重跑。LIGER 全目录训练方案仍待核验。已有四模型结果与 [冻结清单](EXPERIMENT_PLAN_ZH.md#实验冻结清单待作者确认) 保留，论文仍暂停；不恢复历史相关分析或其他 seed 效率测试。
 
 ## 当前进度
 
@@ -24,7 +24,7 @@
 | 历史出现 / 历史召回相关探索 | 已取消 | 作者 10-12 决定；历史侧信息扫描未提交，不能记作分析完成 |
 | 复现来源 | 已验收（有边界） | 139022：235 文件全量核验 + 独立报告复核通过；固定 SID 资产可追溯，原聚类源码 / 随机状态未恢复 |
 | 新增 LIGER 对照 | 兼容性短测已验收，正式训练未放行 | 139448：23 项回归、真实 train fixture、2-step / beam API；全目录投影 / loss 及 seen / cold-start 规则待完成 |
-| 新增 SID + SIM-soft | 全量 validation / 选权已验收；test 接入中 | 139804：347416 唯一用户、缓存候选逐值一致、51 点 / 204 项指标独立复算通过；beta=0.09，未扩网格 |
+| 新增 SID + SIM-soft | 全量 validation / 选权已验收；test 运行中 | 139804 锁定 beta=0.09；139967 完成前置 26 项计算节点回归，1 GPU / 整项 4 CPU，无后继排队 |
 | 实验冻结与取数清单 | 内部验收通过，待作者确认 | 12 checkpoint / test、9 组选权、3 份配对报告；97 个小文件哈希复核；不是已完成对外匿名发布 |
 | 论文正文 | 暂停修改 | 等实验整体收尾后由作者确认 |
 
@@ -37,7 +37,7 @@
 
 ## 下一步
 
-1. 提交 SIM seed42 的 2061101 条 full test；复用已验收 SID-only 自然候选，锁定 beta=0.09，不在 test 选权。产物验收后做与 SID / Separate 等方法的配对统计；不自动排新 seed。
+1. 验收 139967 的 2061101 条 full test；复用已验收 SID-only 自然候选，锁定 beta=0.09，不在 test 选权。产物验收后做与 SID / Separate 等方法的配对统计；不自动排新 seed。
 2. 完成 LIGER 实际训练目录 / 冷启动规则与等价分块训练方案，再通过规模短测放行正式训练。
 3. 新对照验收、补齐约定 seed 后合入结果冻结范围；之后再恢复论文与匿名交付。
 

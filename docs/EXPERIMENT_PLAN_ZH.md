@@ -18,7 +18,7 @@
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
 | 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现；139475 的 25 项回归、三 rank 两步训练 / 验证及独立报告验收通过 |
 | 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 训练及 best checkpoint 验收通过；LIGER 尚未放行，不预排其他 seed |
-| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM 139804 全量 validation / 选权及独立复算通过，锁定 beta=0.09；推进 seed42 full test，之后再配对统计，不自动排新 seed，弱结果照实保留 |
+| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM 139804 全量 validation / 选权及独立复算通过，锁定 beta=0.09；139967 运行 seed42 full test，之后再配对统计，不自动排新 seed，弱结果照实保留 |
 
 SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
 
