@@ -1,0 +1,33 @@
+{
+  "protocol": "liger-fixed-sid-scl-history-last-v1",
+  "candidate_config": "configs/baselines/liger_history_last_v1.json",
+  "seed": 42,
+  "optimizer": {"name": "AdamW", "learning_rate": 0.0003, "weight_decay": 0.035, "clip_norm": 1.0},
+  "training": {
+    "batch_size": 1024,
+    "shuffle_buffer": 8192,
+    "drop_last": false,
+    "records_per_epoch": 6573674,
+    "batches_per_epoch": 6420,
+    "max_epochs": 3,
+    "max_optimizer_steps": 19260,
+    "warmup_steps": 963,
+    "stop_after_epoch": 1,
+    "checkpoint_every_batches": 1000,
+    "chunk_size": 65536,
+    "amp": "FP16 input/SID path with GradScaler; dense loss FP32, TF32 disabled",
+    "schedule": "next successful update LR: linear warmup then cosine over original 19260 updates; AMP skips do not advance"
+  },
+  "validation": {
+    "split": "evaluation",
+    "records": 347416,
+    "batch_size": 32,
+    "frequency": "every complete epoch",
+    "candidate_mode": "full_cold",
+    "selection": ["hybrid Recall@5 descending", "hybrid NDCG@5 descending", "epoch ascending"],
+    "test_access": false,
+    "shard_rows": 3200
+  },
+  "smoke": {"train_steps": 3, "save_after_step": 1, "validate_after_step": 2, "validation_records": 65},
+  "resources": {"gpus": 1, "gpu_model": "RTX 4090", "cpu_ceiling": 4, "library_threads": 1}
+}
