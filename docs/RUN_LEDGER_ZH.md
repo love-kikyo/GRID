@@ -1,14 +1,22 @@
 # Run 台账
 
-最后核验：2026-10-19 22:52（Asia/Shanghai）。144510 正在运行真实 train batch 容量短测，1 GPU / 整项 4 CPU，无后继。既有 144477 / 144497 完整验收保留；SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-19 22:57（Asia/Shanghai）。144510 已完整验收，COMPLETED / 0:0，三档真实 train batch 均通过，无 OOM。当前队列为空；SIM 不扩 seed，未提交正式训练。
 
 ## LIGER 真实 train batch 容量测试
 
-144510：10-19 22:51 提交，当前 RUNNING；版本 `900bd5d`，提交时工作树干净。本地 102 项回归通过；计算节点 69 项回归通过（12.71 秒）。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G；Slurm AllocCPUS=4、gres/gpu=1，启动 CPU mask `0x30000003`（CPU `[0,1,28,29]`）。没有自动后继或正式 checkpoint。
+144510：10-19 22:51:23–22:55:14，COMPLETED / 0:0，3m51s（sacct）；版本 `900bd5d`，提交时工作树干净。本地 102 项回归通过；计算节点 69 项回归通过（12.71 秒）。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G；Slurm AllocCPUS=4、gres/gpu=1，CPU `[0,1,28,29]`，启动及三档末尾进程树快照均通过，库线程池 1。GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与 144497 同型号、不同物理卡。没有自动后继或正式 checkpoint。
 
-固定 batch128 / 512 / 1024，每档 1 步预热 + 3 步计时，最多读取 6656 条不同用户的真实 train 记录；各档模型初始化哈希一致，数据读取 / 解码 / 打包计入步耗时。使用已验收的完整消费目录、chunk65536、等价矩阵残差和原优化器 / 损失；OOM 后跳过更大档，部分完成不作为吞吐结果。详见计划中的事前规则，结果待验收。
+固定 batch128 / 512 / 1024，每档 1 步预热 + 3 步计时；实际读取 6656 条不同用户的真实 train 记录，12 次更新均通过，152 个梯度张量有限且优化器状态逐步递增。各档模型初始化哈希一致，数据读取 / 解码 / 打包计入步耗时。完整消费目录、chunk65536、等价矩阵残差和原优化器 / 损失不变；三档均无 OOM，未测试更大 batch，不将 1024 称为容量上限。
 
-[Manifest](../logs/training_launch/liger_batch_2026-10-19_v1/manifest.json) SHA256 `c88e62eb031fc76fe5e87966c6c72a6c57a9cdabc749b81a63993ecb64802a67`；[启动记录](../logs/training_launch/liger_batch_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Batch-144510.out)、[stderr](../logs/slurm/GRID-LIGER-Batch-144510.err)。此项为容量 / 成本诊断，不是完整 epoch 或推荐效果测试，尚未选择正式 batch、预算或 seen / cold 候选策略。
+| Batch | 计时步中位数（秒） | 吞吐（样本/秒） | 峰值 allocated / reserved（GiB） | 单 GPU 一 epoch 粗略外推（小时） |
+| --- | --- | --- | --- | --- |
+| 128 | 8.781 | 14.415 | 2.206 / 2.721 | 126.68 |
+| 512 | 8.947 | 56.905 | 4.019 / 4.725 | 32.09 |
+| 1024 | 9.189 | 110.937 | 6.524 / 7.047 | 16.46 |
+
+吞吐为 3 个计时步的总样本数 / 总耗时，非中位数倒数；预热排除但计入峰值显存。初始化、资产哈希、验证、checkpoint、跨卡同步及全量数据遍历均不在吞吐计时中。原始记录顺序读取、各档输入不相同，缓存和首次访问开销也不同；该短测不是完整 epoch 的稳定吞吐或收敛证据。batch128 首次预热 42.044 秒，后续三个计时步为 9.324 / 8.781 / 8.534 秒；需保留冷启动差异。结果支持 batch 增大摊薄目录成本，不直接证明多卡线性加速或正式大 batch 的效果。
+
+[Manifest](../logs/training_launch/liger_batch_2026-10-19_v1/manifest.json) SHA256 `c88e62eb031fc76fe5e87966c6c72a6c57a9cdabc749b81a63993ecb64802a67`；[启动记录](../logs/training_launch/liger_batch_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Batch-144510.out)、[stderr](../logs/slurm/GRID-LIGER-Batch-144510.err)。[完整报告](../logs/training_launch/liger_batch_2026-10-19_v1/batch_probe.json) SHA256 `334f100979cc3ec18121e1cc39c9d716e821d5fb7b7800c2975eb13b63cc5ef4`；[独立审核](../logs/training_launch/liger_batch_2026-10-19_v1/batch_acceptance.json) SHA256 `cc176d687e3dacace6681dddd1af17f0c8208541a88d5be3e6e980b0191a956f`；[调度终态及复核记录](../logs/training_launch/liger_batch_2026-10-19_v1/completion.json)。结束后只读复核源码 / 清单 / 目录绑定、报告哈希、分档产物与计时算术通过，未重跑 GPU 或 TFRecord。此项为容量 / 成本诊断，尚未选择正式 batch、预算或 seen / cold 候选策略。
 
 ## LIGER 训练目录盘点
 
@@ -189,7 +197,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | RUNNING；69 项计算节点回归通过，无正式训练后继 |
+| 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | COMPLETED / 0:0，3m51s；69 项回归、6656 唯一用户、12 次更新及独立审核通过，无 OOM |
 | 144497 | 10-19 22:28 | LIGER 等价内核对照及完整目录复测，1 GPU / 4 CPU | COMPLETED / 0:0，2m19s；58 项回归、6 项等价核对、4 组组件计时及两次完整更新审核通过 |
 | 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | COMPLETED / 0:0，5m37s；数值通过，第二步 77.17 秒，继续优化计算，不直接训练 |
 | 144468 | 10-19 21:38 | LIGER train-only 物品目录扫描 / 产物审核，1 CPU / 0 GPU | COMPLETED / 0:0，14m11s；33 分片、6573674 用户及三个物品集合验收通过 |
