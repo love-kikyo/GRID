@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-19 20:12（Asia/Shanghai）。SIM-soft seed42 全量 test 已写完，139967 的独立验收发生路径类型错误；仅补 CPU 验收，不重复推理。Validation beta=0.09 与原四模型结果不变。
+最后核验：2026-10-19 20:44（Asia/Shanghai）。SIM-soft seed42 全量 test 补验收 144384 已通过；准备配对统计，不重复推理。Validation beta=0.09 与原四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -10,9 +10,13 @@
 
 ## SIM 独立评估接入
 
+144384：仅补全量 test CPU 验收，版本 `4fc83f9`，整项 1 CPU / 0 GPU，实际 affinity `[16]`；13 项计算节点回归通过，20:14:00 独立收据通过。2061101 唯一用户，输入 / GT / 自然候选 / beam 分数与已验收 SID 缓存完全对齐，568629 条自然 beam 命中；候选唯一、分数有限、全部 runtime 融合分数独立复算通过。原导出源码与 sidecar 精确哈希绑定，未重跑推理、未修改预测或重选 beta。
+
+[补验收日志](../logs/slurm/GRID-SIM-TestAudit-144384.out)、[收据](../logs/training_launch/sim_seed42_test_2026-10-14/cached_full_v1_recovery.json)。收据 SHA256 `952438184d4e1f8b627c7865870667d2f546a95e7d9f477de0e2ca716800df86`；test HDF5 SHA256 `62a4774225542f9ed97135cacdf256c6bc68ae283626cb7455a083ac61e7ab87`；sidecar SHA256 `ba7ba8eb0150a5e54fe24b444bd1e0dfcdc3cac209607e47e98c6e327d779a87`。此次只验收完整性；正式指标与配对区间由下一阶段单独计算。
+
 139967：SIM seed42 全量 test 推理完成，随后独立验收失败。执行版本 `f481f1c`，提交时工作树干净；aias-compute-2 / 1 GPU / 整项 4 CPU / 24G。本地及计算节点各 26 项回归通过，不相加计数；checkpoint 严格加载 missing=0 / unexpected=0。推理 CPU mask `0x300003000`，即 `[12,13,32,33]`。stdout 已确认完整 HDF5 / sidecar 写出；stderr 明确验收 step `139967.2` 退出码 1，未生成验收收据。控制器记录已过期，不虚填整个 job 的 Slurm 记账终态。
 
-原因：独立验收遍历 `verified_training_sources` 时，把 JSON 字符串路径传给仅接受 `Path` 的 `file_sha256`，在读取文件前触发 `AttributeError`；不是推理 NaN、样本不足或已发现数据哈希不符。10-19 增加 `accept_sim_cached_test.py` / CPU1 launcher，仅显式转换路径，并区分 export job / commit 与 audit job / commit。原脚本、sidecar、预测均保留不改，新增回归复现原错误并检查损坏来源仍被拒绝，共 13 项通过。完整产物检查尚须补跑，不能因修复单测通过就记作 test 已验收。
+原因：独立验收遍历 `verified_training_sources` 时，把 JSON 字符串路径传给仅接受 `Path` 的 `file_sha256`，在读取文件前触发 `AttributeError`；不是推理 NaN、样本不足或数据哈希不符。10-19 增加 `accept_sim_cached_test.py` / CPU1 launcher，仅显式转换路径，并区分 export job / commit 与 audit job / commit。原脚本、sidecar、预测均保留不改，新增回归复现原错误并检查损坏来源仍被拒绝，共 13 项通过；完整产物随后由 144384 补验收通过，原失败日志保留。
 
 锁定 SIM best step10000 与 validation beta=0.09；使用已有 SID-only test 自然候选缓存，其与旧 Separate 的候选和 beam 分数逐值相同，原收据与当前 HDF5 / sidecar 哈希均已核对。完整 2061101 条逐用户校验输入 / GT，再用已验收 scorer 打分；不重新生成候选、不注入 GT、不重训或在 test 选权。最后独立进程检查唯一用户 / 输入、候选集合、分数有限性及所有 runtime 融合分数。导出的 runtime beta=0.1 与后续正式 FP32 selected beta=0.09 分开。
 
