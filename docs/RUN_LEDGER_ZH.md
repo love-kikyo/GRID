@@ -1,6 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-20 01:38（Asia/Shanghai）。144626 新版本恢复复验已验收，COMPLETED / 0:0；第一轮正式训练放行待提交。SIM 不扩 seed。
+最后核验：2026-10-20 01:42（Asia/Shanghai）。144629 LIGER seed42 第一轮正式训练 RUNNING，前 5 次更新及启动核验通过；144626 新版本恢复复验已验收。SIM 不扩 seed。
+
+## LIGER seed42 第一轮正式训练
+
+144629：10-20 01:39:08 提交 / 启动，执行版本 `799459f`，提交时工作树干净；绑定 144626 的新版本恢复验收。aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G / 36 小时运行时限，预算并非训练 36 小时。全新 seed42 初始化，batch1024，6573674 条训练记录 / 6420 batch（尾批 618）；每 1000 batch 及验证前后保存 checkpoint。首轮后完整验证 347416 条，主选优 Recall@5 → NDCG@5 → 较早 epoch，输出 Recall / NDCG@5/10/20；完整 cold 不抽样、不按 test 选模型。原三轮总调度 19260 / warmup963 保持，完成第一轮及独立验收后停止，无自动后继或其他 seed。按短测估计训练 + 验证约 20–24 小时，不是完工承诺。
+
+[Manifest](../logs/training_launch/liger_train_seed42_2026-10-20_v1/manifest.json) SHA256 `d6aada83d132b490cce9cea6b1231c459b983ff857b92923b7187284e439361e`；[启动记录](../logs/training_launch/liger_train_seed42_2026-10-20_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Train42-144629.out)、[stderr](../logs/slurm/GRID-LIGER-Train42-144629.err)。[Run 目录](../logs/train/runs/liger_train_seed42_2026-10-20_v1)、[preflight](../logs/train/runs/liger_train_seed42_2026-10-20_v1/preflight.json) SHA256 `f3ac1259199db83c2039c75e3da145b5c46efe6ffe37e2d95529df876174fbba`、[启动核验](../logs/training_launch/liger_train_seed42_2026-10-20_v1/startup_acceptance.json)。22 项启动回归通过；Slurm AllocCPUS=4 / GPU=1，CPU `[0,1,28,29]`，库线程池 1；GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与恢复短测同卡。01:41:50 已完成 5 次更新，无 AMP 跳过；前 3 批身份 / loss / 梯度范数 / 学习率及 scaler 值与已验收连续短测逐值相同（不比较耗时）。这只是启动验收，尚无完整 epoch 或 validation 结果。
 
 ## LIGER 正式入口与新进程恢复短测
 
@@ -223,6 +229,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144629 | 10-20 01:39 | LIGER seed42 第一轮正式训练及全量 validation，1 GPU / 4 CPU | RUNNING；22 项启动回归、preflight / CPU 与前 5 次更新核验通过；首轮后停止 |
 | 144626 | 10-20 01:32 | LIGER 正式入口日志修复后的恢复复验，1 GPU / 4 CPU | COMPLETED / 0:0，4m40s；75 项回归、完整状态 / 更新 / 预测逐值一致，第一轮训练放行 |
 | 144620 | 10-20 01:24 | LIGER 正式配置 / 新进程恢复短测，1 GPU / 4 CPU | COMPLETED / 0:0，4m59s；全状态 / 后续更新 / 完整预测逐值一致；正式入口日志修复后需新版本验收 |
 | 144548 | 10-19 23:46 | LIGER 128 条 validation 完整 cold 排序短测，1 GPU / 4 CPU | COMPLETED / 0:0，2m11s；67 项回归、每批全部 cold、GT 无关性及独立排名审核通过；无正式训练 |
