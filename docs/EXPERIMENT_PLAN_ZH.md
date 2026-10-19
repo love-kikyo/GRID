@@ -4,13 +4,13 @@
 
 2026-09-07 作者补充：继续意味着推进进程，不重复已通过的任务；准备就绪后可启动重训。2026-09-21 更新提交节奏：validation / 选权等短任务可一次提交多项，串行依赖且逐项自动验收；训练 / 全量 test 等长任务仍最多“1 个运行 + 1 个依赖等待”，不预排整串长任务。详见 [开发与记录约定](DEVELOPMENT_WORKFLOW_ZH.md)。
 
-## 当前剩余工作总览（2026-10-12）
+## 当前剩余工作总览（2026-10-19）
 
 三组 seed（42 / 43 / 44）的既定四模型实验、统计与统一硬件效率复测均已验收；自然 beam 分组、来源核验及内部取数索引也已完成。作者取消的历史相关探索及其他 seed 效率测试不恢复。**10-12 新授权扩展 SIM / LIGER 对照，论文继续暂停；原冻结候选保留，新增结果另行验收后再合入。** 对外匿名复现包尚未制作。
 
 ## 外部基线扩展
 
-范围仅为作者批准的 SID-only + SIM 与 LIGER，不同时扩展 DIN、MUSE、LETTER 或 LLM4Rec。工作分支为 `wsdm27-external-baselines-v1`，基点 `c3ffaba`。一次完成一个验收阶段；先 seed42，再按相同方案补 43 / 44，不因 test 结果或是否超过本方法决定保留哪个 baseline。
+范围仅为作者批准的 SID-only + SIM 与 LIGER，不同时扩展 DIN、MUSE、LETTER 或 LLM4Rec。工作分支为 `wsdm27-external-baselines-v1`，基点 `c3ffaba`。一次完成一个验收阶段。**10-19 作者在 SIM seed42 全流程验收后决定停止 SIM seed43 / 44 扩展，将后续算力转向 LIGER。** 此决定替代原“两个基线均补三 seed”的计划；保留 SIM 弱结果及单 seed 局限，不将其删除、称为不可比或宣称原始 SIM 普遍无效。LIGER 先完成适配与规模验证，再放行 seed42，后续 seed 另行验收推进。
 
 | 阶段 | 工作与验收条件 | 状态 |
 | --- | --- | --- |
@@ -18,7 +18,7 @@
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
 | 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现；139475 的 25 项回归、三 rank 两步训练 / 验证及独立报告验收通过 |
 | 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 训练及 best checkpoint 验收通过；LIGER 尚未放行，不预排其他 seed |
-| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM seed42 全流程通过，144442 独立验收 5 项比较；弱结果照实保留。下一项按既定同配置补 seed43，再 seed44；本轮未提交新训练 |
+| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；多 seed 与单 seed 结果分别标识 | SIM seed42 全流程通过，144442 独立验收 5 项比较；弱结果保留，10-19 作者取消 SIM 扩 seed。当前转向 LIGER 训练目录与规模适配 |
 
 SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
 
@@ -28,7 +28,7 @@ SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 
 
 全量 validation 与选权现已验收，seed42 selected beta 固定 **0.09**，不是原三种重排方法的 0.50。Test 使用 `run_sim_cached_test_cpu4.sh`，1 GPU / 整项 4 CPU；运行前验证选权收据、checkpoint 与 test 缓存哈希，覆盖 2061101 条，包括最后 13 条不足 batch。导出仍保存 runtime beta=0.1 的排序与原始 logits；后续正式指标按冻结 beta=0.09 在 FP32 分数上重排。独立完整性验收后才做配对统计，不在 test 搜索或自动提交新 seed。
 
-10-19 test 完整性与配对统计均已验收，原路径类型 / Markdown 顺序问题只修复审核入口，不重复推理或报告生成。配对统计固定 5 项：SID beam → SIM 纯重排、SID beam → SIM selected、SIM 纯重排 → SIM selected、SIM selected → Separate selected、SIM 纯重排 → Separate 纯重排。三者输入与自然候选池逐值对齐；SIM / Separate 各用自己的 validation beta（0.09 / 0.50）。沿用 5000 次 bootstrap、batch500、seed2027、95% CI、Recall / NDCG@5、@10；144442 独立 GT 名次计数复算 20 个差值区间和 10 个 Recall 配对检验通过。单 seed 用户区间不替代训练 seed 波动，两种 reranker 的差距不归因于单个结构增强。后续 seed43 / 44 沿用训练配置，但各自独立 validation 选权，不直接复用 seed42 的 beta。
+10-19 test 完整性与配对统计均已验收，原路径类型 / Markdown 顺序问题只修复审核入口，不重复推理或报告生成。配对统计固定 5 项：SID beam → SIM 纯重排、SID beam → SIM selected、SIM 纯重排 → SIM selected、SIM selected → Separate selected、SIM 纯重排 → Separate 纯重排。三者输入与自然候选池逐值对齐；SIM / Separate 各用自己的 validation beta（0.09 / 0.50）。沿用 5000 次 bootstrap、batch500、seed2027、95% CI、Recall / NDCG@5、@10；144442 独立 GT 名次计数复算 20 个差值区间和 10 个 Recall 配对检验通过。单 seed 用户区间不替代训练 seed 波动，两种 reranker 的差距不归因于单个结构增强。SIM 到此按作者决定收尾，不再提交 seed43 / 44。
 
 SIM 首轮规则固定如下，源码入口为 `sim_rerank_model.py` / `sim_soft.py`，配置为 `tiger_train_sim_soft.yaml`：
 
@@ -40,6 +40,8 @@ SIM 首轮规则固定如下，源码入口为 `sim_rerank_model.py` / `sim_soft
 - 后续独立 full validation 使用已有 beta 0.00–0.50 / 步长 0.01 / 既有 tie-break，锁定后 full test；同时报告 beam-only、纯 ESU 重排、选权融合。BCE 与现有 Separate 的 listwise 不同，该外部基线是方法级比较，不是只改结构的受控消融。不为 beta 重训、不根据 test 扩网格。
 
 LIGER 保留“生成损失 + 稠密分类损失、生成候选后稠密排序”的方法结构。官方代码在 `get_target_embed` 使用逐元素广播，且对全目录执行可训练内容投影；直接按 35458467 行资产搬到 4090 不可行。先验证等价矩阵乘法的数值和梯度，后续仍需解决投影 / 全目录损失的分块与计算预算，不能擅自改成 sampled softmax。资产行数不是已核实的训练活跃物品数。
+
+10-19 当前阶段为 train-only 目录盘点：使用冻结 manifest 中的 33 个训练分片，统计 6573674 条训练样本的三个行号集合——完整存储序列（含 GT）、模型实际消费的最后 7 项历史 + GT、仅训练 GT。保持 row0 为真实物品行；记录实际消费集合的 SID 别名数，不合并不同物品行。1 CPU / 0 GPU，源码 / 输入身份绑定、分片计数和产物独立复核；不读取 held-out 样本、不改变 split、不训练、不计算推荐指标。此项不是恢复已取消的 GT 历史出现 / 召回分析。三集合供规模和身份规划使用，**不等于已批准候选全集或 seen / cold-start 定义**；报告固定 `candidate_universe_finalized=false` / `formal_training_ready=false`。
 
 冻结数据划分、用户样本及历史末项 GT 不变，不运行官方 Amazon 的重新划分 / prefix 扩增脚本。复用当前固定 SID / SCL 时须称固定编码适配版，不宣称完整复现原 RQ-VAE 链路。LIGER 不使用 user ID；正式配置需固定历史预算并披露其内容输入，与现有生成器最多 7 个历史物品的语义一致。冷启动候选分支和训练 seen-item 目录需另行明确：不从 test 标签构造候选，不静默删除原方法的冷启动机制后称完整复现。
 
