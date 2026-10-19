@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-20 01:31（Asia/Shanghai）。144620 新进程恢复短测已通过；正式入口 preflight 写入问题在提交长任务前发现并修复，新执行版本重新验收后放行。SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-20 01:38（Asia/Shanghai）。144626 新版本恢复复验已验收，COMPLETED / 0:0；第一轮正式训练放行待提交。SIM 不扩 seed。
 
 ## LIGER 正式入口与新进程恢复短测
 
@@ -9,6 +9,8 @@
 [Manifest](../logs/training_launch/liger_resume_2026-10-20_v1/manifest.json) SHA256 `24de1d018c96f3d5cd2592fd8a633c0b0e28c656c3ea20020e89e78f3fd73e9a`；[启动记录](../logs/training_launch/liger_resume_2026-10-20_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Resume-144620.out)、[stderr](../logs/slurm/GRID-LIGER-Resume-144620.err)。[独立验收](../logs/training_launch/liger_resume_2026-10-20_v1/resume_acceptance.json) SHA256 `b24e97a7b96075d1adc47b8f0918a4f59ed37f84a257372236f4d4a55fab9937`；[完成记录](../logs/training_launch/liger_resume_2026-10-20_v1/completion.json)。连续 / 恢复的全状态哈希均为 `45f1d841c89b0b3d4f708e6c3ebc70eb746f4e921f3dc0612feeebe7790aacfa`，两步更新与全部预测逐值一致，独立指标复算通过。CPU `[0,1,28,29]`；与 144548 同一物理 4090。早期 beam 仍全部无效，不据短测指标判断效果。
 
 该版本正式入口写 preflight 时重复传入 `status`，会在正式训练开始前报错；审查发现后修复并补充真实编排入口的轻量测试（含尾批、保存、验证选优和停止）。原 144620 的恢复结论保留，但不能为变更后的执行源码直接放行，须新清单 / 新 job 复验。
+
+144626：10-20 01:32:43–01:37:23，COMPLETED / 0:0，4m40s（sacct）；版本 `de6ca5a`，工作树干净，修复 `a1130b9`。本地 191 项 LIGER 回归、计算节点 75 项回归通过，含正式入口 preflight / 尾批 / 保存 / 选优 / 停止编排测试。沿用 144620 资源 / 输入 / 预算 / 验收要求，同一物理 4090、CPU `[0,1,28,29]`。[Manifest](../logs/training_launch/liger_resume_2026-10-20_v2/manifest.json) SHA256 `cb3b4a12049de3200573cfc28b2c397f7cc7026b9a045794c64474ea10d8b8ab`；[启动记录](../logs/training_launch/liger_resume_2026-10-20_v2/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Resume-144626.out)、[stderr](../logs/slurm/GRID-LIGER-Resume-144626.err)。[新版本独立收据](../logs/training_launch/liger_resume_2026-10-20_v2/resume_acceptance.json) SHA256 `089a7bb238d8ba7b059c8b198cdce978f6a14820682b7e35269e96e4484cc8a3`；[完成及只读复核](../logs/training_launch/liger_resume_2026-10-20_v2/completion.json)。两分支最终全状态哈希同为 `8d0f03b1b6f0aba038da615b1c42e81a58d9b2da2df947f6116fdc8bfa867583`；后续更新、65 条全部预测逐值一致，独立指标审核及源码绑定复核通过。新版本放行第一轮正式训练，但不继承 smoke 权重、不给后续 epoch 自动授权。
 
 ## LIGER 完整 cold 验证入口短测
 
@@ -221,6 +223,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144626 | 10-20 01:32 | LIGER 正式入口日志修复后的恢复复验，1 GPU / 4 CPU | COMPLETED / 0:0，4m40s；75 项回归、完整状态 / 更新 / 预测逐值一致，第一轮训练放行 |
 | 144620 | 10-20 01:24 | LIGER 正式配置 / 新进程恢复短测，1 GPU / 4 CPU | COMPLETED / 0:0，4m59s；全状态 / 后续更新 / 完整预测逐值一致；正式入口日志修复后需新版本验收 |
 | 144548 | 10-19 23:46 | LIGER 128 条 validation 完整 cold 排序短测，1 GPU / 4 CPU | COMPLETED / 0:0，2m11s；67 项回归、每批全部 cold、GT 无关性及独立排名审核通过；无正式训练 |
 | 144534 | 10-19 23:27 | LIGER 全资产 SID 索引及逐行复核，1 CPU / 0 GPU | COMPLETED / 0:0，36s；35458467 行无 SID 别名、row0 保留，独立审核通过 |

@@ -17,7 +17,7 @@
 | 1 实现与来源核对 | 查明 Separate 演变；固定 LIGER 官方版本、许可证和执行源码哈希 | 历史已核对；官方版本 `b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524` 已下载至相邻 `liger-upstream`，未安装或升级环境 |
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
 | 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现；139475 的 25 项回归、三 rank 两步训练 / 验证及独立报告验收通过 |
-| 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 训练及 best checkpoint 验收通过；LIGER 尚未放行，不预排其他 seed |
+| 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 已完成；LIGER 144626 新版本恢复验收通过，放行第一轮，不预排后续 epoch / seed |
 | 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；多 seed 与单 seed 结果分别标识 | SIM seed42 全流程通过，144442 独立验收 5 项比较；弱结果保留，10-19 作者取消 SIM 扩 seed。当前转向 LIGER 训练目录与规模适配 |
 
 SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
@@ -65,7 +65,7 @@ LIGER 保留“生成损失 + 稠密分类损失、生成候选后稠密排序�
 
 首次训练前只做一次同配置恢复验收：真实打乱的 batch1024、完整训练目录损失，连续更新 3 步、第 1 步保存；另一个进程从该点完成第 2 / 3 步。两条路径都在第 2 步后执行 65 条完整 cold validation（32 / 32 / 1），比较完整状态哈希、后续样本 / loss / 梯度范数 / 学习率及全部预测逐值一致；CPU 独立复算验证排名。正式任务从新 seed42 初始化，不能从短测 checkpoint 接着训练；恢复短测未验收时清单拒绝正式提交。
 
-已实现独立 train / validation 读取基础组件：只从冻结 manifest 选择对应分片，训练有界打乱、validation 保序，断点按 seed / epoch / 已消费 batch 重放数据游标，保留尾批；仍需真实数据及完整 checkpoint 恢复验证。全资产 SID 索引已构建并逐行验收，候选查找失败返回 -1，不将无效 SID 映射到真实 row0；该索引只解决物品身份，不替代正式训练 / 验证验收。
+已实现独立 train / validation 读取组件：只从冻结 manifest 选择对应分片，训练有界打乱、validation 保序，断点按 seed / epoch / 已消费 batch 重放数据游标，保留尾批；144626 的真实数据及完整 checkpoint 新进程恢复验收通过，全量训练计数和完整 validation 留待首轮结果验收。全资产 SID 索引已构建并逐行验收，候选查找失败返回 -1，不将无效 SID 映射到真实 row0。
 
 冻结数据划分、用户样本及历史末项 GT 不变，不运行官方 Amazon 的重新划分 / prefix 扩增脚本。复用当前固定 SID / SCL 时须称固定编码适配版，不宣称完整复现原 RQ-VAE 链路。LIGER 不使用 user ID；历史预算为最多 7 个物品并披露其内容输入。候选规则按上述已确认协议执行，不从 test 标签构造候选，不静默删除原方法的 cold 补充机制。
 
