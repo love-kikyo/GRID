@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-19 20:44（Asia/Shanghai）。SIM-soft seed42 全量 test 补验收 144384 已通过；准备配对统计，不重复推理。Validation beta=0.09 与原四模型结果不变。
+最后核验：2026-10-19 20:50（Asia/Shanghai）。SIM-soft seed42 全量 test 已验收；144414 统计报告生成及指标 / 区间复算通过，但最后 Markdown 顺序检查失败，仅补报告审核。Validation beta=0.09 与原四模型结果不变。
 
 ## 外部基线正式训练
 
@@ -9,6 +9,12 @@
 [启动及放行记录](../logs/training_launch/sim_soft_seed42_139478.json)、[stdout](../logs/slurm/GRID-SIM-HLastV1-139478.out)、[stderr](../logs/slurm/GRID-SIM-HLastV1-139478.err)、[训练 preflight](../logs/training_preflight/sim_soft_train_seed42_139478.json)。Run 为 `logs/train/runs/2026-10-12/sim-soft-train-seed42-139478`，仅保留 `checkpoint_000_010000.ckpt`。复用 seed42 SID teacher，自然 beam20、GSU TopK10、ESU4头、双 BCE；详细固定规则见计划。checkpoint 张量 / teacher 验收已通过；独立评估候选来源确认并验收后，再进入完整 validation / 选权、full test 与配对统计。
 
 ## SIM 独立评估接入
+
+144414：SIM / SID-only / Separate seed42 的 5 项配对比较，版本 `39889c9`，提交时工作树干净；aias-compute-2 / 整项 4 CPU / 0 GPU / 16G，affinity `[0,1,12,13]`。本地与计算节点各 35 项回归通过；三份预测与两份选权哈希核对、报告生成，以及独立 20 个差值区间 / 10 个 Recall 检验复算均通过。最后的 Markdown 精确文本比较失败，step `144414.2` 退出 1，未生成完整收据。
+
+原因是 JSON 的 `sort_keys=True` 将指标键排序，而 Markdown 在 JSON 序列化前按 Recall@5、NDCG@5、Recall@10、NDCG@10 渲染；数值未变，仅重新渲染的行顺序不同。修复只恢复预声明的显示顺序，仍逐字核对全部 Markdown 数值；新增回归重现排序问题并拒绝篡改数值。补审核严格绑定原报告 / Markdown / preflight 哈希，只允许原统计入口的精确旧 SHA256 被本次审核修复替代，其余来源仍逐文件核对；不重新生成统计报告或推理。
+
+[启动记录](../logs/training_launch/sim_seed42_paired_2026-10-19/launch_v1.json)、[stdout](../logs/slurm/GRID-SIM-Paired-144414.out)、[stderr](../logs/slurm/GRID-SIM-Paired-144414.err)。报告 `paired_report_sim_seed42_full_v1.json` / `.md` 已存在；`paired_sim_seed42_acceptance_v1.json` 收据待补审核通过后生成。
 
 144384：仅补全量 test CPU 验收，版本 `4fc83f9`，整项 1 CPU / 0 GPU，实际 affinity `[16]`；13 项计算节点回归通过，20:14:00 独立收据通过。2061101 唯一用户，输入 / GT / 自然候选 / beam 分数与已验收 SID 缓存完全对齐，568629 条自然 beam 命中；候选唯一、分数有限、全部 runtime 融合分数独立复算通过。原导出源码与 sidecar 精确哈希绑定，未重跑推理、未修改预测或重选 beta。
 

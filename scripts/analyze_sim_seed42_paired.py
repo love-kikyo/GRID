@@ -38,6 +38,13 @@ N, CHUNK = 2061101, 65536
 REPORT = BASE / 'paired_report_sim_seed42_full_v1.json'
 PREFLIGHT = BASE / 'paired_sim_seed42_preflight_v1.json'
 ACCEPTANCE = BASE / 'paired_sim_seed42_acceptance_v1.json'
+ORIGINAL_ANALYSIS_COMMIT = '39889c9f1f778432d89c605f16bd00c52383bc08'
+ORIGINAL_AUDIT_SHA = 'dbe96bd544a2edb990f3ad3d0bdb785874522de0170f9b57436cd14958419a76'
+RECOVERY_INPUT_HASHES = {
+    PREFLIGHT: '03635dac3b5e20fc7bd206502fd39bfaca557fbee75b21a76d68243875e740c8',
+    REPORT: 'cfd50605a0266fa6e36ceae45f2ee79996dce0c73bab01d522213dcba51a95f9',
+    REPORT.with_suffix('.md'): 'b12d989b339af5a13ea6bd34e8dc4c7e0d010f545466082a2248e98c05b75389',
+}
 
 
 def record(path):
@@ -124,15 +131,38 @@ def resolved_comparisons():
     return result
 
 
-def audit():
+def verify_markdown(report, text):
+    # The original renderer runs before JSON sort_keys=True serialization.
+    # Restore only the declared metric display order, without changing values.
+    ordered = {**report, 'comparisons': [
+        {**c, 'metrics': {key: c['metrics'][key] for key in METRICS}}
+        for c in report['comparisons']]}
+    assert text == markdown_report(ordered)
+
+
+def verify_source_record(entry, recovery):
+    if recovery and Path(entry['path']).resolve() == Path(__file__).resolve():
+        # Only the exact original audit source may be superseded. Predictions,
+        # selections, statistics core, original launcher and reports stay bound.
+        assert entry['sha256'] == ORIGINAL_AUDIT_SHA
+    else:
+        assert record(entry['path']) == entry
+
+
+def audit(recovery=False):
     assert len(os.sched_getaffinity(0)) == 1 and not ACCEPTANCE.exists()
+    if recovery:
+        assert os.environ['SLURM_JOB_ID'] != '144414'
+        for path, digest in RECOVERY_INPUT_HASHES.items():
+            assert sha(path) == digest, path
     preflight, report = json.loads(PREFLIGHT.read_text()), json.loads(REPORT.read_text())
     assert preflight['status'] == 'passed' and preflight['bindings'] == verify_bindings()
-    assert preflight['job_id'] == report['slurm_job_id'] == os.environ['SLURM_JOB_ID']
-    assert preflight['source_git_commit'] == report['source_git_commit'] == os.environ['SOURCE_GIT_COMMIT']
+    assert preflight['job_id'] == report['slurm_job_id'] == ('144414' if recovery else os.environ['SLURM_JOB_ID'])
+    assert preflight['source_git_commit'] == report['source_git_commit'] == (
+        ORIGINAL_ANALYSIS_COMMIT if recovery else os.environ['SOURCE_GIT_COMMIT'])
     assert preflight['comparisons'] == COMPARISONS
     for entry in preflight['source_files'] + report['source_files']:
-        assert record(entry['path']) == entry
+        verify_source_record(entry, recovery)
     assert report['analyzer_sha256'] == sha(ROOT / 'scripts/analyze_paired_evaluation.py')
     assert report['inputs'] == {k: str(p) for k, p in INPUTS.items()}
     assert report['num_examples'] == N and report['sample_unit'] == 'unique_user_history'
@@ -208,9 +238,10 @@ def audit():
                 assert binary['baseline_miss_challenger_hit'] == win and binary['baseline_hit_challenger_miss'] == loss
                 assert binary['discordant_pairs'] == win + loss
                 assert binary['exact_two_sided_pvalue'] == (float(binomtest(win, win + loss, .5).pvalue) if win + loss else 1.)
-    assert REPORT.with_suffix('.md').read_text() == markdown_report(report)
+    verify_markdown(report, REPORT.with_suffix('.md').read_text())
     result = dict(status='passed', checked_at=datetime.now().astimezone().isoformat(),
                   job_id=os.environ['SLURM_JOB_ID'], source_git_commit=os.environ['SOURCE_GIT_COMMIT'],
+                  analysis_job_id=report['slurm_job_id'], analysis_source_git_commit=report['source_git_commit'],
                   num_examples=N, comparisons_verified=5, metric_deltas_and_intervals_verified=20,
                   recall_paired_tests_verified=10, same_inputs_targets_candidates_and_beam_scores=True,
                   natural_beam_hits=coverage, verified_metrics=means, intervals_crossing_zero=crosses,
@@ -222,6 +253,11 @@ def audit():
                       'SIM/Separate differ in objective and architecture; not a single-feature ablation',
                       'Existing split overlap retained; no new history analysis',
                       'Zero stored p-values may reflect floating-point underflow'])
+    if recovery:
+        result['audit_recovery'] = dict(original_audit_sha256=ORIGINAL_AUDIT_SHA,
+            fix='Restore declared metric display order after sorted-key JSON load',
+            reports_unchanged=True, statistics_generation_repeated=False,
+            recovery_launcher=record(ROOT / 'run_sim_paired_audit_recovery_cpu1.sh'))
     with ACCEPTANCE.open('x') as f:
         json.dump(result, f, indent=2, allow_nan=False)
         f.write('\n')
@@ -229,5 +265,5 @@ def audit():
 
 
 if __name__ == '__main__':
-    assert sys.argv[1:] in (['run'], ['audit'])
-    run() if sys.argv[1] == 'run' else audit()
+    assert sys.argv[1:] in (['run'], ['audit'], ['audit-recovery'])
+    run() if sys.argv[1] == 'run' else audit(recovery=sys.argv[1] == 'audit-recovery')

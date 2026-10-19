@@ -1,12 +1,14 @@
 from pathlib import Path
+import json
 import subprocess
 
 import numpy as np
 import pytest
 
 from scripts.analyze_sim_seed42_paired import (arguments, independent_values, resolved_comparisons,
-                                             COMPARISONS, VARIANTS)
-from scripts.analyze_paired_evaluation import ranked_candidates, metric_contributions
+                                             COMPARISONS, VARIANTS, METRICS, verify_markdown,
+                                             verify_source_record, ORIGINAL_AUDIT_SHA)
+from scripts.analyze_paired_evaluation import ranked_candidates, metric_contributions, markdown_report
 
 
 @pytest.mark.parametrize('variant', ['beam', 'click', 'fusion@1@0.09', 'fusion@1@0.50'])
@@ -49,3 +51,43 @@ def test_launcher_is_cpu_only_sequential_and_has_no_successor():
     assert 'SIM_TEST_ACCEPTANCE_SHA256' in text
     assert text.index('-m pytest') < text.index('analyze_sim_seed42_paired run') < text.index('analyze_sim_seed42_paired audit')
     assert 'sbatch ' not in text and 'select_score_fusion' not in text
+
+
+def test_markdown_json_roundtrip_preserves_original_metric_display_order():
+    metric = dict(baseline_mean=.1, challenger_mean=.2, absolute_gain=.1,
+                  relative_gain_percent=100., paired_bootstrap_ci=[.09, .11])
+    original = dict(sample_unit='unique_user_history', bootstrap_samples=5000, seed=2027,
+                    comparisons=[dict(baseline='a:beam', challenger='b:click',
+                                      metrics={key: dict(metric) for key in METRICS})])
+    text = markdown_report(original)
+    loaded = json.loads(json.dumps(original, sort_keys=True))
+    assert markdown_report(loaded) != text  # Reproduce the old display-order failure.
+    verify_markdown(loaded, text)
+    with pytest.raises(AssertionError):
+        verify_markdown(loaded, text.replace('0.200000', '0.900000'))
+    loaded['comparisons'][0]['metrics']['recall@5']['challenger_mean'] = .9
+    with pytest.raises(AssertionError):
+        verify_markdown(loaded, text)
+
+
+def test_recovery_source_exception_is_exact_and_scoped(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    old = dict(path=str(root / 'scripts/analyze_sim_seed42_paired.py'), sha256=ORIGINAL_AUDIT_SHA)
+    verify_source_record(old, recovery=True)
+    with pytest.raises(AssertionError):
+        verify_source_record(old, recovery=False)
+    with pytest.raises(AssertionError):
+        verify_source_record({**old, 'sha256': 'wrong'}, recovery=True)
+    path = tmp_path / 'unrelated.py'
+    path.write_text('untouched')
+    with pytest.raises(AssertionError):
+        verify_source_record({**old, 'path': str(path)}, recovery=True)
+
+
+def test_recovery_launcher_only_reaudits_existing_report():
+    path = Path(__file__).resolve().parents[1] / 'run_sim_paired_audit_recovery_cpu1.sh'
+    subprocess.run(['bash', '-n', str(path)], check=True)
+    text = path.read_text()
+    assert '#SBATCH --cpus-per-task=1' in text and '#SBATCH --gres=gpu:0' in text
+    assert 'analyze_sim_seed42_paired audit-recovery' in text
+    assert 'analyze_sim_seed42_paired run' not in text and 'sbatch ' not in text
