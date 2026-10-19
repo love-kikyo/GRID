@@ -1,6 +1,14 @@
 # Run 台账
 
-最后核验：2026-10-19 23:49（Asia/Shanghai）。144548 真实 validation 完整 cold 排序短测已验收，COMPLETED / 0:0；144534 全资产 SID 索引已验收。SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-20 01:31（Asia/Shanghai）。144620 新进程恢复短测已通过；正式入口 preflight 写入问题在提交长任务前发现并修复，新执行版本重新验收后放行。SIM 不扩 seed，未提交正式训练。
+
+## LIGER 正式入口与新进程恢复短测
+
+144620：10-20 01:24:11–01:29:10，COMPLETED / 0:0，4m59s（sacct）；执行版本 `c7f2291`，工作树干净。本地 190 项 LIGER 回归、计算节点 74 项回归通过。aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G，无自动后继。真实训练 batch1024，完整消费目录损失；连续 3 步和另一进程从第 1 步恢复后的 2 步，共执行 5 次更新，不作为正式训练预算或 checkpoint。两条路径各在第 2 步后验证 65 条（32 / 32 / 1），每条扫描全部 cold；不读取 test。
+
+[Manifest](../logs/training_launch/liger_resume_2026-10-20_v1/manifest.json) SHA256 `24de1d018c96f3d5cd2592fd8a633c0b0e28c656c3ea20020e89e78f3fd73e9a`；[启动记录](../logs/training_launch/liger_resume_2026-10-20_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Resume-144620.out)、[stderr](../logs/slurm/GRID-LIGER-Resume-144620.err)。[独立验收](../logs/training_launch/liger_resume_2026-10-20_v1/resume_acceptance.json) SHA256 `b24e97a7b96075d1adc47b8f0918a4f59ed37f84a257372236f4d4a55fab9937`；[完成记录](../logs/training_launch/liger_resume_2026-10-20_v1/completion.json)。连续 / 恢复的全状态哈希均为 `45f1d841c89b0b3d4f708e6c3ebc70eb746f4e921f3dc0612feeebe7790aacfa`，两步更新与全部预测逐值一致，独立指标复算通过。CPU `[0,1,28,29]`；与 144548 同一物理 4090。早期 beam 仍全部无效，不据短测指标判断效果。
+
+该版本正式入口写 preflight 时重复传入 `status`，会在正式训练开始前报错；审查发现后修复并补充真实编排入口的轻量测试（含尾批、保存、验证选优和停止）。原 144620 的恢复结论保留，但不能为变更后的执行源码直接放行，须新清单 / 新 job 复验。
 
 ## LIGER 完整 cold 验证入口短测
 
@@ -213,6 +221,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144620 | 10-20 01:24 | LIGER 正式配置 / 新进程恢复短测，1 GPU / 4 CPU | COMPLETED / 0:0，4m59s；全状态 / 后续更新 / 完整预测逐值一致；正式入口日志修复后需新版本验收 |
 | 144548 | 10-19 23:46 | LIGER 128 条 validation 完整 cold 排序短测，1 GPU / 4 CPU | COMPLETED / 0:0，2m11s；67 项回归、每批全部 cold、GT 无关性及独立排名审核通过；无正式训练 |
 | 144534 | 10-19 23:27 | LIGER 全资产 SID 索引及逐行复核，1 CPU / 0 GPU | COMPLETED / 0:0，36s；35458467 行无 SID 别名、row0 保留，独立审核通过 |
 | 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | COMPLETED / 0:0，3m51s；69 项回归、6656 唯一用户、12 次更新及独立审核通过，无 OOM |
