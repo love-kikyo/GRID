@@ -1,6 +1,14 @@
 # Run 台账
 
-最后核验：2026-10-19 22:32（Asia/Shanghai）。144477 / 144497 均已完整验收，COMPLETED / 0:0；优化后第二步 8.16 秒，仍需较大 batch 吞吐核验。当前无运行或排队任务；SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-19 22:52（Asia/Shanghai）。144510 正在运行真实 train batch 容量短测，1 GPU / 整项 4 CPU，无后继。既有 144477 / 144497 完整验收保留；SIM 不扩 seed，未提交正式训练。
+
+## LIGER 真实 train batch 容量测试
+
+144510：10-19 22:51 提交，当前 RUNNING；版本 `900bd5d`，提交时工作树干净。本地 102 项回归通过；计算节点 69 项回归通过（12.71 秒）。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G；Slurm AllocCPUS=4、gres/gpu=1，启动 CPU mask `0x30000003`（CPU `[0,1,28,29]`）。没有自动后继或正式 checkpoint。
+
+固定 batch128 / 512 / 1024，每档 1 步预热 + 3 步计时，最多读取 6656 条不同用户的真实 train 记录；各档模型初始化哈希一致，数据读取 / 解码 / 打包计入步耗时。使用已验收的完整消费目录、chunk65536、等价矩阵残差和原优化器 / 损失；OOM 后跳过更大档，部分完成不作为吞吐结果。详见计划中的事前规则，结果待验收。
+
+[Manifest](../logs/training_launch/liger_batch_2026-10-19_v1/manifest.json) SHA256 `c88e62eb031fc76fe5e87966c6c72a6c57a9cdabc749b81a63993ecb64802a67`；[启动记录](../logs/training_launch/liger_batch_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Batch-144510.out)、[stderr](../logs/slurm/GRID-LIGER-Batch-144510.err)。此项为容量 / 成本诊断，不是完整 epoch 或推荐效果测试，尚未选择正式 batch、预算或 seen / cold 候选策略。
 
 ## LIGER 训练目录盘点
 
@@ -181,6 +189,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | RUNNING；69 项计算节点回归通过，无正式训练后继 |
 | 144497 | 10-19 22:28 | LIGER 等价内核对照及完整目录复测，1 GPU / 4 CPU | COMPLETED / 0:0，2m19s；58 项回归、6 项等价核对、4 组组件计时及两次完整更新审核通过 |
 | 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | COMPLETED / 0:0，5m37s；数值通过，第二步 77.17 秒，继续优化计算，不直接训练 |
 | 144468 | 10-19 21:38 | LIGER train-only 物品目录扫描 / 产物审核，1 CPU / 0 GPU | COMPLETED / 0:0，14m11s；33 分片、6573674 用户及三个物品集合验收通过 |
