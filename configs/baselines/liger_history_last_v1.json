@@ -1,0 +1,41 @@
+{
+  "protocol": "liger-fixed-sid-scl-history-last-v1",
+  "data_protocol": "history-last-user-v1",
+  "candidate_universe_finalized": true,
+  "formal_training_ready": false,
+  "history_items": 7,
+  "asset_rows": 35458467,
+  "seen_definition": "Union of the last seven history rows and GT in training records only",
+  "seen_rows": 11542755,
+  "cold_definition": "Fixed asset universe minus seen; not temporal new-item status",
+  "cold_rows": 23915712,
+  "inference": {
+    "generation_beams": 20,
+    "generation_new_tokens": 4,
+    "generation_constraints": "none",
+    "candidate_set": "valid natural beam20 union every cold asset row",
+    "invalid_sid": "missing row -1, never map to row0 or backfill",
+    "ranking": "FP32 normalized dot product divided by 0.07",
+    "tie_break": "ascending global asset row",
+    "remove_history_items": false,
+    "cache": "full cold FP32 projections, eval only, rebuild after weight changes",
+    "metrics": ["Recall", "NDCG"],
+    "cutoffs": [5, 10, 20],
+    "same_checkpoint_beam_only_diagnostic": true
+  },
+  "training_budget": {
+    "seed": 42,
+    "gpus": 1,
+    "total_cpu_ceiling": 4,
+    "batch_size": 1024,
+    "drop_last": false,
+    "records_per_epoch": 6573674,
+    "batches_per_epoch": 6420,
+    "max_epochs": 3,
+    "stop_for_acceptance_after_epochs": 1,
+    "max_optimizer_steps": 19260,
+    "learning_rate": 0.0003,
+    "warmup_steps": 963,
+    "scheduler": "cosine over the original three-epoch budget, unchanged on resume"
+  }
+}
