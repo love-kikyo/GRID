@@ -37,7 +37,7 @@ def run(path):
         assert p['epoch'] < budget['stop_after_epoch'] == 1
         report.update(initial_progress=copy.deepcopy(p), initialization=m['initialization'],
                       initial_state_sha256=ctx.initial_sha, resources=ctx.resources, gpu=ctx.gpu, versions=ctx.versions)
-        write_new(directory / 'preflight.json', dict(**report, status='ready', config=ctx.config,
+        write_new(directory / 'preflight.json', dict(report, status='ready', config=ctx.config,
             training_seen_rows=len(ctx.seen), cold_rows=len(ctx.cold), cpu_checks=ctx.cpu_checks,
             checked_at=datetime.now().astimezone().isoformat()))
 

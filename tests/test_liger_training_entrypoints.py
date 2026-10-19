@@ -57,3 +57,64 @@ def test_resume_binding_distinguishes_smoke_from_formal():
     smoke = manifest.checkpoint_binding(dict(m, formal_training_ready=False))
     formal = manifest.checkpoint_binding(dict(m, formal_training_ready=True))
     assert smoke != formal and smoke['purpose'] == 'smoke' and formal['purpose'] == 'formal'
+
+
+def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkeypatch):
+    """Exercise the real orchestrator with tiny stand-ins, not a GPU cost probe."""
+    from types import SimpleNamespace
+    import torch
+    from src.baselines import liger_runtime, liger_training, liger_validation
+    from src.baselines.liger_state import BudgetSchedule
+    from scripts.probe_liger_cpu4 import sha, write_new
+    path = tmp_path / 'manifest.json'
+    path.write_text('{}')
+    m = dict(formal_training_ready=True, phase='first_epoch_formal_training',
+             run_directory=str(tmp_path / 'run'), source_git_commit='unit', initialization='seed42 random')
+    monkeypatch.setattr(train_liger_cpu4, 'binding', lambda _: m)
+    monkeypatch.setenv('SLURM_JOB_ID', 'unit')
+    monkeypatch.setattr(torch.cuda, 'synchronize', lambda: None)
+    model = torch.nn.Linear(1, 1)
+    opt = torch.optim.AdamW(model.parameters())
+    sched = BudgetSchedule(opt, total=6, warmup=2)
+    scaler = torch.amp.GradScaler('cuda', enabled=False)
+    budget = dict(batch_size=2, records_per_epoch=3, batches_per_epoch=2, max_epochs=3,
+                  max_optimizer_steps=6, stop_after_epoch=1, checkpoint_every_batches=1, chunk_size=2)
+    ctx = SimpleNamespace(components=(model, opt, sched, scaler), model=model, binding={'purpose': 'unit'},
+        config=dict(training=budget, validation=dict(records=3)), method=None, official=None,
+        sids=None, content=None, seen=[0], cold=[1], index=None, catalog=None,
+        initial_sha='unit', resources={}, gpu={}, versions={}, cpu_checks=[],
+        cpu_check=lambda: None,
+        batches=lambda **kwargs: (batch for batch in [(0, ['a', 'b']), (1, ['c'])]))
+    monkeypatch.setattr(liger_runtime, 'Runtime', lambda _: ctx)
+    consumed = []
+    def step(*args, **kwargs):
+        records, p = args[6], args[11]
+        consumed.append(len(records))
+        sched.step()
+        p['updates'] += 1
+        p['batches_consumed'] += 1
+        p['next_batch'] += 1
+        p['samples_in_epoch'] += len(records)
+        return dict(batch=p['next_batch'], rows=len(records))
+    monkeypatch.setattr(liger_training, 'train_step', step)
+    metrics = {'Recall@5': .2, 'NDCG@5': .1}
+    def evaluate(*args, **kwargs):
+        directory, expected, checkpoint = args[9:12]
+        directory.mkdir()
+        assert expected == 3
+        report = dict(metrics={'hybrid': metrics}, checkpoint=checkpoint)
+        write_new(directory / 'report.json', report)
+        return report
+    def audit(directory, *args):
+        receipt = dict(report=dict(path=str(directory / 'report.json'), sha256=sha(directory / 'report.json')))
+        write_new(directory / 'acceptance.json', receipt)
+        return receipt
+    monkeypatch.setattr(liger_validation, 'evaluate', evaluate)
+    monkeypatch.setattr(liger_validation, 'audit', audit)
+    train_liger_cpu4.run(path)
+    result = json.loads((tmp_path / 'run/result.json').read_text())
+    preflight = json.loads((tmp_path / 'run/preflight.json').read_text())
+    assert preflight['status'] == 'ready' and result['status'] == 'passed'
+    assert consumed == [2, 1] and result['final_progress']['epoch'] == 1
+    assert result['stopped_for_author_acceptance'] and not result['automatic_successor']
+    assert len(result['checkpoints']) == 4 and result['best']['epoch'] == 1
