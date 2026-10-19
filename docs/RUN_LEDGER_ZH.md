@@ -1,6 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-19 22:57（Asia/Shanghai）。144510 已完整验收，COMPLETED / 0:0，三档真实 train batch 均通过，无 OOM。当前队列为空；SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-19 23:41（Asia/Shanghai）。144534 全资产 SID 索引已验收，COMPLETED / 0:0；完整 cold 候选规则已确认，下一项为真实 validation 排序成本短测。SIM 不扩 seed，未提交正式训练。
+
+## LIGER 全资产 SID 映射
+
+144534：10-19 23:27:46–23:28:22，COMPLETED / 0:0，36 秒（sacct）；执行版本 `ae0986e`，提交时工作树干净。aias-compute-2 / 1 CPU / 0 GPU / 8G，CPU0；22 项计算节点回归通过。35458467 行资产索引及独立逐行复核通过，SID 别名 0，row0 保留；两份索引共 425501860 bytes。不读取 train / validation / test 记录，不计算推荐指标。
+
+[Manifest](../logs/training_launch/liger_index_2026-10-19_v1/manifest.json) SHA256 `f246248de9bd89222887fcf16e6019bdab17164df23053bac15b5cb158c763bf`；[启动记录](../logs/training_launch/liger_index_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Index-144534.out)、[stderr](../logs/slurm/GRID-LIGER-Index-144534.err)。[全量报告](../logs/training_launch/liger_index_2026-10-19_v1/index_report.json) SHA256 `bf9752c2bef69cf917206a9914097b7f0a45c8193207150c6f077d6346d70eef`；[独立审核](../logs/training_launch/liger_index_2026-10-19_v1/index_acceptance.json) SHA256 `7135394b01db961c91b99687eecc616398c61aa5c0c0ce80147cc8cbeac16109`。索引报告的 `candidate_universe_finalized=false` 仅表示该任务不决定候选范围，不改写旧报告；作者已确认的范围由新协议配置单独固定。
 
 ## LIGER 真实 train batch 容量测试
 
@@ -197,6 +203,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144534 | 10-19 23:27 | LIGER 全资产 SID 索引及逐行复核，1 CPU / 0 GPU | COMPLETED / 0:0，36s；35458467 行无 SID 别名、row0 保留，独立审核通过 |
 | 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | COMPLETED / 0:0，3m51s；69 项回归、6656 唯一用户、12 次更新及独立审核通过，无 OOM |
 | 144497 | 10-19 22:28 | LIGER 等价内核对照及完整目录复测，1 GPU / 4 CPU | COMPLETED / 0:0，2m19s；58 项回归、6 项等价核对、4 组组件计时及两次完整更新审核通过 |
 | 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | COMPLETED / 0:0，5m37s；数值通过，第二步 77.17 秒，继续优化计算，不直接训练 |

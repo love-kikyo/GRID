@@ -53,11 +53,15 @@ LIGER 保留“生成损失 + 稠密分类损失、生成候选后稠密排序�
 
 10-19 作者确认预算：单张 4090、batch1024、seed42、最多 3 个完整 epoch，先完成 1 个 epoch 后验收再续训。每轮 6420 个 batch，末批 618 条，不丢弃；总上限 19260 个 batch / 最多同数优化器更新，AMP 跳过更新时另记计数。学习率 3e-4，总调度预算固定 19260，前 963 步 warmup 后 cosine；续训保留原调度，不在验收后重新安排三轮预算。已有短测粗估纯训练约 16.5 小时/轮，验证、保存与数据遍历额外耗时另计。正式训练须先完成候选 / 验证入口与恢复短测；没有获准自动扩 seed。
 
-候选策略仍待作者决定。[LIGER 原文第 3 节](https://arxiv.org/html/2411.18814v2#S3)及[固定版本官方实现](https://github.com/facebookresearch/liger/blob/b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524/src/evaluation.py#L508)将生成候选与 cold 集合合并后进行稠密排序。建议主外部 baseline 保留这一机制，另用同一 checkpoint 报告 beam20-only 作为去掉 cold 补充的消融；不同方法的自然候选不必逐值相同，但候选范围、输入信息与计算成本必须披露。拟议 seen 为训练实际消费的最后 7 项历史 + GT，cold 为固定资产全集减 seen，不按 held-out 标签挑选；这一定义下的目录外集合不代表按时间划分的新物品。该规则与两个推理版本尚未获准，不据 test 效果选择是否补 cold。
+10-19 作者确认采用完整 cold 补充版，最终比较 Recall / NDCG@5、@10、@20。[LIGER 原文第 3 节](https://arxiv.org/html/2411.18814v2#S3)及[固定版本官方实现](https://github.com/facebookresearch/liger/blob/b6ccc37af5ee623ddc1d1ead3490c31aaeaf4524/src/evaluation.py#L508)将生成候选与 cold 集合合并后进行稠密排序。主外部 baseline 保留这一机制，同一 checkpoint 的 beam20-only 只作补充消融；不据 test 效果选择是否补 cold。Seen 固定为训练实际消费的最后 7 项历史 + GT，cold 为固定资产全集减 seen，不按 held-out 标签挑选；这一定义下的目录外集合不代表按时间划分的新物品。不同方法的自然候选不必逐值相同，但候选范围、输入信息与计算成本必须披露。
 
-已实现独立 train / validation 读取基础组件：只从冻结 manifest 选择对应分片，训练有界打乱、validation 保序，断点按 seed / epoch / 已消费 batch 重放数据游标，保留尾批；仍需真实数据及完整 checkpoint 恢复验证。全资产 SID 索引构建与独立逐行审核入口已实现但尚未提交，候选查找失败返回 -1，不将无效 SID 映射到真实 row0；它只解决物品身份，不决定候选策略，也不代表生成 / 排序入口已完成。
+[机器可读协议](../configs/baselines/liger_history_last_v1.json)固定自然 beam20、四层 SID、无额外生成约束、有效候选与全部 cold 的并集、FP32 归一化内积 / 温度 0.07 排序、同分时 global row 升序；不融合 beam 分数、不按用户过滤历史物品、无效 SID 不补候选，合并后物品去重。每个 checkpoint 在 eval 模式投影全部 cold 并缓存 FP32 表示，权重变动后缓存失效；分块精确 Top20 再与 seen beam 候选合并，结果等价于完整并集 Top20，不做负采样或近似检索。原四模型的 @20 优先从已验收完整预测补算，尚未完成，不重写既有 @5 / @10 主表。
 
-冻结数据划分、用户样本及历史末项 GT 不变，不运行官方 Amazon 的重新划分 / prefix 扩增脚本。复用当前固定 SID / SCL 时须称固定编码适配版，不宣称完整复现原 RQ-VAE 链路。LIGER 不使用 user ID；正式配置需固定历史预算并披露其内容输入，与现有生成器最多 7 个历史物品的语义一致。冷启动候选分支和训练 seen-item 目录需另行明确：不从 test 标签构造候选，不静默删除原方法的冷启动机制后称完整复现。
+本轮真实规模放行短测固定为 128 条 validation（4 × 32，首批预热）、单张 4090 / 整项 4 CPU：记录全 cold 缓存建立、数据读入、自然生成与精确排序耗时及显存；GPU 小集合整表对照、GT 改写不影响生成、完整扫描行数、候选身份与独立排名指标复算均须通过。使用随机初始化，指标只作实现诊断；不读取 test、不产生正式 checkpoint、不更新参数或自动提交长训练。
+
+已实现独立 train / validation 读取基础组件：只从冻结 manifest 选择对应分片，训练有界打乱、validation 保序，断点按 seed / epoch / 已消费 batch 重放数据游标，保留尾批；仍需真实数据及完整 checkpoint 恢复验证。全资产 SID 索引已构建并逐行验收，候选查找失败返回 -1，不将无效 SID 映射到真实 row0；该索引只解决物品身份，不替代正式训练 / 验证验收。
+
+冻结数据划分、用户样本及历史末项 GT 不变，不运行官方 Amazon 的重新划分 / prefix 扩增脚本。复用当前固定 SID / SCL 时须称固定编码适配版，不宣称完整复现原 RQ-VAE 链路。LIGER 不使用 user ID；历史预算为最多 7 个物品并披露其内容输入。候选规则按上述已确认协议执行，不从 test 标签构造候选，不静默删除原方法的 cold 补充机制。
 
 计算仍受整项 4 CPU 限制。首项短测只申请 1 GPU，不改 GRID 环境；正式训练 / 全量 test 最多 1 运行 + 1 依赖等待。新运行不覆盖旧 run，新增方法也不得触发已关闭的历史分析。
 
