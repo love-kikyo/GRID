@@ -11,14 +11,18 @@ from scripts.probe_liger_cpu4 import ROOT, sha, git, write_new, verify_hashes, i
 
 INVENTORY = ROOT / 'logs/training_launch/liger_catalog_2026-10-19_v1'
 PRIOR = ROOT / 'logs/training_launch/liger_probe_2026-10-12_v2'
+BASELINE_SCALE = ROOT / 'logs/training_launch/liger_scale_2026-10-19_v1'
 SOURCES = ['scripts/probe_liger_full_catalog.py', 'src/baselines/liger_full_catalog.py',
            'tests/test_liger_full_catalog.py', 'tests/test_liger_scale_probe.py',
            'run_liger_full_catalog_probe_cpu4.sh', 'scripts/probe_liger_cpu4.py',
-           'src/baselines/liger_inputs.py', 'src/runtime_cpu.py', 'src/runtime_export_cpu.py']
+           'src/baselines/liger_inputs.py', 'src/runtime_cpu.py', 'src/runtime_export_cpu.py',
+           'src/baselines/liger_projection.py', 'tests/test_liger_projection.py',
+           'scripts/liger_projection_diagnostic.py']
 
 
-def prepare(path):
+def prepare(path, projection_backend='conv1d', chunk_size=8192):
     assert not path.exists() and not git(ROOT, 'status', '--porcelain')
+    assert projection_backend in {'conv1d', 'linear'} and chunk_size in {8192, 65536}
     acceptance = json.loads((INVENTORY / 'catalog_acceptance.json').read_text())
     assert acceptance['status'] == 'passed' and acceptance['records'] == 6573674
     assert sha(acceptance['report']['path']) == acceptance['report']['sha256']
@@ -35,12 +39,19 @@ def prepare(path):
         inputs[str(source)] = sha(source)
     catalog = inventory['artifacts']['input_target_rows']
     assert sha(catalog['path']) == catalog['sha256']
+    if projection_backend == 'linear':
+        baseline_acceptance = BASELINE_SCALE / 'scale_acceptance.json'
+        assert sha(baseline_acceptance) == 'e931f812319fd68d00a8e5d46031dfa8b82e626bcdce49ad97408977a7818030'
+        accepted = json.loads(baseline_acceptance.read_text())
+        assert accepted['status'] == 'passed' and sha(accepted['report']['path']) == accepted['report']['sha256']
+        for source in [baseline_acceptance, BASELINE_SCALE / 'scale_probe.json', BASELINE_SCALE / 'manifest.json']:
+            inputs[str(source)] = sha(source)
     manifest = dict(phase='full_catalog_scale_only', source_git_commit=git(ROOT, 'rev-parse', 'HEAD'),
         dirty_at_submission=False, upstream_commit=im['upstream_commit'],
         upstream_root=str(ROOT.parent / 'liger-upstream'), upstream_files=im['upstream_files'],
         input_metadata=inputs, assets=im['assets'], catalog=catalog, asset_rows=inventory['asset_rows'],
         fixture_report=str(PRIOR / 'probe.json'), seed=42, batch_size=32, history_items=7,
-        chunk_size=8192, optimizer_steps=2, dense_dtype='float32',
+        chunk_size=chunk_size, projection_backend=projection_backend, optimizer_steps=2, dense_dtype='float32',
         masked_count=inventory['asset_rows'] - catalog['rows'],
         catalog_definition='All consumed last-seven history and GT rows from training, for scale diagnostic only',
         candidate_universe_finalized=False, formal_training_ready=False,
@@ -158,6 +169,14 @@ def run(path):
         model = official.TIGER(config, n_semantic_codebook=3, max_items_per_seq=7,
             flag_use_output_embedding=True, flag_use_learnable_text_embed=True,
             embedding_head_dict=method['embedding_head_dict']).cuda()
+        report['projection_backend'] = m.get('projection_backend', 'conv1d')
+        if report['projection_backend'] == 'linear':
+            from scripts.liger_projection_diagnostic import diagnose, verify_diagnostic
+            from src.baselines.liger_projection import use_linear_residuals
+            print('[liger-scale] residual kernel correctness and timing diagnostic', flush=True)
+            report['projection_diagnostic'] = diagnose(model.emb_proj)
+            verify_diagnostic(report['projection_diagnostic'])
+            assert use_linear_residuals(model.emb_proj) == 3
         print('[liger-scale] check official projection loss/gradient equivalence', flush=True)
         report['official_projection_checks'] = official_projection_check(model.emb_proj)
         torch.cuda.empty_cache()
@@ -229,6 +248,10 @@ def accept(path):
     assert r['catalog_rows'] + r['masked_count'] == m['asset_rows']
     assert r['batch_size'] == len(set(r['fixture_users'])) == 32
     assert r['chunk_size'] == m['chunk_size'] and r['dense_dtype'] == 'float32'
+    assert r.get('projection_backend', 'conv1d') == m.get('projection_backend', 'conv1d')
+    if m.get('projection_backend') == 'linear':
+        from scripts.liger_projection_diagnostic import verify_diagnostic
+        verify_diagnostic(r['projection_diagnostic'])
     assert len(r['steps']) == m['optimizer_steps'] == 2
     assert [c['dropout_training'] for c in r['official_projection_checks']] == [False, True]
     assert all(c['backward_restores_rng'] and c['gradient_tensors'] > 0 and
@@ -259,5 +282,11 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('mode', choices=['prepare', 'run', 'accept'])
     p.add_argument('manifest', type=Path)
+    p.add_argument('--projection-backend', choices=['conv1d', 'linear'], default='conv1d', help='Preparation only')
+    p.add_argument('--chunk-size', type=int, choices=[8192, 65536], default=8192, help='Preparation only')
     args = p.parse_args()
-    {'prepare': prepare, 'run': run, 'accept': accept}[args.mode](args.manifest.resolve())
+    if args.mode == 'prepare':
+        prepare(args.manifest.resolve(), args.projection_backend, args.chunk_size)
+    else:
+        assert args.projection_backend == 'conv1d' and args.chunk_size == 8192, 'Run/accept settings come only from manifest'
+        {'run': run, 'accept': accept}[args.mode](args.manifest.resolve())

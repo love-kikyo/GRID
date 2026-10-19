@@ -73,3 +73,25 @@ def test_acceptance_requires_both_steps_resources_and_scope(tmp_path, monkeypatc
     else:
         probe.accept(path)
         assert json.loads((tmp_path / 'scale_acceptance.json').read_text())['status'] == 'passed'
+
+
+@pytest.mark.parametrize('corruption', [None, 'nan', 'median', 'missing_backend', 'rng'])
+def test_backend_diagnostic_audit_rejects_incomplete_or_invalid_measurements(corruption):
+    from scripts.liger_projection_diagnostic import verify_diagnostic
+    checks = [dict(precision=p, training=t, passed=True, rng_equal=True, parameter_tensors=17,
+                   output_max_abs_error=1e-12, gradient_max_abs_error=1e-12)
+              for p in ('float64', 'float32', 'amp_float16') for t in (False, True)]
+    timings = [dict(backend=b, chunk_size=c, median_forward_seconds=1., median_total_seconds=3.,
+        measured=[dict(forward_seconds=1., total_seconds=3., backward_recompute_seconds=2.,
+                       peak_allocated_bytes=100) for _ in range(3)])
+        for c in (8192, 65536) for b in ('conv1d', 'linear')]
+    report = dict(checks=checks, timings=timings, measured_repeats=3, warmup_repeats=1)
+    if corruption == 'nan': checks[0]['gradient_max_abs_error'] = float('nan')
+    if corruption == 'median': timings[0]['median_total_seconds'] = .01
+    if corruption == 'missing_backend': timings.pop()
+    if corruption == 'rng': checks[0]['rng_equal'] = False
+    if corruption:
+        with pytest.raises(AssertionError):
+            verify_diagnostic(report)
+    else:
+        verify_diagnostic(report)

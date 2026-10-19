@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-19 21:54（Asia/Shanghai）。144468 目录扫描与审核通过，COMPLETED / 0:0；144477 真实目录两步规模测试 RUNNING，整项 4 CPU / 1 GPU。SIM 不扩 seed；未提交正式训练。
+最后核验：2026-10-19 22:27（Asia/Shanghai）。144477 数值与规模测试已通过，COMPLETED / 0:0；当前队列为空。反向开销过高，准备等价计算优化复测；SIM 不扩 seed，未提交正式训练。
 
 ## LIGER 训练目录盘点
 
@@ -24,9 +24,18 @@
 
 目录扫描期间完成独立分块损失实现（`1ddba40`）：逐块累计全目录分母，反向恢复 dropout 状态并重算，保留官方 masked -100 项。23 项新损失回归及 10 项输入回归通过，包含 FP32 / FP64 损失与全部梯度、共享投影参数、随机状态恢复和分块上限；未改变正在运行的目录扫描代码。
 
-144477：10-19 21:54 启动，RUNNING；执行版本 `11bdeff`，提交时工作树干净。入口 `run_liger_full_catalog_probe_cpu4.sh`，aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，CPU 绑定 `[4,5,28,29]`。相关 61 项本地回归通过；先核对官方 MLP 的 CUDA 损失 / 梯度，再用完整消费目录做两次优化器更新并审核报告。Chunk8192，dense FP32、关闭 TF32，保留目录外 masked -100 分母项；复用已验收的 32 条真实 train fixture，不再扫描数据取样。
+144477：10-19 21:54:03–21:59:40，COMPLETED / 0:0，5m37s（sacct）；执行版本 `11bdeff`，提交时工作树干净。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，CPU `[4,5,28,29]`；42 项计算节点回归通过。Chunk8192、官方 Conv1d 残差、dense FP32、关闭 TF32，完整消费目录与 masked -100 分母项不变；复用已验收的 32 条真实 train fixture。两次优化器更新及 152 个梯度张量检查通过，官方投影 dropout 开 / 关的 loss / 梯度差均低于 1e-15。
 
-[Manifest](../logs/training_launch/liger_scale_2026-10-19_v1/manifest.json) SHA256 `969cbcd24f9077fe19c099957f52b8a0e88c89d0c2c5f3061d4b4e5fb6cbd056`；[启动记录](../logs/training_launch/liger_scale_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Scale-144477.out)、[stderr](../logs/slurm/GRID-LIGER-Scale-144477.err)。不重复小目录兼容性短测，不保存 checkpoint、不读取 held-out 样本、不自动启动正式训练；目录仍是规模诊断口径，候选协议尚未定稿。显存与耗时待本项报告，不预填。
+[Manifest](../logs/training_launch/liger_scale_2026-10-19_v1/manifest.json) SHA256 `969cbcd24f9077fe19c099957f52b8a0e88c89d0c2c5f3061d4b4e5fb6cbd056`；[启动记录](../logs/training_launch/liger_scale_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Scale-144477.out)、[stderr](../logs/slurm/GRID-LIGER-Scale-144477.err)。[报告](../logs/training_launch/liger_scale_2026-10-19_v1/scale_probe.json) SHA256 `3e37721a6ceb31f59c4fde09f39aab65c92254ed3961c21729bc056f65b6ab60`；[独立审核](../logs/training_launch/liger_scale_2026-10-19_v1/scale_acceptance.json) SHA256 `e931f812319fd68d00a8e5d46031dfa8b82e626bcdce49ad97408977a7818030`，22:22 再核对收据 / 报告 / manifest 哈希通过。不保存 checkpoint，不读取 held-out 样本；候选协议尚未定稿。
+
+| Step | SID loss | Dense loss | 前向秒 | 完整更新秒 | 峰值 allocated bytes | 峰值 reserved bytes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 9.702087 | 15.776110 | 34.131 | 113.562 | 423095808 | 729808896 |
+| 2 | 9.703308 | 15.002100 | 3.197 | 77.172 | 504905728 | 767557632 |
+
+第二步除前向外约 73.98 秒，包含反向重算 / 梯度审核 / 更新，尚未归因到具体算子。按该单步、单 GPU、batch32 粗略外推一个训练 epoch 约 183.5 天；这是成本警示，不是稳定吞吐测量或多卡加速结论。显存问题已缓解，但该版本不适合直接放行长训练。
+
+下一项：原参数与权重布局不变，以矩阵乘法替换全宽单通道残差卷积（`f17616c`）；先核验 FP64 / FP32 / AMP 的输出与全部梯度，再对 Conv1d / 矩阵、chunk8192 / 65536 做各 1 次 warm-up + 3 次测量，区分内核与分块效果；之后做矩阵版 chunk65536 的完整目录两步复测。本地 77 项回归通过，收益待 GPU 实测。分类目标、目录、模型特征、数据划分均不变；更换 chunk 不承诺 dropout 轨迹逐位相同，不因耗时改变候选协议。
 
 ## 外部基线正式训练
 
@@ -157,7 +166,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | RUNNING；不是正式训练，不保存 checkpoint |
+| 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | COMPLETED / 0:0，5m37s；数值通过，第二步 77.17 秒，继续优化计算，不直接训练 |
 | 144468 | 10-19 21:38 | LIGER train-only 物品目录扫描 / 产物审核，1 CPU / 0 GPU | COMPLETED / 0:0，14m11s；33 分片、6573674 用户及三个物品集合验收通过 |
 | 139804 | 10-13 提交 | SIM 全量缓存 validation / 选权及独立验收，1 GPU / 4 CPU | RUNNING；16 项计算节点回归通过，后续阶段受完整性验收门槛约束 |
 | 139789 | 10-13 21:26 | SIM 64 条缓存自然候选重排验收，1 GPU / 4 CPU | COMPLETED / 0:0，3m22s；44 项回归、输入 / 候选对齐、原推理入口等价、GT 不泄漏及独立分数复算通过 |
