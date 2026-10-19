@@ -1,14 +1,22 @@
 # Run 台账
 
-最后核验：2026-10-19 21:39（Asia/Shanghai）。SIM-soft seed42 全流程已验收；作者决定不扩 SIM seed，转向 LIGER。144468 训练目录扫描 RUNNING，整项 1 CPU / 0 GPU；未提交正式训练。
+最后核验：2026-10-19 21:54（Asia/Shanghai）。144468 目录扫描与审核通过，COMPLETED / 0:0；144477 真实目录两步规模测试 RUNNING，整项 4 CPU / 1 GPU。SIM 不扩 seed；未提交正式训练。
 
 ## LIGER 训练目录盘点
 
 10-19 作者取消尚未提交的 SIM seed43 / 44 计划；保留 seed42 全部产物与单 seed 解释边界，不把弱结果删除或称为不可比。LIGER 不重复已验收的 139448 兼容性短测，本阶段只确定真实训练目录规模与物品身份。
 
-144468：21:38:18 提交、21:38:19 启动，RUNNING；执行版本 `dedbf5d`，提交时工作树干净。冻结 train split 的 33 个分片、6573674 条样本、14754462588 压缩字节；仅扫描训练记录，输出完整序列 / 实际 7 项历史 + GT / 仅 GT 三个唯一物品行集合和消费集合 SID 别名计数。入口 `run_liger_train_catalog_cpu1.sh`，aias-compute-2 / 1 CPU / 0 GPU / 8G，绑定 CPU18；本地 29 项目录 / 输入 / probe 辅助逻辑回归通过，计算节点新增目录检查 13 项通过。实际物品数与完整耗时待验收，不预填。
+144468：21:38:19–21:52:30，COMPLETED / 0:0，14m11s；执行版本 `dedbf5d`，提交时工作树干净。冻结 train split 的 33 个分片、6573674 条唯一用户样本全部通过，5725896043 个存储 item occurrence 与原审计一致；扫描及集合产出耗时 773.47 秒。aias-compute-2 / 1 CPU / 0 GPU / 8G，CPU18；13 项计算节点回归通过，21:52:30 独立复核通过。
 
-[启动记录](../logs/training_launch/liger_catalog_2026-10-19_v1/launch.json)、[manifest](../logs/training_launch/liger_catalog_2026-10-19_v1/manifest.json)、[stdout](../logs/slurm/GRID-LIGER-Catalog-144468.out)、[stderr](../logs/slurm/GRID-LIGER-Catalog-144468.err)。Manifest SHA256 `b1b8a81286ec52ba7e67452b6d70672650b66366b0815fd3a4e0602ca139984c`；33 个训练文件身份、既有资产审计、官方版本及执行源码哈希绑定。计划产物为三份行集合、`catalog_report.json` 和 `catalog_acceptance.json`，不是已有成功结果。
+[启动记录](../logs/training_launch/liger_catalog_2026-10-19_v1/launch.json)、[manifest](../logs/training_launch/liger_catalog_2026-10-19_v1/manifest.json)、[stdout](../logs/slurm/GRID-LIGER-Catalog-144468.out)、[stderr](../logs/slurm/GRID-LIGER-Catalog-144468.err)。[全量报告](../logs/training_launch/liger_catalog_2026-10-19_v1/catalog_report.json) SHA256 `cd13c7783941d2a9577439b88b8d7e6dc25b6f2304f421694b0db6f7a385192c`；[独立验收](../logs/training_launch/liger_catalog_2026-10-19_v1/catalog_acceptance.json) SHA256 `b43ee1b114ebe359834131f63109f9fcf428b774e456810b073eb1849f892d32`，三份行集合哈希、排序唯一性、包含关系及 SID 身份复核通过，没有重扫训练 TFRecord。
+
+| Train-only 集合 | 唯一物品行数 | 含义 |
+| --- | --- | --- |
+| 完整存储序列（含 GT） | 35181121 | 原始保留历史与目标，不能混称为模型实际输入目录 |
+| 最后 7 项历史 + GT | 11542755 | 规模测试使用的实际消费目录；SID tuple 同样 11542755 个，别名数为 0 |
+| 仅 GT | 3545245 | 训练目标物品，不能单独当作已批准的完整候选目录 |
+
+全部编码资产为 35458467 行，消费目录外有 23915712 行；这些行尚未被定义为正式冷启动候选。按消费目录估算，未分块投影第一隐藏层的单个 FP32 buffer 为 35459343360 bytes，原广播乘法单个 FP16 buffer 为 94558248960 bytes；不是实测显存峰值。
 
 此项不读取 validation / test 样本，不修改数据和模型，不计算历史召回指标；扫描后只接产物独立审核，无自动正式训练或后继任务。候选全集、seen / cold-start 规则、全目录损失梯度与真实规模短测仍需完成。
 
@@ -16,7 +24,9 @@
 
 目录扫描期间完成独立分块损失实现（`1ddba40`）：逐块累计全目录分母，反向恢复 dropout 状态并重算，保留官方 masked -100 项。23 项新损失回归及 10 项输入回归通过，包含 FP32 / FP64 损失与全部梯度、共享投影参数、随机状态恢复和分块上限；未改变正在运行的目录扫描代码。
 
-下一项为 `run_liger_full_catalog_probe_cpu4.sh`：目录验收成功后准备不可覆盖 manifest，再申请 1 张 4090 / 整项 4 CPU；先核对官方 MLP 的 CUDA 损失 / 梯度，再用真实消费目录做两次完整优化器更新并审核报告。不重复小目录兼容性短测，不保存 checkpoint、不读取 held-out 样本、不自动启动正式训练；目录仍是规模诊断口径，候选协议尚未定稿。
+144477：10-19 21:54 启动，RUNNING；执行版本 `11bdeff`，提交时工作树干净。入口 `run_liger_full_catalog_probe_cpu4.sh`，aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，CPU 绑定 `[4,5,28,29]`。相关 61 项本地回归通过；先核对官方 MLP 的 CUDA 损失 / 梯度，再用完整消费目录做两次优化器更新并审核报告。Chunk8192，dense FP32、关闭 TF32，保留目录外 masked -100 分母项；复用已验收的 32 条真实 train fixture，不再扫描数据取样。
+
+[Manifest](../logs/training_launch/liger_scale_2026-10-19_v1/manifest.json) SHA256 `969cbcd24f9077fe19c099957f52b8a0e88c89d0c2c5f3061d4b4e5fb6cbd056`；[启动记录](../logs/training_launch/liger_scale_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Scale-144477.out)、[stderr](../logs/slurm/GRID-LIGER-Scale-144477.err)。不重复小目录兼容性短测，不保存 checkpoint、不读取 held-out 样本、不自动启动正式训练；目录仍是规模诊断口径，候选协议尚未定稿。显存与耗时待本项报告，不预填。
 
 ## 外部基线正式训练
 
@@ -147,7 +157,8 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 144468 | 10-19 21:38 | LIGER train-only 物品目录扫描 / 产物审核，1 CPU / 0 GPU | RUNNING；13 项回归通过，实际目录数待验收；不是正式训练 |
+| 144477 | 10-19 21:54 | LIGER 完整消费目录两步规模测试 / 报告审核，1 GPU / 4 CPU | RUNNING；不是正式训练，不保存 checkpoint |
+| 144468 | 10-19 21:38 | LIGER train-only 物品目录扫描 / 产物审核，1 CPU / 0 GPU | COMPLETED / 0:0，14m11s；33 分片、6573674 用户及三个物品集合验收通过 |
 | 139804 | 10-13 提交 | SIM 全量缓存 validation / 选权及独立验收，1 GPU / 4 CPU | RUNNING；16 项计算节点回归通过，后续阶段受完整性验收门槛约束 |
 | 139789 | 10-13 21:26 | SIM 64 条缓存自然候选重排验收，1 GPU / 4 CPU | COMPLETED / 0:0，3m22s；44 项回归、输入 / 候选对齐、原推理入口等价、GT 不泄漏及独立分数复算通过 |
 | 139784 | 10-13 提交 | SID-only 后端差异诊断，1 GPU / 4 CPU | 报告与源码绑定复核通过；可用注意力后端均未复现旧 beam，CuDNN-only 不支持；非全量评估 |
