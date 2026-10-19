@@ -1,6 +1,16 @@
 # Run 台账
 
-最后核验：2026-10-19 23:41（Asia/Shanghai）。144534 全资产 SID 索引已验收，COMPLETED / 0:0；完整 cold 候选规则已确认，下一项为真实 validation 排序成本短测。SIM 不扩 seed，未提交正式训练。
+最后核验：2026-10-19 23:49（Asia/Shanghai）。144548 真实 validation 完整 cold 排序短测已验收，COMPLETED / 0:0；144534 全资产 SID 索引已验收。SIM 不扩 seed，未提交正式训练。
+
+## LIGER 完整 cold 验证入口短测
+
+144548：10-19 23:46:13–23:48:24，COMPLETED / 0:0，2m11s（sacct）；执行版本 `536d1f4`，提交时工作树干净，67 项计算节点回归通过。aias-compute-2 / 1 张 4090 / 整项 4 CPU / 24G，CPU `[0,1,28,29]`，5 次进程树绑定检查通过、库线程池 1。128 条真实 validation，batch32 × 4（首批预热），每批扫描全部 23915712 个 cold 物品，再合并有效自然 beam20 排序；不抽样 cold。随机初始化，无更新、无训练 checkpoint、不读取 test、不自动提交后继；诊断指标不能当作推荐效果。
+
+[Manifest](../logs/training_launch/liger_cold_2026-10-19_v1/manifest.json) SHA256 `547dd7970e299026c5b1baac79e32ca0fd9190c3294c64fba1d72a48fa22ec69`；[启动记录](../logs/training_launch/liger_cold_2026-10-19_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cold-144548.out)、[stderr](../logs/slurm/GRID-LIGER-Cold-144548.err)。[完整报告](../logs/training_launch/liger_cold_2026-10-19_v1/cold_probe.json) SHA256 `f4d7dfdb338dd4e47214d95b7b422bef585c2b0714e1da02119329fe2ba27999`；[独立 CPU 审核](../logs/training_launch/liger_cold_2026-10-19_v1/cold_acceptance.json) SHA256 `04cab5f63f9de86b67cba09af0dcd5be7848e801e2244ab285e7473642160a1d`；[调度终态与只读复核](../logs/training_launch/liger_cold_2026-10-19_v1/completion.json)。GPU 小集合整表 Top20 对照（含全同分、seen / cold、无效与重复 beam）、GT 改写不影响生成，以及真实预测的身份 / 排名 / Recall / NDCG@5/10/20 独立复算均通过；结束后再次核对绑定及报告 / 收据 / 预测哈希，未重跑 GPU。
+
+全部 cold FP32 向量缓存为 12244844544 bytes，建立耗时 29.100 秒，建立阶段峰值 allocated 12.045 GiB。排除首批预热后，3 批 / 96 条吞吐为 31.092 样本/秒，端到端批耗时中位数 1.013 秒，其中完整 cold 排序中位数 0.340 秒；预测阶段峰值 allocated / reserved 为 12.006 / 12.205 GiB。GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与 144510 同一物理卡。
+
+只按这 96 条计时粗估完整 validation 约 3.10 小时（不含缓存、启动、导出审核等），不是全量稳定吞吐结论；该估计下应按长任务管理，不能套用原四模型 validation 的短任务节奏。全部 2560 个随机初始化 beam 均未映射到有效物品，真实样本仅覆盖 cold 排名路径；有效 seen beam 合并由 GPU 小集合 oracle 和单测覆盖，训练后仍须检查正式模型的实际生成与完整预测。不用本次诊断指标判断 LIGER 效果。
 
 ## LIGER 全资产 SID 映射
 
@@ -203,6 +213,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 144548 | 10-19 23:46 | LIGER 128 条 validation 完整 cold 排序短测，1 GPU / 4 CPU | COMPLETED / 0:0，2m11s；67 项回归、每批全部 cold、GT 无关性及独立排名审核通过；无正式训练 |
 | 144534 | 10-19 23:27 | LIGER 全资产 SID 索引及逐行复核，1 CPU / 0 GPU | COMPLETED / 0:0，36s；35458467 行无 SID 别名、row0 保留，独立审核通过 |
 | 144510 | 10-19 22:51 | LIGER 真实 train batch128 / 512 / 1024 容量短测，1 GPU / 4 CPU | COMPLETED / 0:0，3m51s；69 项回归、6656 唯一用户、12 次更新及独立审核通过，无 OOM |
 | 144497 | 10-19 22:28 | LIGER 等价内核对照及完整目录复测，1 GPU / 4 CPU | COMPLETED / 0:0，2m19s；58 项回归、6 项等价核对、4 组组件计时及两次完整更新审核通过 |
