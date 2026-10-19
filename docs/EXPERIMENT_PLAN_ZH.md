@@ -18,7 +18,7 @@
 | 2 LIGER 受限短测 | 使用训练 split 的少量真实样本验证输入 / GT、官方模型前后向和生成接口；检查 CPU / GPU，记录全目录开销下界 | 已通过并独立验收，见台账；小目录仅供兼容性检查，不产生效果指标，不等于正式训练可行 |
 | 3 SIM 任务适配 | 保留 soft-search GSU、ESU 多头注意力和 GSU 辅助目标；检查 frozen teacher、候选完全一致、GT 不泄漏及空历史 / padding | 已实现；139475 的 25 项回归、三 rank 两步训练 / 验证及独立报告验收通过 |
 | 4 正式训练放行 | 固定方法适配说明、训练目标、候选目录 / 负例规则、输入长度、验证选优和预算；短测通过、源码提交后提交 seed42 | SIM seed42 训练及 best checkpoint 验收通过；LIGER 尚未放行，不预排其他 seed |
-| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM beta=0.09 已锁定；144384 test 通过，144414 配对报告已生成，最后展示顺序检查修复后补审核；不自动排新 seed，弱结果照实保留 |
+| 5 效果验收与扩 seed | full validation 后锁定参数，全量 test 与配对统计；逐项补 seed43 / 44，登记均值及 SD | SIM seed42 全流程通过，144442 独立验收 5 项比较；弱结果照实保留。下一项按既定同配置补 seed43，再 seed44；本轮未提交新训练 |
 
 SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 Separate-small。报告名明确为任务与特征适配后的 `SID + SIM-soft`；使用同 seed 冻结 teacher 的自然 beam20、完整保留历史，检索 K 首轮固定 10。不把 SID、rank embedding 和 beam-score 输入等 Separate 自定义增强混入 SIM 主版本。原始排序和 validation 选定融合分别保留；训练候选仍须生成，旧 test 缓存不能替代训练。
 
@@ -28,7 +28,7 @@ SIM 复用当前 teacher / 数据 / 评估外壳，独立增加 scorer，不改 
 
 全量 validation 与选权现已验收，seed42 selected beta 固定 **0.09**，不是原三种重排方法的 0.50。Test 使用 `run_sim_cached_test_cpu4.sh`，1 GPU / 整项 4 CPU；运行前验证选权收据、checkpoint 与 test 缓存哈希，覆盖 2061101 条，包括最后 13 条不足 batch。导出仍保存 runtime beta=0.1 的排序与原始 logits；后续正式指标按冻结 beta=0.09 在 FP32 分数上重排。独立完整性验收后才做配对统计，不在 test 搜索或自动提交新 seed。
 
-10-19 test 完整性补验收通过，原路径类型错误仅通过 CPU 验收入口修复，不重复推理。配对统计固定 5 项：SID beam → SIM 纯重排、SID beam → SIM selected、SIM 纯重排 → SIM selected、SIM selected → Separate selected、SIM 纯重排 → Separate 纯重排。三者输入与自然候选池逐值对齐；SIM / Separate 各用自己的 validation beta（0.09 / 0.50）。沿用 5000 次 bootstrap、batch500、seed2027、95% CI、Recall / NDCG@5、@10；独立 GT 名次计数复算 20 个差值区间和 10 个 Recall 配对检验。只读已有预测、整项 4 CPU / 0 GPU；单 seed 用户区间不替代训练 seed 波动，两种 reranker 的差距不归因于单个结构增强。
+10-19 test 完整性与配对统计均已验收，原路径类型 / Markdown 顺序问题只修复审核入口，不重复推理或报告生成。配对统计固定 5 项：SID beam → SIM 纯重排、SID beam → SIM selected、SIM 纯重排 → SIM selected、SIM selected → Separate selected、SIM 纯重排 → Separate 纯重排。三者输入与自然候选池逐值对齐；SIM / Separate 各用自己的 validation beta（0.09 / 0.50）。沿用 5000 次 bootstrap、batch500、seed2027、95% CI、Recall / NDCG@5、@10；144442 独立 GT 名次计数复算 20 个差值区间和 10 个 Recall 配对检验通过。单 seed 用户区间不替代训练 seed 波动，两种 reranker 的差距不归因于单个结构增强。后续 seed43 / 44 沿用训练配置，但各自独立 validation 选权，不直接复用 seed42 的 beta。
 
 SIM 首轮规则固定如下，源码入口为 `sim_rerank_model.py` / `sim_soft.py`，配置为 `tiger_train_sim_soft.yaml`：
 

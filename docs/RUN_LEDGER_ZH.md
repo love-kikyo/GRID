@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-19 20:50（Asia/Shanghai）。SIM-soft seed42 全量 test 已验收；144414 统计报告生成及指标 / 区间复算通过，但最后 Markdown 顺序检查失败，仅补报告审核。Validation beta=0.09 与原四模型结果不变。
+最后核验：2026-10-19 21:10（Asia/Shanghai）。SIM-soft seed42 全量 test 与配对统计已验收，最终审核 144442 COMPLETED / 0:0；队列为空。原预测 / 报告不变，未重训、重复 GPU 推理或提交新 seed。
 
 ## 外部基线正式训练
 
@@ -10,15 +10,33 @@
 
 ## SIM 独立评估接入
 
+144442：对 144414 原报告补独立审核，版本 `29539aa`，提交时工作树干净；21:07:23–21:08:33，COMPLETED / 0:0，1m10s，aias-compute-2 / 1 CPU / 0 GPU，affinity `[22]`。38 项计算节点回归通过；再次遍历全部 2061101 唯一用户，三份预测的输入 / GT / 自然候选 / beam 分数完全相同，5 项比较、20 个差值区间、10 个 Recall 配对检验及 Markdown 内容全部通过。GT 名次与差值计数独立实现，bootstrap 复用原有统计函数和相同 RNG 顺序；不称第二套独立 bootstrap 算法。
+
+Seed42 全量 test（0–1 标度；selected 使用各自 validation beta，FP32 分数 / 原 beam 次序稳定处理同分）：
+
+| 方法 / 排序 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | --- | --- | --- | --- |
+| SID-only beam | 0.267156 | 0.271581 | 0.250433 | 0.251868 |
+| SID + SIM-soft 纯 ESU | 0.071994 | 0.141784 | 0.042616 | 0.064888 |
+| SID + SIM-soft selected beta=0.09 | 0.267155 | 0.271563 | 0.250434 | 0.251863 |
+| Separate 纯重排 | 0.271839 | 0.273175 | 0.253400 | 0.253829 |
+| Separate selected beta=0.50 | 0.272527 | 0.274050 | 0.254558 | 0.255053 |
+
+SIM 纯重排相对 SID 在四项指标上均明显下降；选权融合与 SID 几乎持平，四个差值的 95% 用户配对区间均跨零。例如 NDCG@10 差值为 `-0.000004174`，区间 `[-0.000014982, +0.000006520]`，不能宣称有提升，也不是已证明两种方法完全等效。
+
+Separate selected 相对 SIM selected 的四项差值区间均严格为正：Recall@5 增加 `0.005371`（相对 +2.011%，区间 `[0.005267, 0.005478]`）；NDCG@10 增加 `0.003189`（相对 +1.266%，区间 `[0.003140, 0.003238]`）。这支持在本轮新协议 / seed42 的任务适配版本中，SIM 纯重排弱、Separate 与之存在差距；两者目标函数与结构不同，不能把差距单独归因于某一增强。单 seed 用户区间不替代多 seed 波动；逐项区间不是多重比较同时覆盖保证。极小 Recall p 值存为 0 是数值下溢，不写成数学上为零。
+
+[正式报告](../logs/analysis/paired_evaluation/paired_report_sim_seed42_full_v1.md)、[全精度 JSON](../logs/analysis/paired_evaluation/paired_report_sim_seed42_full_v1.json)、[独立验收](../logs/analysis/paired_evaluation/paired_sim_seed42_acceptance_v1.json)、[补审核启动记录](../logs/training_launch/sim_seed42_paired_2026-10-19/audit_recovery_v1.json)、[审核日志](../logs/slurm/GRID-SIM-PairAudit-144442.out)。报告 SHA256 `cfd50605a0266fa6e36ceae45f2ee79996dce0c73bab01d522213dcba51a95f9`；验收 SHA256 `4df3754f2750b331ae031748817a205e50d645495dc4b86e1dbdbe8c47355dfc`。新增结果暂单列，不覆盖原四模型三 seed 冻结索引。
+
 144414：SIM / SID-only / Separate seed42 的 5 项配对比较，版本 `39889c9`，提交时工作树干净；aias-compute-2 / 整项 4 CPU / 0 GPU / 16G，affinity `[0,1,12,13]`。本地与计算节点各 35 项回归通过；三份预测与两份选权哈希核对、报告生成，以及独立 20 个差值区间 / 10 个 Recall 检验复算均通过。最后的 Markdown 精确文本比较失败，step `144414.2` 退出 1，未生成完整收据。
 
 原因是 JSON 的 `sort_keys=True` 将指标键排序，而 Markdown 在 JSON 序列化前按 Recall@5、NDCG@5、Recall@10、NDCG@10 渲染；数值未变，仅重新渲染的行顺序不同。修复只恢复预声明的显示顺序，仍逐字核对全部 Markdown 数值；新增回归重现排序问题并拒绝篡改数值。补审核严格绑定原报告 / Markdown / preflight 哈希，只允许原统计入口的精确旧 SHA256 被本次审核修复替代，其余来源仍逐文件核对；不重新生成统计报告或推理。
 
-[启动记录](../logs/training_launch/sim_seed42_paired_2026-10-19/launch_v1.json)、[stdout](../logs/slurm/GRID-SIM-Paired-144414.out)、[stderr](../logs/slurm/GRID-SIM-Paired-144414.err)。报告 `paired_report_sim_seed42_full_v1.json` / `.md` 已存在；`paired_sim_seed42_acceptance_v1.json` 收据待补审核通过后生成。
+[启动记录](../logs/training_launch/sim_seed42_paired_2026-10-19/launch_v1.json)、[stdout](../logs/slurm/GRID-SIM-Paired-144414.out)、[stderr](../logs/slurm/GRID-SIM-Paired-144414.err)。报告 `paired_report_sim_seed42_full_v1.json` / `.md` 保留不改；后由 144442 生成 `paired_sim_seed42_acceptance_v1.json` 收据，原失败记录不改写成成功。
 
 144384：仅补全量 test CPU 验收，版本 `4fc83f9`，整项 1 CPU / 0 GPU，实际 affinity `[16]`；13 项计算节点回归通过，20:14:00 独立收据通过。2061101 唯一用户，输入 / GT / 自然候选 / beam 分数与已验收 SID 缓存完全对齐，568629 条自然 beam 命中；候选唯一、分数有限、全部 runtime 融合分数独立复算通过。原导出源码与 sidecar 精确哈希绑定，未重跑推理、未修改预测或重选 beta。
 
-[补验收日志](../logs/slurm/GRID-SIM-TestAudit-144384.out)、[收据](../logs/training_launch/sim_seed42_test_2026-10-14/cached_full_v1_recovery.json)。收据 SHA256 `952438184d4e1f8b627c7865870667d2f546a95e7d9f477de0e2ca716800df86`；test HDF5 SHA256 `62a4774225542f9ed97135cacdf256c6bc68ae283626cb7455a083ac61e7ab87`；sidecar SHA256 `ba7ba8eb0150a5e54fe24b444bd1e0dfcdc3cac209607e47e98c6e327d779a87`。此次只验收完整性；正式指标与配对区间由下一阶段单独计算。
+[补验收日志](../logs/slurm/GRID-SIM-TestAudit-144384.out)、[收据](../logs/training_launch/sim_seed42_test_2026-10-14/cached_full_v1_recovery.json)。收据 SHA256 `952438184d4e1f8b627c7865870667d2f546a95e7d9f477de0e2ca716800df86`；test HDF5 SHA256 `62a4774225542f9ed97135cacdf256c6bc68ae283626cb7455a083ac61e7ab87`；sidecar SHA256 `ba7ba8eb0150a5e54fe24b444bd1e0dfcdc3cac209607e47e98c6e327d779a87`。该任务只验收完整性；正式指标与配对区间见上方 144414 / 144442。
 
 139967：SIM seed42 全量 test 推理完成，随后独立验收失败。执行版本 `f481f1c`，提交时工作树干净；aias-compute-2 / 1 GPU / 整项 4 CPU / 24G。本地及计算节点各 26 项回归通过，不相加计数；checkpoint 严格加载 missing=0 / unexpected=0。推理 CPU mask `0x300003000`，即 `[12,13,32,33]`。stdout 已确认完整 HDF5 / sidecar 写出；stderr 明确验收 step `139967.2` 退出码 1，未生成验收收据。控制器记录已过期，不虚填整个 job 的 Slurm 记账终态。
 
