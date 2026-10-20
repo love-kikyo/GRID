@@ -1,6 +1,16 @@
 # Run 台账
 
-最后核验：2026-10-21 01:13（Asia/Shanghai）。144629 LIGER seed42 第一轮及完整 validation 已独立验收，当前推进第 2 轮；SIM 不扩 seed。
+最后核验：2026-10-21 01:26（Asia/Shanghai）。144629 LIGER seed42 第一轮及完整 validation 已独立验收；第 2 轮 145337 RUNNING，完整状态恢复检查通过。SIM 不扩 seed。
+
+## LIGER seed42 第二轮续训
+
+145337：10-21 01:23:13 启动，执行版本 `aa0eb53`，续训实现 `9717199`，提交时工作树干净。aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G / 36 小时运行时限。只运行第 2 轮的 6573674 条训练与 347416 条完整 validation，再独立审核并停止；没有第 3 轮或新 seed 后继。按首轮实测估计总耗时约 19–20 小时。
+
+[Manifest](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/manifest.json) SHA256 `e4339dc70f0ec440003618cf25b23c9d370756a74e0c4da8b7d19b371da1f420`；[启动记录](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Ep2-42-145337.out)、[stderr](../logs/slurm/GRID-LIGER-Ep2-42-145337.err)。原配置 / 核心文件与首轮相同，只显式迁移编排 / 测试的源码绑定；旧清单及 checkpoint 不改写。本地 217 项回归通过，计算节点 48 项启动回归通过（10.64 秒）。
+
+[Preflight](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/preflight.json) SHA256 `04b4d32376a97b7d0234fb1b0fbf7fbe6ef8cda66133ea20341d8d5a27d4a756`。01:24:56 完整恢复检查通过：模型 / optimizer / scheduler / scaler / RNG / 数据游标与模式的全状态哈希均为 `171dd2cf00c4ca577ef978e0339e4ef1c5d3c92ab6d0f2629459ce00234eb8b6`（按旧绑定对比），模型哈希与首轮验证权重相同。初始累计更新 6420，原总调度 19260 / warmup963，下一次 LR 为 `0.000238814534124922`；继承首轮 validation 与 best 记录。CPU `[0,1,28,29]`、库线程 1，GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与首轮相同。完整效果仍待本轮结束验收。
+
+01:26:44 [启动验收](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/startup_acceptance.json)通过：核验第 2 轮前 5 个 batch / 5120 条记录，累计更新 6421–6425，AMP 跳过 0，152 个梯度张量及有限 loss / 梯度范数正常；每步 LR 与原 cosine 解析值一致，scaler 继承为 524288，样本摘要链从首轮末点连续衔接。此为启动核验，不代替本轮完整 validation。
 
 ## LIGER seed42 第一轮正式训练
 
@@ -240,6 +250,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
+| 145337 | 10-21 01:23 | LIGER seed42 第 2 轮续训及全量 validation，1 GPU / 4 CPU | RUNNING；48 项启动回归、原 checkpoint 全状态恢复及固定预算检查通过；完成本轮即停止 |
 | 144629 | 10-20 01:39 | LIGER seed42 第一轮正式训练及全量 validation，1 GPU / 4 CPU | COMPLETED / 0:0，18:57:57；6420 更新 / 0 AMP 跳过，347416 条验证及完整 checkpoint 独立验收通过 |
 | 144626 | 10-20 01:32 | LIGER 正式入口日志修复后的恢复复验，1 GPU / 4 CPU | COMPLETED / 0:0，4m40s；75 项回归、完整状态 / 更新 / 预测逐值一致，第一轮训练放行 |
 | 144620 | 10-20 01:24 | LIGER 正式配置 / 新进程恢复短测，1 GPU / 4 CPU | COMPLETED / 0:0，4m59s；全状态 / 后续更新 / 完整预测逐值一致；正式入口日志修复后需新版本验收 |
