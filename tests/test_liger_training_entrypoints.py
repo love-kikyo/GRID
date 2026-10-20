@@ -45,7 +45,7 @@ def test_smoke_is_fresh_process_real_data_and_not_formal_initialization():
 def test_formal_entry_requires_gate_and_stops_after_first_epoch():
     source = inspect.getsource(train_liger_cpu4.run)
     assert "assert m['formal_training_ready']" in source
-    assert "budget['stop_after_epoch'] == 1" in source
+    assert 'start_epoch, stop_epoch = stage_bounds(m, ctx.config)' in source
     assert 'test_files' not in source and 'test_records_read=False' in source
     assert source.index('audited = audit(') < source.index('if better_validation(')
     assert 'checkpoint_every_batches' in source and "stream.close()" in source
@@ -59,7 +59,8 @@ def test_resume_binding_distinguishes_smoke_from_formal():
     assert smoke != formal and smoke['purpose'] == 'smoke' and formal['purpose'] == 'formal'
 
 
-def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkeypatch):
+@pytest.mark.parametrize('start_epoch,score', [(0, .2), (1, .1), (1, .3), (2, .2)])
+def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkeypatch, start_epoch, score):
     """Exercise the real orchestrator with tiny stand-ins, not a GPU cost probe."""
     from types import SimpleNamespace
     import torch
@@ -86,6 +87,22 @@ def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkey
         cpu_check=lambda: None,
         batches=lambda **kwargs: (batch for batch in [(0, ['a', 'b']), (1, ['c'])]))
     monkeypatch.setattr(liger_runtime, 'Runtime', lambda _: ctx)
+    if start_epoch:
+        import copy
+        from src.baselines.liger_training import initial_progress
+        m.update(phase='epoch_continuation', stage=dict(start_epoch=start_epoch, stop_after_epoch=start_epoch+1),
+                 resume_checkpoint={'path': 'unit'})
+        p = initial_progress()
+        prior = [dict(epoch=e, checkpoint={'path': f'old-{e}'}, metrics={'hybrid': {'Recall@5': .2, 'NDCG@5': .1}})
+                 for e in range(1, start_epoch+1)]
+        p.update(epoch=start_epoch, batches_consumed=start_epoch*2, updates=start_epoch*2,
+                 validations=prior, best=dict(epoch=1, checkpoint=prior[0]['checkpoint'], **prior[0]['metrics']['hybrid']))
+        for _ in range(start_epoch*2): sched.step()
+        monkeypatch.setattr(train_liger_cpu4, 'restore_formal', lambda *_: (copy.deepcopy(p), {}))
+        def batches(**kwargs):
+            if kwargs['training']: assert kwargs['epoch'] == start_epoch and kwargs['start_batch'] == 0
+            return (batch for batch in [(0, ['a', 'b']), (1, ['c'])])
+        ctx.batches = batches
     consumed = []
     def step(*args, **kwargs):
         records, p = args[6], args[11]
@@ -97,7 +114,7 @@ def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkey
         p['samples_in_epoch'] += len(records)
         return dict(batch=p['next_batch'], rows=len(records))
     monkeypatch.setattr(liger_training, 'train_step', step)
-    metrics = {'Recall@5': .2, 'NDCG@5': .1}
+    metrics = {'Recall@5': score, 'NDCG@5': .1}
     def evaluate(*args, **kwargs):
         directory, expected, checkpoint = args[9:12]
         directory.mkdir()
@@ -115,6 +132,9 @@ def test_formal_control_flow_preflight_tail_validation_and_stop(tmp_path, monkey
     result = json.loads((tmp_path / 'run/result.json').read_text())
     preflight = json.loads((tmp_path / 'run/preflight.json').read_text())
     assert preflight['status'] == 'ready' and result['status'] == 'passed'
-    assert consumed == [2, 1] and result['final_progress']['epoch'] == 1
+    assert consumed == [2, 1] and result['final_progress']['epoch'] == start_epoch + 1
+    assert result['final_progress']['updates'] == (start_epoch + 1)*2
+    assert len(result['final_progress']['validations']) == start_epoch + 1
     assert result['stopped_for_author_acceptance'] and not result['automatic_successor']
-    assert len(result['checkpoints']) == 4 and result['best']['epoch'] == 1
+    assert len(result['checkpoints']) == 4
+    assert result['best']['epoch'] == (start_epoch + 1 if score > .2 else 1)

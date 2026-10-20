@@ -24,7 +24,7 @@ export OMP_DYNAMIC=FALSE MKL_DYNAMIC=FALSE TOKENIZERS_PARALLELISM=false
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=disabled
 PYTHON_BIN=/home/MMReco2021/.conda/envs/GRID/bin/python
 srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,threads --kill-on-bad-exit=1 \
- "$PYTHON_BIN" -m pytest -q tests/test_liger_state.py tests/test_liger_training.py tests/test_liger_validation.py tests/test_liger_training_entrypoints.py
+ "$PYTHON_BIN" -m pytest -q tests/test_liger_state.py tests/test_liger_training.py tests/test_liger_validation.py tests/test_liger_training_entrypoints.py tests/test_liger_continuation.py
 srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,threads --kill-on-bad-exit=1 \
  "$PYTHON_BIN" -m scripts.train_liger_cpu4 run "$1"
 srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,threads --kill-on-bad-exit=1 \
