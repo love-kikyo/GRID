@@ -1,12 +1,16 @@
 # Run 台账
 
-最后核验：2026-10-22 01:16（Asia/Shanghai）。LIGER 改进实现与本地回归通过，学习短测待提交；147815 保持取消，正式训练及 test 暂停。SIM 不扩 seed。
+最后核验：2026-10-22 01:19（Asia/Shanghai）。LIGER 学习短测 147957 已提交，PENDING，等待 aias-compute-2；147815 保持取消，正式训练及 test 暂停。SIM 不扩 seed。
 
 ## LIGER 改进学习短测
 
 10-22 作者要求改进。新分支 `wsdm27-liger-learning-v2` 从 `de1d6dc` 创建，旧基线分支、两轮 checkpoint、资产和数据文件均保留。新增 train-seen 标准化与有界多前缀监督，通过 [独立入口](../scripts/probe_liger_learning.py) 对照原始 / 标准化特征和最终 GT / 多前缀监督四种设置；详细范围与验收条件只维护在 [实验计划](EXPERIMENT_PLAN_ZH.md)。
 
-本地单核回归 **386 passed、5 skipped，12.38 秒**。跳过项为可选 sklearn 数值对照（当前环境未安装）；独立 NumPy 总体矩对照、padding / row0、前缀边界和目标身份、安全预算及入口绑定等检查通过，`bash -n` 与 diff 空白检查通过。尚无 GPU 学习结果，不据实现完成宣称指标改善。拟仅提交一个 45 分钟时限的四组串行诊断，无长训练后继。
+本地单核回归 **386 passed、5 skipped，12.38 秒**。跳过项为可选 sklearn 数值对照（当前环境未安装）；独立 NumPy 总体矩对照、padding / row0、前缀边界和目标身份、安全预算及入口绑定等检查通过，`bash -n` 与 diff 空白检查通过。尚无 GPU 学习结果，不据实现完成宣称指标改善。
+
+**147957**：01:18:26 提交，执行版本 `54770dc`，工作树干净；特征 / 监督 / 诊断辅助 / 作业入口分别提交于 `c2b4ef4` / `2149921` / `ee4ad6c` / `a058436`。仅此一项，无依赖或自动后继。申请 aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G，Slurm 时限 45 分钟，程序诊断上限 40 分钟；四组串行，完成后独立审核并停止。01:19 调度状态 PENDING，原因 `ReqNodeNotAvail, UnavailableNodes:aias-compute-2`，开始时间 Unknown，尚未分配节点。
+
+[Manifest](../logs/training_launch/liger_learning_2026-10-22_v2/manifest.json) SHA256 `588e3b40370857e5ce2481808b5205a10c6c24d85c8e1499dbc838d91cd25af5`；[提交及队列记录](../logs/training_launch/liger_learning_2026-10-22_v2/launch.json)、[stdout](../logs/slurm/GRID-LIGER-LearnV2-147957.out)、[stderr](../logs/slurm/GRID-LIGER-LearnV2-147957.err)。诊断权重仅供审查，不能作为正式训练恢复 checkpoint；两轮旧结果和已取消第三轮清单未改写。
 
 ## LIGER 低指标诊断
 
