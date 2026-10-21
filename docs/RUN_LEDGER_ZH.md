@@ -1,6 +1,12 @@
 # Run 台账
 
-最后核验：2026-10-22 01:00（Asia/Shanghai）。147815 已按作者要求在启动前取消；145337 的运行 / 数值验收保留，LIGER 正式训练及 test 暂停。完成低指标只读诊断，没有新任务。SIM 不扩 seed。
+最后核验：2026-10-22 01:16（Asia/Shanghai）。LIGER 改进实现与本地回归通过，学习短测待提交；147815 保持取消，正式训练及 test 暂停。SIM 不扩 seed。
+
+## LIGER 改进学习短测
+
+10-22 作者要求改进。新分支 `wsdm27-liger-learning-v2` 从 `de1d6dc` 创建，旧基线分支、两轮 checkpoint、资产和数据文件均保留。新增 train-seen 标准化与有界多前缀监督，通过 [独立入口](../scripts/probe_liger_learning.py) 对照原始 / 标准化特征和最终 GT / 多前缀监督四种设置；详细范围与验收条件只维护在 [实验计划](EXPERIMENT_PLAN_ZH.md)。
+
+本地单核回归 **386 passed、5 skipped，12.38 秒**。跳过项为可选 sklearn 数值对照（当前环境未安装）；独立 NumPy 总体矩对照、padding / row0、前缀边界和目标身份、安全预算及入口绑定等检查通过，`bash -n` 与 diff 空白检查通过。尚无 GPU 学习结果，不据实现完成宣称指标改善。拟仅提交一个 45 分钟时限的四组串行诊断，无长训练后继。
 
 ## LIGER 低指标诊断
 

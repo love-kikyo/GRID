@@ -2,7 +2,7 @@
 
 ## 分支与提交
 
-当前工作分支：`wsdm27-external-baselines-v1`，于 2026-10-12 从 `c3ffaba` 创建，用于作者批准的 SIM / LIGER 对照扩展。原 `wsdm27-history-last-user-v1` 保留在已验收实验交接点；不重写其历史、不强推、不顺手合并回 main。新代码采用独立入口，不覆盖已验收模型和产物。
+当前工作分支：`wsdm27-liger-learning-v2`，于 2026-10-22 从 `de1d6dc` 创建，用于 LIGER 低指标后的特征与监督改进。`wsdm27-external-baselines-v1` 保留在原两轮训练及诊断交接点；更早的 `wsdm27-history-last-user-v1` 同样保留。不重写历史、不强推、不顺手合并回 main。新代码采用独立入口，不覆盖已验收模型和产物。
 
 沿用已确认的小步提交原则：一个逻辑完整、可以单独解释和回退的改动做一次 commit；不按聊天轮次或机械行数提交。
 
