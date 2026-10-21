@@ -1,6 +1,34 @@
 # Run 台账
 
-最后核验：2026-10-22 00:25（Asia/Shanghai）。145337 第 2 轮及完整 validation 已独立验收；147815 最后一轮已提交，PENDING 等待 GPU，未启动、未做启动验收。SIM 不扩 seed。
+最后核验：2026-10-22 01:00（Asia/Shanghai）。147815 已按作者要求在启动前取消；145337 的运行 / 数值验收保留，LIGER 正式训练及 test 暂停。完成低指标只读诊断，没有新任务。SIM 不扩 seed。
+
+## LIGER 低指标诊断
+
+10-22 作者要求取消第三轮并调查低指标。本轮不修改模型、输入协议或 checkpoint，不运行 test；只读审计两轮全部 validation 预测、官方实现、训练日志及既有 32 条 train fixture。原先的运行 / 数值验收不等于学习质量或充分收敛验收，后续放行须增加生成分支质量检查。
+
+同一 seed42、347416 条完整 validation：第 2 轮完整 cold Recall@5 / NDCG@5 为 **3.7077% / 3.3852%**，SID-only 为 **27.0555% / 25.3747%**，Separate 为 **27.6096% / 25.7934%**。两轮全部用户和 GT 与原 teacher 导出逐条对齐；GRID SID 的 +1 padding 偏移和 LIGER 分层词表偏移均还原正确。以下为最终 beam20 中至少存在一条匹配指定长度 GT 前缀的用户比例，不是逐步 beam 的中间覆盖率：
+
+| 最终 beam20 的 GT 前缀覆盖 | LIGER 第 2 轮 | 原 SID-only |
+| --- | --- | --- |
+| 第 1 层 | 32.1704% | 52.1309% |
+| 前 2 层 | 4.4454% | 33.5802% |
+| 前 3 层 | 0.6387% | 29.2111% |
+| 完整 4 层 | 0.1523%（529 条） | 27.9247%（97015 条） |
+
+主要瓶颈在生成分支，尤其中间 SID 层，不能仅通过调重排修复。5722251 / 6948320 个候选槽能映射到正确资产行（82.35%），已逐项反查 SID；不是普遍编号错位。Seen 目标共 296181 条（85.25%），自然 beam 只命中 525 条，完整 cold 排序后 @5 / @20 保留 136 / 185 条。Cold 目标 51235 条，@5 命中 12745 条；总 @5 命中的 98.94% 来自 cold 补充。即便现有候选排序完美，完整并集的 GT 覆盖上限也仅 51760 / 347416 = 14.8986%，低于原 SID-only @5；此为候选覆盖上限，不是新的实测指标。
+
+已确认的训练 / 适配差异，尚未通过消融证明各自的因果贡献：
+
+1. **训练监督量不同。** 原 SID 在每条序列的全部非 padding 物品位置计算 SID loss，最多 8 个物品块；当前 LIGER 每条只监督最终 GT 的 4 个 token。官方 `load_data_helper` 原本通过前缀展开提供多个训练目标，当前固定数据适配没有保留该机制。原 SID best 为 90000 更新、全局 batch384；LIGER 两轮为 12838 成功更新、batch1024，不能仅凭 epoch 或运行时长认定训练充分。官方 Amazon 默认为 200000 更新 / batch256，不能机械照搬，但当前预算确属另行压缩的适配预算。
+2. **官方特征预处理未保留。** 官方 `ID_generation/utils.py::process_embeddings` 使用 `StandardScaler().fit_transform`；当前 `pack_sequences` 直接将 int8 SCL 转成 float32。固定抽样 16384 个 train-seen 物品的逐维标准差中位数为 11.15、L2 范数中位数为 122.64。抽样前 512 行在第二轮的投影向量 / SID embedding 范数比均值为 10.27。这确认尺度差异，不能直接推断标准化后会恢复多少指标；没有对旧模型临时更换特征尺度来报数。
+3. **模型容量和表示不同。** 当前 LIGER 为官方 128 维、6+6 层 T5 适配，共 10070912 个去重参数；GRID 为 1024 维、约 144M 参数。GRID 虽称 SID-only（无重排目标），历史输入仍含由完整 SID 编码得到的 DualHash 物品表示，约 77.1M 参数参与历史表示；它不是原版 TIGER，也不是只有 SID token embedding。该 hash 来自 SID，不是 user ID 或额外外部标签。已核对原训练 preflight SHA 对应的 Git blob `344beef75ecc045bba9ae376caebf3ce32e1a95f`，不是只看当前改动后的源码。
+4. **cold 目录规模远离原设置。** 当前 cold 为 23915712 个，占资产 67.45%；[原文](https://arxiv.org/html/2411.18814v2#S3)的推理设计假设 cold 相对稀少，实验仅 43–400 个 cold 物品。完整 cold 排序确实会挤掉部分 seen beam 命中，但不能解释排序前已经很低的生成覆盖；不据此撤销作者批准的完整 cold 协议。
+
+支持“尚未学好”而非纯推理接口错误的附加证据：第二轮末 200 batch 的平均 SID loss 仍为 4.6529，首轮末为 4.8712；beam 完整覆盖从 236 增至 529，不能据 hybrid 指标近乎持平宣称生成器已收敛。既有 32 条 train fixture 在 CPU FP32 teacher forcing 下，第 2 / 3 层 Top1 仅 2/32、0/32；即使喂正确前缀也较弱。小样本不代表全训练集。替换历史输入会改变预测，未发现输入被整体忽略；输入打包、SID 映射和全目录损失 / 梯度等价的 45 项现有回归通过（8.32 秒）。
+
+结论：**指标口径可对齐，但当前预算下的固定编码适配结果不能直接代表充分训练的 LIGER。** 差距大本身不是不可比或删掉弱结果的理由；现阶段保留两轮全部产物，暂不列为最终论文 baseline。下一项建议仅制定受控短测，分离训练监督、特征标准化及 SID / dense 联合目标的影响，作者确认后再实施；本轮没有修复或重训。
+
+证据：[可复算只读脚本](../logs/analysis/liger_low_metric_2026-10-22_v1/audit_saved_predictions.py)、[两轮全量计数与 218 个预测分片哈希](../logs/analysis/liger_low_metric_2026-10-22_v1/saved_predictions.json)、[源码差异及 CPU 小样本诊断](../logs/analysis/liger_low_metric_2026-10-22_v1/diagnosis.json)。原模型直接加载的可选 CPU 检查因依赖导入 SIGILL 退出，未从该失败检查取证或修改 checkpoint；容量 / 监督核对使用训练日志及哈希一致的归档源码。
 
 ## LIGER seed42 第三轮续训
 
@@ -8,7 +36,9 @@
 
 [Manifest](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/manifest.json) SHA256 `39c669dcf54a7e1455121116290b50758a3d6503ecefd0c5bbd74fe22f8c85ec`；[提交记录](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Ep3-42-147815.out)、[stderr](../logs/slurm/GRID-LIGER-Ep3-42-147815.err)。从 `epoch02-accepted.pt` 完整恢复，初始累计 12840 batch / 12838 成功更新 / 2 AMP 跳过；下一次 LR 为 `0.0000822929772431063`。三轮数据总上限 19260 batch，原 scheduler 总预算 19260 / warmup963 不变；不额外补齐跳过的更新。最终按全部三轮的完整 cold validation Recall@5 → NDCG@5 → 较早 epoch 选优，不能默认用第三轮。
 
-00:25 [队列快照](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/queue_snapshot_2026-10-22_0025.json)：PENDING，原因 `ReqNodeNotAvail, UnavailableNodes:aias-compute-2`。进一步核对指定节点为 MIXED、未 DOWN / DRAIN，但 7/7 GPU 已分配；另一 4090 节点 aias-compute-4 为 8/8 已分配，无预约。尚无运行目录、preflight 或训练日志，不能记作启动通过。调度器当时估计 10-24 23:28:09 开始，可能随其他作业提前结束而变化，不作为保证。保留唯一等待任务，不改硬件或重复提交。
+00:25 [队列快照](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/queue_snapshot_2026-10-22_0025.json)：当时 PENDING，原因 `ReqNodeNotAvail, UnavailableNodes:aias-compute-2`。指定节点为 MIXED、未 DOWN / DRAIN，7/7 GPU 已分配；另一 4090 节点 aias-compute-4 为 8/8 已分配，无预约。没有运行目录、preflight 或训练日志。调度器当时估计 10-24 23:28:09 开始，仅作历史记录。
+
+**00:48:39 按作者要求取消。** Slurm `CANCELLED by 1018`，Elapsed `00:00:00`、Start `None`、节点 `None assigned`；从未启动，不记作训练失败或第三轮结果。[取消收据](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/cancellation.json)保留原 manifest / 提交记录，未重提，无自动 test 或其他后继；上文恢复与三轮选优为取消前的提交计划，未执行。
 
 ## LIGER seed42 第二轮续训
 
@@ -269,7 +299,7 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 147815 | 10-22 00:17 提交 | LIGER seed42 第 3 轮暨最后一轮及完整 validation，1 GPU / 4 CPU | PENDING；两处 4090 节点 GPU 均满，尚未启动；原源码 / 配置不变，无自动后继 |
+| 147815 | 10-22 00:17 提交 | LIGER seed42 第 3 轮及完整 validation，1 GPU / 4 CPU | 00:48:39 按作者要求 CANCELLED；未启动、耗时 0；暂停正式训练，调查低指标，无后继 |
 | 145337 | 10-21 01:23 | LIGER seed42 第 2 轮续训及全量 validation，1 GPU / 4 CPU | COMPLETED / 0:0，18:23:07；本轮 6418 成功更新 / 2 AMP 跳过，完整 validation 独立验收，best 更新为第 2 轮 |
 | 144629 | 10-20 01:39 | LIGER seed42 第一轮正式训练及全量 validation，1 GPU / 4 CPU | COMPLETED / 0:0，18:57:57；6420 更新 / 0 AMP 跳过，347416 条验证及完整 checkpoint 独立验收通过 |
 | 144626 | 10-20 01:32 | LIGER 正式入口日志修复后的恢复复验，1 GPU / 4 CPU | COMPLETED / 0:0，4m40s；75 项回归、完整状态 / 更新 / 预测逐值一致，第一轮训练放行 |
