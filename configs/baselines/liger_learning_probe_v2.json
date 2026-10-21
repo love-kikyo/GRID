@@ -1,0 +1,31 @@
+{
+  "phase": "train_only_learning_diagnostic",
+  "seed": 42,
+  "split_seed": 20261022,
+  "fit_parents": 128,
+  "reserved_parents": 128,
+  "history_items": 7,
+  "catalog_rows": 4096,
+  "batch_size": 32,
+  "attempts_per_case": 1024,
+  "warmup_steps": 51,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.035,
+  "evaluation_attempts": [0, 256, 1024],
+  "full_catalog_smoke_attempts": 2,
+  "deadline_seconds": 2400,
+  "cases": [
+    {"name": "raw_final", "standardized": false, "supervision": "final_only"},
+    {"name": "standardized_final", "standardized": true, "supervision": "final_only"},
+    {"name": "raw_prefix", "standardized": false, "supervision": "all_prefix"},
+    {"name": "standardized_prefix", "standardized": true, "supervision": "all_prefix"}
+  ],
+  "standardization_fit_scope": "all_frozen_train_seen_item_rows",
+  "reserved_scope": "train parents excluded from optimization, not excluded from feature statistics",
+  "loss_weighting": "equal_prefix_examples",
+  "catalog_policy": "fit last-eight item union plus fixed random train-seen rows; never reserved-target backfill",
+  "comparison_scope": "equal attempted target-token budget; final-target exposures differ",
+  "formal_training_ready": false,
+  "validation_test_access": false,
+  "automatic_successor": false
+}
