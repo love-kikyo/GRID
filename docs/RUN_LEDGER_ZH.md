@@ -1,6 +1,14 @@
 # Run 台账
 
-最后核验：2026-10-21 01:26（Asia/Shanghai）。144629 LIGER seed42 第一轮及完整 validation 已独立验收；第 2 轮 145337 RUNNING，完整状态恢复检查通过。SIM 不扩 seed。
+最后核验：2026-10-22 00:25（Asia/Shanghai）。145337 第 2 轮及完整 validation 已独立验收；147815 最后一轮已提交，PENDING 等待 GPU，未启动、未做启动验收。SIM 不扩 seed。
+
+## LIGER seed42 第三轮续训
+
+147815：10-22 00:17:34 提交，版本 `1ab5888`，提交时工作树干净。执行源码与配置和第 2 轮逐文件一致，无新增迁移；请求 aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G / 36 小时运行时限。仅执行最后一轮的 6573674 条训练与 347416 条完整 validation，独立审核后停止，无 test 或新 seed 自动后继。按前两轮实测估计启动后约 18–20 小时，排队时间另计。
+
+[Manifest](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/manifest.json) SHA256 `39c669dcf54a7e1455121116290b50758a3d6503ecefd0c5bbd74fe22f8c85ec`；[提交记录](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Ep3-42-147815.out)、[stderr](../logs/slurm/GRID-LIGER-Ep3-42-147815.err)。从 `epoch02-accepted.pt` 完整恢复，初始累计 12840 batch / 12838 成功更新 / 2 AMP 跳过；下一次 LR 为 `0.0000822929772431063`。三轮数据总上限 19260 batch，原 scheduler 总预算 19260 / warmup963 不变；不额外补齐跳过的更新。最终按全部三轮的完整 cold validation Recall@5 → NDCG@5 → 较早 epoch 选优，不能默认用第三轮。
+
+00:25 [队列快照](../logs/training_launch/liger_train_seed42_epoch03_2026-10-22_v1/queue_snapshot_2026-10-22_0025.json)：PENDING，原因 `ReqNodeNotAvail, UnavailableNodes:aias-compute-2`。进一步核对指定节点为 MIXED、未 DOWN / DRAIN，但 7/7 GPU 已分配；另一 4090 节点 aias-compute-4 为 8/8 已分配，无预约。尚无运行目录、preflight 或训练日志，不能记作启动通过。调度器当时估计 10-24 23:28:09 开始，可能随其他作业提前结束而变化，不作为保证。保留唯一等待任务，不改硬件或重复提交。
 
 ## LIGER seed42 第二轮续训
 
@@ -8,9 +16,20 @@
 
 [Manifest](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/manifest.json) SHA256 `e4339dc70f0ec440003618cf25b23c9d370756a74e0c4da8b7d19b371da1f420`；[启动记录](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Ep2-42-145337.out)、[stderr](../logs/slurm/GRID-LIGER-Ep2-42-145337.err)。原配置 / 核心文件与首轮相同，只显式迁移编排 / 测试的源码绑定；旧清单及 checkpoint 不改写。本地 217 项回归通过，计算节点 48 项启动回归通过（10.64 秒）。
 
-[Preflight](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/preflight.json) SHA256 `04b4d32376a97b7d0234fb1b0fbf7fbe6ef8cda66133ea20341d8d5a27d4a756`。01:24:56 完整恢复检查通过：模型 / optimizer / scheduler / scaler / RNG / 数据游标与模式的全状态哈希均为 `171dd2cf00c4ca577ef978e0339e4ef1c5d3c92ab6d0f2629459ce00234eb8b6`（按旧绑定对比），模型哈希与首轮验证权重相同。初始累计更新 6420，原总调度 19260 / warmup963，下一次 LR 为 `0.000238814534124922`；继承首轮 validation 与 best 记录。CPU `[0,1,28,29]`、库线程 1，GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与首轮相同。完整效果仍待本轮结束验收。
+[Preflight](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/preflight.json) SHA256 `04b4d32376a97b7d0234fb1b0fbf7fbe6ef8cda66133ea20341d8d5a27d4a756`。01:24:56 完整恢复检查通过：模型 / optimizer / scheduler / scaler / RNG / 数据游标与模式的全状态哈希均为 `171dd2cf00c4ca577ef978e0339e4ef1c5d3c92ab6d0f2629459ce00234eb8b6`（按旧绑定对比），模型哈希与首轮验证权重相同。初始累计更新 6420，原总调度 19260 / warmup963，下一次 LR 为 `0.000238814534124922`；继承首轮 validation 与 best 记录。CPU `[0,1,28,29]`、库线程 1，GPU UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，与首轮相同。
 
 01:26:44 [启动验收](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/startup_acceptance.json)通过：核验第 2 轮前 5 个 batch / 5120 条记录，累计更新 6421–6425，AMP 跳过 0，152 个梯度张量及有限 loss / 梯度范数正常；每步 LR 与原 cosine 解析值一致，scaler 继承为 524288，样本摘要链从首轮末点连续衔接。此为启动核验，不代替本轮完整 validation。
+
+10-21 19:46:20 完成，Slurm COMPLETED / 0:0，总耗时 18:23:07。训练 6573674 条 / 6420 batch，尾批 618；本轮成功更新 6418 次，累计成功更新 12838 次。Batch2520 / 4697 的梯度非有限触发 AMP 跳过，scaler 均由 1048576 减半至 524288，loss 有限，optimizer / scheduler 不前进；后续正常更新，无额外补 batch。逐批 LR、计数、完整样本摘要链复核通过。训练步耗时合计 57965.785 秒（约 16.10 小时）；validation 全部 347416 条、109 分片，7902.646 秒（约 2.20 小时）。
+
+| 第二轮全量 validation（比例值） | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Recall@20 | NDCG@20 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 完整 cold 主版本 | 0.0370766 | 0.0338523 | 0.0392958 | 0.0345683 | 0.0418087 | 0.0352047 |
+| 同 checkpoint beam-only 诊断 | 0.0008434 | 0.0006301 | 0.0011168 | 0.0007173 | 0.0015227 | 0.0008212 |
+
+按冻结规则，当前 best 更新为第 2 轮；完整 cold Recall@5 较首轮增加约 0.0230 个百分点，属于单 seed 验证阶段的小幅改善，不是 test 结论或显著性结论。[训练报告](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/result.json) SHA256 `060918a8fb6858a76caaed7e889cbba1eb816610f71f5cb1a8d655e382b1e719`；[独立验收](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/acceptance.json) SHA256 `896a55b25ba15850f943972231922f740d7ba43a5384d78a0b98af845513e66c`；[完成后复核](../logs/training_launch/liger_train_seed42_epoch02_2026-10-21_v1/completion.json)确认源码 / 输入绑定及 8 个 checkpoint、109 个预测分片和报告，共 120 项文件哈希。
+
+续训使用 `epoch02-accepted.pt`，SHA256 `9adf24d0eb2bca5f24563281fbddf446b6ec43cbceeeb67e55a4028eb0787a4e`；它与本轮选优时点权重相同，同时保留两轮完整 validation / best、optimizer、scheduler、scaler、RNG 及 epoch 边界数据游标。原始报告与 checkpoint 不覆盖。
 
 ## LIGER seed42 第一轮正式训练
 
@@ -250,7 +269,8 @@ SIM 新入口采用 setup 后严格加载完整 state_dict；原 Separate / join
 
 | Job | 开始时间 | 在做什么 / 模型 | 结果与解释 |
 | --- | --- | --- | --- |
-| 145337 | 10-21 01:23 | LIGER seed42 第 2 轮续训及全量 validation，1 GPU / 4 CPU | RUNNING；48 项启动回归、原 checkpoint 全状态恢复及固定预算检查通过；完成本轮即停止 |
+| 147815 | 10-22 00:17 提交 | LIGER seed42 第 3 轮暨最后一轮及完整 validation，1 GPU / 4 CPU | PENDING；两处 4090 节点 GPU 均满，尚未启动；原源码 / 配置不变，无自动后继 |
+| 145337 | 10-21 01:23 | LIGER seed42 第 2 轮续训及全量 validation，1 GPU / 4 CPU | COMPLETED / 0:0，18:23:07；本轮 6418 成功更新 / 2 AMP 跳过，完整 validation 独立验收，best 更新为第 2 轮 |
 | 144629 | 10-20 01:39 | LIGER seed42 第一轮正式训练及全量 validation，1 GPU / 4 CPU | COMPLETED / 0:0，18:57:57；6420 更新 / 0 AMP 跳过，347416 条验证及完整 checkpoint 独立验收通过 |
 | 144626 | 10-20 01:32 | LIGER 正式入口日志修复后的恢复复验，1 GPU / 4 CPU | COMPLETED / 0:0，4m40s；75 项回归、完整状态 / 更新 / 预测逐值一致，第一轮训练放行 |
 | 144620 | 10-20 01:24 | LIGER 正式配置 / 新进程恢复短测，1 GPU / 4 CPU | COMPLETED / 0:0，4m59s；全状态 / 后续更新 / 完整预测逐值一致；正式入口日志修复后需新版本验收 |
