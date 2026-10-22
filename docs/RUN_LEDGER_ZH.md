@@ -1,6 +1,27 @@
 # Run 台账
 
-最后核验：2026-10-22 20:40（Asia/Shanghai）。148939 已完成并通过完整性 / 小集拟合验收，保留组仍无完整 GT 命中，不能视为正式效果通过。147815 保持取消，正式训练及 test 暂停，SIM 不扩 seed。
+最后核验：2026-10-22 21:30（Asia/Shanghai）。新版 LIGER prefix / 标准化入口已准备，待 GPU 集成及正式预算核准；旧 148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+
+## LIGER 多前缀正式链路准备
+
+作者同意改进监督、修复标准化适配并核算训练预算。新分支 `wsdm27-liger-prefix-v3` 从 `36828c0` 创建；旧 formal / diagnostic 执行源、配置及产物未修改。新增 [前缀流](../src/baselines/liger_prefix_stream.py)、[runtime](../src/baselines/liger_prefix_runtime.py)、[联合训练步](../src/baselines/liger_prefix_training.py) 及 [集成入口](../scripts/probe_liger_prefix.py)。这次不是恢复旧 epoch3，也不继续 128 条拟合诊断。
+
+精确计数来自 [既有全量目录报告](../logs/training_launch/liger_catalog_2026-10-19_v1/catalog_report.json)：最后八项窗口共 52569787 个 item occurrence，6573674 个父样本；每个窗口首项无历史，不作为新前缀目标，故完整一遍为 **45996113 个 prefix，batch1024 共 44919 批，尾批 81**，原最终 GT 6573674 次。报告 SHA256 `cd13c7783941d2a9577439b88b8d7e6dc25b6f2304f421694b0db6f7a385192c`；原生成源码、报告、验收及输入绑定已核对。此处是旧全量计数的算术派生，不是新扫 TFRecord 或新做独立长度普查。
+
+预算参考（seed42，名义全局 batch384；后三者从 SID best90000 初始化）：
+
+| 模型阶段 | best / 停止更新步 | 作业时长 | 分配 GPU 小时 |
+| --- | ---: | ---: | ---: |
+| SID 131908 | 90000 / 115000 | 11:27:04 | 34.35 |
+| Listwise 132049 | 100000 / 120000 | 32:55:25 | 98.77 |
+| Pointwise 132050 | 90000 / 115000 | 31:01:13 | 93.06 |
+| Separate 132051 | 10000 / 35000 | 04:25:05 | 13.25 |
+
+表内下游成本不含前置 SID，完整方法须另计该阶段；作业时间含验证 / 保存等，不是纯训练。九月均为 `aias-compute-01` 三卡，尚未从小型记录逐卡核实当时型号；不能据节点后来登记 3090 就声称与当前 4090 具有相同算力。SID / Joint 每条至多八项 SID 监督，Separate 第二阶段 teacher 冻结，不能混用监督计数。旧 LIGER 两轮单4090累计 12840 批 / 12838 成功更新，纯训练 32.66 小时、完整 validation 4.52 小时。按旧吞吐粗算新完整前缀遍历约 114 小时，仍需新吞吐核对；原“三轮”不直接移植。
+
+集成 gate 使用 [独立配置](../configs/baselines/liger_prefix_gate_v3.json)：全新 seed42、真实 prefix batch1024、完整11542755 seen损失、统一标准化；连续三步与新进程从第一步恢复后两步逐值比较，第二步后各验证65条，每条扫描全部23915712 cold。测试中的19260/warmup963仅为恢复调度fixture，最多三次尝试，**不批准正式19260步训练**。1张4090 / 整项4 CPU / 24G / 45分钟，无自动后继；正式预算和分阶段入口留待此项验收后核准。
+
+本地专项回归 **217 passed、5 skipped**（可选 sklearn 对照）；全部 LIGER 与资源 / launcher 回归 **523 passed、5 skipped，15.97 秒**，shell语法与独立代码审查通过。扩大回归时曾因 Transformers 自动导入 TensorFlow 触发登录节点已知 SIGILL；显式 `USE_TF=0` 后完整回归通过，计算节点的实际 TFRecord 读取不取消。提交及运行记录待补。
 
 ## LIGER 单条件优化预算诊断
 
