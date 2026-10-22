@@ -1,0 +1,27 @@
+{
+  "protocol": "liger-fixed-sid-scl-prefix-standardized-v3",
+  "phase": "prefix_standardized_integration_gate",
+  "candidate_config": "configs/baselines/liger_history_last_v1.json",
+  "seed": 42,
+  "formal_training_ready": false,
+  "automatic_successor": false,
+  "optimizer": {"name": "AdamW", "learning_rate": 0.0003, "weight_decay": 0.035, "clip_norm": 1.0},
+  "training": {
+    "batch_size": 1024,
+    "shuffle_buffer": 8192,
+    "prefix_shuffle_buffer": 8192,
+    "history_items": 7,
+    "supervision": "all_nonempty_history_prefixes_in_last8",
+    "loss_weighting": "equal_prefix_examples_both_sid_and_dense",
+    "drop_last": false,
+    "max_attempts": 3,
+    "max_optimizer_steps": 19260,
+    "warmup_steps": 963,
+    "schedule_scope": "integration fixture only; NOT an approved formal training budget",
+    "chunk_size": 65536
+  },
+  "standardization": {"fit_scope": "frozen_train_seen", "reuse_verified_statistics": true},
+  "validation": {"split": "evaluation", "batch_size": 32, "candidate_mode": "full_cold", "test_access": false},
+  "smoke": {"train_steps": 3, "save_after_step": 1, "validate_after_step": 2, "validation_records": 65},
+  "resources": {"gpus": 1, "gpu_model": "RTX 4090", "cpu_ceiling": 4, "library_threads": 1}
+}
