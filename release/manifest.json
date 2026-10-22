@@ -1,0 +1,445 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "scope": [
+    "sid",
+    "listwise",
+    "pointwise",
+    "separate"
+  ],
+  "description": "Source-only reproducibility preparation; not a published or end-to-end-verified release.",
+  "files": [
+    {
+      "source": "release/public/.gitignore",
+      "target": ".gitignore"
+    },
+    {
+      "source": ".project-root",
+      "target": ".project-root"
+    },
+    {
+      "source": "configs/__init__.py",
+      "target": "configs/__init__.py"
+    },
+    {
+      "source": "configs/callbacks/default.yaml",
+      "target": "configs/callbacks/default.yaml"
+    },
+    {
+      "source": "configs/callbacks/early_stopping.yaml",
+      "target": "configs/callbacks/early_stopping.yaml"
+    },
+    {
+      "source": "configs/callbacks/local_pickle_writer.yaml",
+      "target": "configs/callbacks/local_pickle_writer.yaml"
+    },
+    {
+      "source": "configs/callbacks/model_checkpoint.yaml",
+      "target": "configs/callbacks/model_checkpoint.yaml"
+    },
+    {
+      "source": "configs/callbacks/model_summary.yaml",
+      "target": "configs/callbacks/model_summary.yaml"
+    },
+    {
+      "source": "configs/callbacks/rich_progress_bar.yaml",
+      "target": "configs/callbacks/rich_progress_bar.yaml"
+    },
+    {
+      "source": "configs/experiment/tiger_train_click_pointwise.yaml",
+      "target": "configs/experiment/tiger_train_click_pointwise.yaml"
+    },
+    {
+      "source": "configs/experiment/tiger_train_click.yaml",
+      "target": "configs/experiment/tiger_train_click.yaml"
+    },
+    {
+      "source": "configs/experiment/tiger_train_flat.yaml",
+      "target": "configs/experiment/tiger_train_flat.yaml"
+    },
+    {
+      "source": "configs/experiment/tiger_train_rerank_small.yaml",
+      "target": "configs/experiment/tiger_train_rerank_small.yaml"
+    },
+    {
+      "source": "configs/experiment/tiger_train_sid.yaml",
+      "target": "configs/experiment/tiger_train_sid.yaml"
+    },
+    {
+      "source": "configs/extras/default.yaml",
+      "target": "configs/extras/default.yaml"
+    },
+    {
+      "source": "configs/hydra/default.yaml",
+      "target": "configs/hydra/default.yaml"
+    },
+    {
+      "source": "configs/local/.gitkeep",
+      "target": "configs/local/.gitkeep"
+    },
+    {
+      "source": "configs/logger/csv.yaml",
+      "target": "configs/logger/csv.yaml"
+    },
+    {
+      "source": "configs/paths/default.yaml",
+      "target": "configs/paths/default.yaml"
+    },
+    {
+      "source": "configs/train.yaml",
+      "target": "configs/train.yaml"
+    },
+    {
+      "source": "configs/trainer/ddp.yaml",
+      "target": "configs/trainer/ddp.yaml"
+    },
+    {
+      "source": "configs/trainer/default.yaml",
+      "target": "configs/trainer/default.yaml"
+    },
+    {
+      "source": "release/public/docs/RELEASE_GATES_ZH.md",
+      "target": "docs/RELEASE_GATES_ZH.md"
+    },
+    {
+      "source": "release/public/docs/REPRODUCIBILITY_ZH.md",
+      "target": "docs/REPRODUCIBILITY_ZH.md"
+    },
+    {
+      "source": "LICENSE",
+      "target": "LICENSE"
+    },
+    {
+      "source": "notices.txt",
+      "target": "notices.txt"
+    },
+    {
+      "source": "release/public/README.md",
+      "target": "README.md"
+    },
+    {
+      "source": "requirements.txt",
+      "target": "requirements.txt"
+    },
+    {
+      "source": "scripts/analyze_paired_evaluation.py",
+      "target": "scripts/analyze_paired_evaluation.py"
+    },
+    {
+      "source": "scripts/audit_taobao_next_item_dataset.py",
+      "target": "scripts/audit_taobao_next_item_dataset.py"
+    },
+    {
+      "source": "scripts/build_taobao_next_item_dataset.py",
+      "target": "scripts/build_taobao_next_item_dataset.py"
+    },
+    {
+      "source": "scripts/export_paired_evaluation.py",
+      "target": "scripts/export_paired_evaluation.py"
+    },
+    {
+      "source": "scripts/reproduce_training.py",
+      "target": "scripts/reproduce_training.py"
+    },
+    {
+      "source": "scripts/select_score_fusion.py",
+      "target": "scripts/select_score_fusion.py"
+    },
+    {
+      "source": "scripts/verify_taobao_training_data.py",
+      "target": "scripts/verify_taobao_training_data.py"
+    },
+    {
+      "source": "src/__init__.py",
+      "target": "src/__init__.py"
+    },
+    {
+      "source": "src/checkpoint_resume.py",
+      "target": "src/checkpoint_resume.py"
+    },
+    {
+      "source": "src/components/__init__.py",
+      "target": "src/components/__init__.py"
+    },
+    {
+      "source": "src/components/clustering_initializers.py",
+      "target": "src/components/clustering_initializers.py"
+    },
+    {
+      "source": "src/components/distance_functions.py",
+      "target": "src/components/distance_functions.py"
+    },
+    {
+      "source": "src/components/eval_metrics.py",
+      "target": "src/components/eval_metrics.py"
+    },
+    {
+      "source": "src/components/loss_functions.py",
+      "target": "src/components/loss_functions.py"
+    },
+    {
+      "source": "src/components/network_blocks/__init__.py",
+      "target": "src/components/network_blocks/__init__.py"
+    },
+    {
+      "source": "src/components/network_blocks/hf_language_model.py",
+      "target": "src/components/network_blocks/hf_language_model.py"
+    },
+    {
+      "source": "src/components/optimizer.py",
+      "target": "src/components/optimizer.py"
+    },
+    {
+      "source": "src/components/quantization_strategies.py",
+      "target": "src/components/quantization_strategies.py"
+    },
+    {
+      "source": "src/components/scheduler.py",
+      "target": "src/components/scheduler.py"
+    },
+    {
+      "source": "src/components/training_loop_functions.py",
+      "target": "src/components/training_loop_functions.py"
+    },
+    {
+      "source": "src/data/loading/__init__.py",
+      "target": "src/data/loading/__init__.py"
+    },
+    {
+      "source": "src/data/loading/components/__init__.py",
+      "target": "src/data/loading/components/__init__.py"
+    },
+    {
+      "source": "src/data/loading/components/collate_functions.py",
+      "target": "src/data/loading/components/collate_functions.py"
+    },
+    {
+      "source": "src/data/loading/components/custom_dataloader.py",
+      "target": "src/data/loading/components/custom_dataloader.py"
+    },
+    {
+      "source": "src/data/loading/components/dataloading.py",
+      "target": "src/data/loading/components/dataloading.py"
+    },
+    {
+      "source": "src/data/loading/components/interfaces.py",
+      "target": "src/data/loading/components/interfaces.py"
+    },
+    {
+      "source": "src/data/loading/components/iterators.py",
+      "target": "src/data/loading/components/iterators.py"
+    },
+    {
+      "source": "src/data/loading/components/label_function.py",
+      "target": "src/data/loading/components/label_function.py"
+    },
+    {
+      "source": "src/data/loading/components/pre_processing.py",
+      "target": "src/data/loading/components/pre_processing.py"
+    },
+    {
+      "source": "src/data/loading/datamodules/__init__.py",
+      "target": "src/data/loading/datamodules/__init__.py"
+    },
+    {
+      "source": "src/data/loading/datamodules/sequence_datamodule.py",
+      "target": "src/data/loading/datamodules/sequence_datamodule.py"
+    },
+    {
+      "source": "src/data/loading/utils.py",
+      "target": "src/data/loading/utils.py"
+    },
+    {
+      "source": "src/models/__init__.py",
+      "target": "src/models/__init__.py"
+    },
+    {
+      "source": "src/models/components/__init__.py",
+      "target": "src/models/components/__init__.py"
+    },
+    {
+      "source": "src/models/components/interfaces.py",
+      "target": "src/models/components/interfaces.py"
+    },
+    {
+      "source": "src/models/components/network_blocks/aggregation_strategy.py",
+      "target": "src/models/components/network_blocks/aggregation_strategy.py"
+    },
+    {
+      "source": "src/models/components/network_blocks/embedding_aggregator.py",
+      "target": "src/models/components/network_blocks/embedding_aggregator.py"
+    },
+    {
+      "source": "src/models/components/network_blocks/mlp.py",
+      "target": "src/models/components/network_blocks/mlp.py"
+    },
+    {
+      "source": "src/models/components/network_blocks/normalize_layer.py",
+      "target": "src/models/components/network_blocks/normalize_layer.py"
+    },
+    {
+      "source": "src/models/modules/__init__.py",
+      "target": "src/models/modules/__init__.py"
+    },
+    {
+      "source": "src/models/modules/base_module.py",
+      "target": "src/models/modules/base_module.py"
+    },
+    {
+      "source": "src/models/modules/clustering/base_clustering_module.py",
+      "target": "src/models/modules/clustering/base_clustering_module.py"
+    },
+    {
+      "source": "src/models/modules/clustering/mini_batch_kmeans.py",
+      "target": "src/models/modules/clustering/mini_batch_kmeans.py"
+    },
+    {
+      "source": "src/models/modules/huggingface/__init__.py",
+      "target": "src/models/modules/huggingface/__init__.py"
+    },
+    {
+      "source": "src/models/modules/huggingface/transformer_base_module.py",
+      "target": "src/models/modules/huggingface/transformer_base_module.py"
+    },
+    {
+      "source": "src/models/modules/semantic_id/__init__.py",
+      "target": "src/models/modules/semantic_id/__init__.py"
+    },
+    {
+      "source": "src/models/modules/semantic_id/separate_rerank_model.py",
+      "target": "src/models/modules/semantic_id/separate_rerank_model.py"
+    },
+    {
+      "source": "src/models/modules/semantic_id/tiger_generation_model.py",
+      "target": "src/models/modules/semantic_id/tiger_generation_model.py"
+    },
+    {
+      "source": "src/modules/__init__.py",
+      "target": "src/modules/__init__.py"
+    },
+    {
+      "source": "src/modules/clustering/__init__.py",
+      "target": "src/modules/clustering/__init__.py"
+    },
+    {
+      "source": "src/modules/clustering/residual_quantization.py",
+      "target": "src/modules/clustering/residual_quantization.py"
+    },
+    {
+      "source": "src/modules/clustering/vector_quantization.py",
+      "target": "src/modules/clustering/vector_quantization.py"
+    },
+    {
+      "source": "src/modules/semantic_embedding_inference_module.py",
+      "target": "src/modules/semantic_embedding_inference_module.py"
+    },
+    {
+      "source": "src/runtime_cpu.py",
+      "target": "src/runtime_cpu.py"
+    },
+    {
+      "source": "src/runtime_export_cpu.py",
+      "target": "src/runtime_export_cpu.py"
+    },
+    {
+      "source": "src/train.py",
+      "target": "src/train.py"
+    },
+    {
+      "source": "src/utils/__init__.py",
+      "target": "src/utils/__init__.py"
+    },
+    {
+      "source": "src/utils/custom_hydra_resolvers.py",
+      "target": "src/utils/custom_hydra_resolvers.py"
+    },
+    {
+      "source": "src/utils/decorators.py",
+      "target": "src/utils/decorators.py"
+    },
+    {
+      "source": "src/utils/file_utils.py",
+      "target": "src/utils/file_utils.py"
+    },
+    {
+      "source": "src/utils/inference_utils.py",
+      "target": "src/utils/inference_utils.py"
+    },
+    {
+      "source": "src/utils/instantiators.py",
+      "target": "src/utils/instantiators.py"
+    },
+    {
+      "source": "src/utils/launcher_utils.py",
+      "target": "src/utils/launcher_utils.py"
+    },
+    {
+      "source": "src/utils/logging_utils.py",
+      "target": "src/utils/logging_utils.py"
+    },
+    {
+      "source": "src/utils/masking_utils.py",
+      "target": "src/utils/masking_utils.py"
+    },
+    {
+      "source": "src/utils/pylogger.py",
+      "target": "src/utils/pylogger.py"
+    },
+    {
+      "source": "src/utils/restart_job_utils.py",
+      "target": "src/utils/restart_job_utils.py"
+    },
+    {
+      "source": "src/utils/restart_job.py",
+      "target": "src/utils/restart_job.py"
+    },
+    {
+      "source": "src/utils/rich_utils.py",
+      "target": "src/utils/rich_utils.py"
+    },
+    {
+      "source": "src/utils/tensor_utils.py",
+      "target": "src/utils/tensor_utils.py"
+    },
+    {
+      "source": "src/utils/utils.py",
+      "target": "src/utils/utils.py"
+    },
+    {
+      "source": "tests/test_build_taobao_next_item_dataset.py",
+      "target": "tests/test_build_taobao_next_item_dataset.py"
+    },
+    {
+      "source": "tests/test_checkpoint_resume.py",
+      "target": "tests/test_checkpoint_resume.py"
+    },
+    {
+      "source": "tests/test_dataloading_empty_worker.py",
+      "target": "tests/test_dataloading_empty_worker.py"
+    },
+    {
+      "source": "tests/test_export_user_identity.py",
+      "target": "tests/test_export_user_identity.py"
+    },
+    {
+      "source": "tests/test_paired_evaluation.py",
+      "target": "tests/test_paired_evaluation.py"
+    },
+    {
+      "source": "tests/test_reproduce_training.py",
+      "target": "tests/test_reproduce_training.py"
+    },
+    {
+      "source": "tests/test_rerank_objective.py",
+      "target": "tests/test_rerank_objective.py"
+    },
+    {
+      "source": "tests/test_runtime_cpu.py",
+      "target": "tests/test_runtime_cpu.py"
+    },
+    {
+      "source": "tests/test_verify_taobao_training_data.py",
+      "target": "tests/test_verify_taobao_training_data.py"
+    }
+  ]
+}

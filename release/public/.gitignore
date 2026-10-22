@@ -1,0 +1,23 @@
+# Never commit private assets, runs, or credentials to the source repository.
+.env
+.env.*
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+data/
+assets/
+logs/
+outputs/
+dist/
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.npy
+*.npz
+*.pkl
+*.parquet
+*.tfrecord*
+*.safetensors
