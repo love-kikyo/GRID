@@ -4,7 +4,10 @@
 
 ## 维护记录
 
+- [2026-10-22 复现准备](../REPOSITORY_PREPARATION_ZH.md)：独立 worktree、四模型源码白名单、[缓存删除记录](2026-10-22/CACHE_CLEANUP.json)、[候选验收记录](2026-10-22/RELEASE_CHECKS.json)。
 - [2026-09-15 仓库产物清理](2026-09-15/REPOSITORY_CLEANUP_ZH.md)：旧入口、日志、评估和 run 记录归档；已批准删除的数据 / checkpoint 清单及验收。
+
+上游框架介绍另存 [UPSTREAM_GRID_README.md](UPSTREAM_GRID_README.md)，仅清理行末空白；其历史命令/相对链接不作为当前四模型导航。
 
 ## 旧实验文档
 

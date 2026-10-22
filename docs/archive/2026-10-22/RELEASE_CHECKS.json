@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-22",
+  "status": "source_draft_checks_passed",
+  "candidate_directory": "GRID-four-model-release-draft-20261022",
+  "source_commit": "a90b4abc64380c39c6ead27981b228a4a9ecb1e3",
+  "source_manifest_sha256": "b4c62ed1599db67c630f1381e61148a26992b412431da6a2731bc0a32856b7c2",
+  "release_manifest_sha256": "0fc2a987082fd20af7e6035d0599c58af726222fa354ab0c6e8f511bd5510bb0",
+  "candidate": {
+    "listed_files": 108,
+    "additional_metadata_files": 1,
+    "total_listed_bytes": 27713585,
+    "sha256_and_size_checks": "passed",
+    "exact_inventory_no_extras": "passed",
+    "symlinks": 0,
+    "git_history_included": false,
+    "private_assets_included": false,
+    "rootutils_marker": "passed",
+    "license_notices_requirements": "byte-identical to original GRID"
+  },
+  "checks": {
+    "preparation_pytest": {
+      "passed": 90,
+      "files": [
+        "test_prepare_repro_release.py",
+        "test_reproduce_training.py",
+        "test_checkpoint_resume.py",
+        "test_runtime_cpu.py",
+        "test_verify_taobao_training_data.py"
+      ]
+    },
+    "candidate_pytest": {
+      "passed": 30,
+      "overlaps_preparation_suite": true,
+      "files": [
+        "test_reproduce_training.py",
+        "test_checkpoint_resume.py",
+        "test_runtime_cpu.py",
+        "test_verify_taobao_training_data.py"
+      ]
+    },
+    "candidate_python_ast_files": 81,
+    "candidate_local_import_edges": 116,
+    "candidate_local_doc_links": 4,
+    "hydra_compositions": 8,
+    "hydra_models": [
+      "sid",
+      "listwise",
+      "pointwise",
+      "separate"
+    ],
+    "hydra_device_counts": [
+      1,
+      3
+    ],
+    "machine_path_and_common_secret_pattern_findings": 0,
+    "scan_limit": "Selected source files only; not a proof of no credentials or a Git-history security audit",
+    "cpu_affinity": "Single logical CPU; OMP/OPENBLAS/MKL threads=1",
+    "tensorflow_imported": false,
+    "model_instantiated": false,
+    "training_started": false,
+    "clean_environment_install_tested": false,
+    "end_to_end_reproduction_verified": false
+  },
+  "original_workspace": {
+    "branch": "wsdm27-liger-learning-v2",
+    "head": "8301284f520f9f31d96b0f7449eab9255d47d008",
+    "tracked_worktree": "clean",
+    "liger_job": 148939,
+    "slurm_state": "COMPLETED",
+    "slurm_exit_code": "0:0",
+    "elapsed": "00:15:28",
+    "allocated_cpus": 4,
+    "manifest_binding": "passed",
+    "verified_execution_sources": 58,
+    "verified_input_metadata": 36,
+    "verified_upstream_files": 9,
+    "experiment_result_acceptance_performed_in_this_cleanup": false
+  },
+  "next_gates": [
+    "Asset/code redistribution review",
+    "Verified dependency groups and lock",
+    "Portable resource launchers preserving CPU and batch semantics",
+    "Clean-environment small-data end-to-end acceptance",
+    "Public aggregate results and asset/provenance delivery",
+    "Author confirmation before publication"
+  ]
+}

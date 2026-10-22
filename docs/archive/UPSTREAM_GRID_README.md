@@ -13,9 +13,9 @@ Current branch note: this `README` documents baseline GRID. For the modified Rec
 
 GRID facilitates generative recommendation three overarching steps:
 
-- **Embedding Generation with LLMs**: Converting item text into embeddings using any LLMs available on Huggingface. 
-- **Semantic ID Learning**: Converting item embedding into hierarchical semantic IDs using Residual Quantization techniques such as RQ-KMeans, RQ-VAE, RVQ. 
-- **Generative Recommendations**: Using transformer architectures to generate recommendation sequences as semantic ID tokens. 
+- **Embedding Generation with LLMs**: Converting item text into embeddings using any LLMs available on Huggingface.
+- **Semantic ID Learning**: Converting item embedding into hierarchical semantic IDs using Residual Quantization techniques such as RQ-KMeans, RQ-VAE, RVQ.
+- **Generative Recommendations**: Using transformer architectures to generate recommendation sequences as semantic ID tokens.
 
 
 ## 📦 Installation
@@ -42,9 +42,9 @@ pip install -r requirements.txt
 Prepare your dataset in the expected format:
 ```
 data/
-├── train/       # training sequence of user history 
-├── validation/  # validation sequence of user history 
-├── test/        # testing sequence of user history 
+├── train/       # training sequence of user history
+├── validation/  # validation sequence of user history
+├── test/        # testing sequence of user history
 └── items/       # text of all items in the dataset
 ```
 
@@ -52,7 +52,7 @@ We provide pre-processed Amazon data explored in the [P5 paper](https://arxiv.or
 
 ### 2. Embedding Generation with LLMs
 
-Generate embeddings from LLMs, which later will be transformed into semantic IDs. 
+Generate embeddings from LLMs, which later will be transformed into semantic IDs.
 
 ```bash
 python -m src.inference experiment=sem_embeds_inference_flat data_dir=data/amazon_data/beauty # avaiable data includes 'beauty', 'sports', and 'toys'
@@ -68,7 +68,7 @@ python -m src.train experiment=rkmeans_train_flat \
     embedding_path=<output_path_from_step_2>/merged_predictions_tensor.pt \ # this can be found in the log dirs in step2
     embedding_dim=2048 \ # the model dimension of the LLMs you use in step 2. 2048 for flan-t5-xl as used in this example.
     num_hierarchies=3 \  # we train 3 codebooks
-    codebook_width=256 \ # each codebook has 256 rows of centroids  
+    codebook_width=256 \ # each codebook has 256 rows of centroids
 ```
 
 Generate SIDs:
@@ -76,10 +76,10 @@ Generate SIDs:
 ```bash
 python -m src.inference experiment=rkmeans_inference_flat \
     data_dir=data/amazon_data/beauty \
-    embedding_path=<output_path_from_step_2>/merged_predictions_tensor.pt \ 
-    embedding_dim=2048 \ 
-    num_hierarchies=3 \  
-    codebook_width=256 \ 
+    embedding_path=<output_path_from_step_2>/merged_predictions_tensor.pt \
+    embedding_dim=2048 \
+    num_hierarchies=3 \
+    codebook_width=256 \
     ckpt_path=<the_checkpoint_you_just_get_above> # this can be found in the log dir for training SIDs
 ```
 
@@ -90,7 +90,7 @@ Train the recommendation model using the learned semantic IDs:
 
 ```bash
 python -m src.train experiment=tiger_train_flat \
-    data_dir=data/amazon_data/beauty \ 
+    data_dir=data/amazon_data/beauty \
     semantic_id_path=<output_path_from_step_3>/pickle/merged_predictions_tensor.pt \
     num_hierarchies=4 # Please note that we add 1 for num_hierarchies because in the previous step we appended one additional digit to de-duplicate the semantic IDs we generate.
 ```
@@ -101,7 +101,7 @@ Run inference to generate recommendations:
 
 ```bash
 python -m src.inference experiment=tiger_inference_flat \
-    data_dir=data/amazon_data/beauty \ 
+    data_dir=data/amazon_data/beauty \
     semantic_id_path=<output_path_from_step_3>/pickle/merged_predictions_tensor.pt \
     ckpt_path=<the_checkpoint_you_just_get_above> \ # this can be found in the log dir for training GR models
     num_hierarchies=4 \ # Please note that we add 1 for num_hierarchies because in the previous step we appended one additional digit to de-duplicate the semantic IDs we generate.
@@ -145,7 +145,7 @@ For questions and support:
 - Create an issue on GitHub
 - Contact the development team: Clark Mingxuan Ju (mju@snap.com), Liam Collins (lcollins2@snap.com), Bhuvesh Kumar (bhuvesh@snap.com) and Leonardo Neves (lneves@snap.com).
 
-## Bibliography 
+## Bibliography
 
 [1] Rajput, Shashank, et al. "Recommender systems with generative retrieval." Advances in Neural Information Processing Systems 36 (2023): 10299-10315.
 
