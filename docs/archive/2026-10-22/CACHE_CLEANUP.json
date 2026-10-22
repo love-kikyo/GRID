@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-22",
+  "repository": "GRID",
+  "status": "completed",
+  "authorization": "Repository cleanup requested; only explicitly audited regenerable bytecode and empty directories",
+  "files": [
+    {
+      "path": "logs/analysis/paired_evaluation/__pycache__/summarize_three_seeds_2026-10-11.cpython-310.pyc",
+      "size_bytes": 8612,
+      "allocated_bytes": 8704,
+      "mtime_epoch": 1791705812,
+      "sha256": "392a9f667b7ecf629a4fa85610ca6a0a9056903291303d9cef3e840f50e72e96",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/__pycache__/accept_separate_fusion43_2026-09-21.cpython-310.pyc",
+      "size_bytes": 5979,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790002251,
+      "sha256": "3ad7c5f433c9fb36bc6f210cdc3cd6d2cb10646ba14675d2dd361f6056ecddd2",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/__pycache__/accept_separate_seed43_validation_2026-09-21.cpython-310.pyc",
+      "size_bytes": 6650,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790002251,
+      "sha256": "0b6a2b0d2381bab0ea613738ce37d34d9786ad02dae8fbc51bfc25c02280e9c0",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/test43_baselines_2026-09-23/__pycache__/accept_test.cpython-310.pyc",
+      "size_bytes": 8070,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790143358,
+      "sha256": "d1f7d6edea2c7e8538439f379e37e3062fb9e3fd94b0b0e581c569ef6ff125ac",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/test43_baselines_2026-09-23/__pycache__/prepare.cpython-310.pyc",
+      "size_bytes": 6734,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790143259,
+      "sha256": "5e0b0d2745a8c6031a4d09ad3a8e2417a716b5d5bf8393efade43a9601af21b0",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/validation44_batch_2026-09-21/__pycache__/accept_fusion.cpython-310.pyc",
+      "size_bytes": 6080,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790002460,
+      "sha256": "82e99492ac1e801d2de0a6ddaaca7d2b3993f3a0e1e80299649d9bc6aa3d6ef2",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/validation44_batch_2026-09-21/__pycache__/accept_validation.cpython-310.pyc",
+      "size_bytes": 6751,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790002460,
+      "sha256": "f3cb27c78ff932ac025ad9f47808643ce255c894345e41c39a803578bb6cdd70",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/validation44_batch_2026-09-21/__pycache__/prepare.cpython-310.pyc",
+      "size_bytes": 4359,
+      "allocated_bytes": 4608,
+      "mtime_epoch": 1790002460,
+      "sha256": "8dc4cacb38a8da6213267d4377b84f5aa1599880f6e0c66936c1c959bac13f0f",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/test43_pair_2026-09-23/__pycache__/accept_completed_validation44.cpython-310.pyc",
+      "size_bytes": 4035,
+      "allocated_bytes": 4096,
+      "mtime_epoch": 1790127774,
+      "sha256": "8070f4a943c18589c85a565730e9683f0c4baffeb777e1779a78be5f2ffc9018",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/test43_pair_2026-09-23/__pycache__/accept_test.cpython-310.pyc",
+      "size_bytes": 6941,
+      "allocated_bytes": 512,
+      "mtime_epoch": 1790127881,
+      "sha256": "cdfa5080e2f4c72305f0a53ffdf8eaa3c8462b2b15c02b6315609c978c95e717",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    },
+    {
+      "path": "logs/training_launch/test43_pair_2026-09-23/__pycache__/prepare.cpython-310.pyc",
+      "size_bytes": 4914,
+      "allocated_bytes": 5120,
+      "mtime_epoch": 1790127881,
+      "sha256": "112bfa94ae988b7b71e13726389b0a21f64b1ceeed4366ead51df95e3ddb6914",
+      "reason": "Regenerable CPython bytecode; corresponding Python source retained"
+    }
+  ],
+  "remove_directories_if_empty": [
+    "logs/analysis/paired_evaluation/__pycache__",
+    "logs/training_launch/__pycache__",
+    "logs/training_launch/test43_baselines_2026-09-23/__pycache__",
+    "logs/training_launch/validation44_batch_2026-09-21/__pycache__",
+    "logs/training_launch/test43_pair_2026-09-23/__pycache__",
+    "logs/stage_smoke/sim_soft_139472",
+    "logs/stage_smoke/sim_soft_139478",
+    "logs/train/runs/context_length"
+  ],
+  "size_bytes": 69125,
+  "allocated_bytes": 26112,
+  "preserved": "Corresponding Python sources, all model/data/evaluation artifacts, active LIGER inputs and all tracked GRID files",
+  "recovery": "Bytecode can be regenerated from retained source; empty directories can be recreated; no backup copy of bytecode"
+}

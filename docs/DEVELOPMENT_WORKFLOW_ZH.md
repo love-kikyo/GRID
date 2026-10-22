@@ -2,6 +2,8 @@
 
 ## 分支与提交
 
+复现整理使用独立 worktree `GRID-repro-prep` / 分支 `wsdm27-repro-prep`（创建于 2026-10-22，基点 `8301284`），不修改活动实验的 `GRID` 工作区。以下 LIGER 分支说明描述原工作区；整理范围与导出边界见 [整理记录](REPOSITORY_PREPARATION_ZH.md)。
+
 当前工作分支：`wsdm27-liger-learning-v2`，于 2026-10-22 从 `de1d6dc` 创建，用于 LIGER 低指标后的特征与监督改进。`wsdm27-external-baselines-v1` 保留在原两轮训练及诊断交接点；更早的 `wsdm27-history-last-user-v1` 同样保留。不重写历史、不强推、不顺手合并回 main。新代码采用独立入口，不覆盖已验收模型和产物。
 
 沿用已确认的小步提交原则：一个逻辑完整、可以单独解释和回退的改动做一次 commit；不按聊天轮次或机械行数提交。
