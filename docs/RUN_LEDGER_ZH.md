@@ -1,6 +1,6 @@
 # Run 台账
 
-最后核验：2026-10-22 21:30（Asia/Shanghai）。新版 LIGER prefix / 标准化入口已准备，待 GPU 集成及正式预算核准；旧 148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+最后核验：2026-10-22 21:31（Asia/Shanghai）。新版 LIGER prefix / 标准化集成 149019 已提交，PENDING（Priority）；待集成及正式预算核准。旧 148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
 
 ## LIGER 多前缀正式链路准备
 
@@ -21,7 +21,11 @@
 
 集成 gate 使用 [独立配置](../configs/baselines/liger_prefix_gate_v3.json)：全新 seed42、真实 prefix batch1024、完整11542755 seen损失、统一标准化；连续三步与新进程从第一步恢复后两步逐值比较，第二步后各验证65条，每条扫描全部23915712 cold。测试中的19260/warmup963仅为恢复调度fixture，最多三次尝试，**不批准正式19260步训练**。1张4090 / 整项4 CPU / 24G / 45分钟，无自动后继；正式预算和分阶段入口留待此项验收后核准。
 
-本地专项回归 **217 passed、5 skipped**（可选 sklearn 对照）；全部 LIGER 与资源 / launcher 回归 **523 passed、5 skipped，15.97 秒**，shell语法与独立代码审查通过。扩大回归时曾因 Transformers 自动导入 TensorFlow 触发登录节点已知 SIGILL；显式 `USE_TF=0` 后完整回归通过，计算节点的实际 TFRecord 读取不取消。提交及运行记录待补。
+本地专项回归 **217 passed、5 skipped**（可选 sklearn 对照）；全部 LIGER 与资源 / launcher 回归 **523 passed、5 skipped，15.97 秒**，shell语法与独立代码审查通过。扩大回归时曾因 Transformers 自动导入 TensorFlow 触发登录节点已知 SIGILL；显式 `USE_TF=0` 后完整回归通过，计算节点的实际 TFRecord 读取不取消。
+
+**149019**：21:30:38 提交，执行版本 `4d3d80d`，提交时工作树干净。前缀流 / 标准化runtime / 联合训练步 / gate 分别提交 `50276ec` / `d9ec901` / `bc4eec9` / `61ed0ac`。21:31 状态 PENDING（Priority），未分配节点，Start=Unknown；仅此一项、无依赖及自动后继。启动前全部来源 / 输入 / 统计文件绑定与 actual seen canonical hash 核验通过。
+
+[Manifest](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/manifest.json) SHA256 `88edc6ea14e1453054964be65f99a45ce669b44b8f79caa65522ed0870d1afe4`；[启动记录](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/launch.json)。预期 stdout / stderr 为 `logs/slurm/GRID-LIGER-PrefixV3-149019.out` / `.err`；完成时必须检查 `prefix_acceptance.json`，不能仅凭 Slurm COMPLETED 放行新正式训练。
 
 ## LIGER 单条件优化预算诊断
 
