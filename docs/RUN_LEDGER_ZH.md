@@ -1,16 +1,37 @@
 # Run 台账
 
-最后核验：2026-10-22 01:19（Asia/Shanghai）。LIGER 学习短测 147957 已提交，PENDING，等待 aias-compute-2；147815 保持取消，正式训练及 test 暂停。SIM 不扩 seed。
+最后核验：2026-10-22 19:43（Asia/Shanghai）。147957 完整完成并通过产物验收；单条件 8192 步预算诊断已获作者批准、待提交。147815 保持取消，正式训练及 test 暂停，SIM 不扩 seed。
+
+## LIGER 单条件优化预算诊断
+
+作者同意优先排除步数不足 / 过早退火，只重做 raw + final。新增 [入口](../scripts/probe_liger_learning_budget.py) 与 [配置](../configs/baselines/liger_learning_budget_v3.json)，固定 8192 次尝试、warmup51、相同初始化 / 数据 / 4096 目录及联合损失；详细范围只维护在实验计划。尚未提交，不恢复旧第三轮或安排其他条件。
+
+本地单核回归 **433 passed、5 skipped，46.18 秒**；跳过项仍为可选 sklearn 对照。新增预算 / 单条件 / 全新初始化 / 来源绑定安全检查及 SID 分层格式数值测试；shell 语法与 diff 空白检查通过。旧 v2 执行源码、配置与产物未修改。
 
 ## LIGER 改进学习短测
 
 10-22 作者要求改进。新分支 `wsdm27-liger-learning-v2` 从 `de1d6dc` 创建，旧基线分支、两轮 checkpoint、资产和数据文件均保留。新增 train-seen 标准化与有界多前缀监督，通过 [独立入口](../scripts/probe_liger_learning.py) 对照原始 / 标准化特征和最终 GT / 多前缀监督四种设置；详细范围与验收条件只维护在 [实验计划](EXPERIMENT_PLAN_ZH.md)。
 
-本地单核回归 **386 passed、5 skipped，12.38 秒**。跳过项为可选 sklearn 数值对照（当前环境未安装）；独立 NumPy 总体矩对照、padding / row0、前缀边界和目标身份、安全预算及入口绑定等检查通过，`bash -n` 与 diff 空白检查通过。尚无 GPU 学习结果，不据实现完成宣称指标改善。
+本地单核回归 **386 passed、5 skipped，12.38 秒**。跳过项为可选 sklearn 数值对照（当前环境未安装）；独立 NumPy 总体矩对照、padding / row0、前缀边界和目标身份、安全预算及入口绑定等检查通过，`bash -n` 与 diff 空白检查通过。
 
 **147957**：01:18:26 提交，执行版本 `54770dc`，工作树干净；特征 / 监督 / 诊断辅助 / 作业入口分别提交于 `c2b4ef4` / `2149921` / `ee4ad6c` / `a058436`。仅此一项，无依赖或自动后继。申请 aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G，Slurm 时限 45 分钟，程序诊断上限 40 分钟；四组串行，完成后独立审核并停止。01:19 调度状态 PENDING，原因 `ReqNodeNotAvail, UnavailableNodes:aias-compute-2`，开始时间 Unknown，尚未分配节点。
 
 [Manifest](../logs/training_launch/liger_learning_2026-10-22_v2/manifest.json) SHA256 `588e3b40370857e5ce2481808b5205a10c6c24d85c8e1499dbc838d91cd25af5`；[提交及队列记录](../logs/training_launch/liger_learning_2026-10-22_v2/launch.json)、[stdout](../logs/slurm/GRID-LIGER-LearnV2-147957.out)、[stderr](../logs/slurm/GRID-LIGER-LearnV2-147957.err)。诊断权重仅供审查，不能作为正式训练恢复 checkpoint；两轮旧结果和已取消第三轮清单未改写。
+
+05:47:40–06:00:09，Slurm COMPLETED / 0:0，12 分 29 秒；计算节点 165 项测试通过、5 项可选 sklearn 对照跳过。四条件均为 1024 次成功更新、零 AMP 跳步；完整 seen 目录两步集成检查通过。4090 UUID `395ab521-4aaa-54cb-fe2e-561eb935ad82`，CPU `[0,1,30,31]`，库线程 1，13 次进程树绑定检查通过；保留组与优化前缀完全重复 0 条。
+
+| 第 1024 步原最终 GT 诊断 | 拟合组平均 SID CE | 保留组平均 SID CE | 最终 GT 总曝光次数 |
+| --- | ---: | ---: | ---: |
+| 原始特征 + final | 8.8749 | 9.3894 | 32768 |
+| 标准化 + final | 8.7087 | 9.3139 | 32768 |
+| 原始特征 + prefix | 9.1841 | 9.2575 | 4673 |
+| 标准化 + prefix | 9.2187 | 9.2827 | 4673 |
+
+两组各 128 条，均来自 train；CE 在给定正确 SID 前缀下计算，越低越好。四条件两组的自然 beam Recall / NDCG@5/10/20 和有效物品映射率全部为 0；各拟合组 2560 个 beam 均未满足全部四层码本范围，大量在第二层输出第四层 token。标准化降低了 dense loss，但 SID 改善不一致；prefix 的最终 GT 每条只曝光 36–37 次，final 为 256 次，不能据此否定前缀监督。
+
+本次只能证明 1024 步预算下尚未拟合，不能证明不可学或联合目标有问题：短测 LR 在第 896 步已降至 `1.26e-5`，1024 步为 0；原正式首轮在第 1024 步仍约 `3e-4`。原首轮截至 1024 / 2000 / 3000 步的末 128 步 SID loss 均值为 8.5993 / 6.2838 / 5.4515，支持先检查优化预算；batch、数据与目录规模不同，不能据此保证扩大预算即可解决原正式差距。
+
+[报告](../logs/training_launch/liger_learning_2026-10-22_v2/learning_probe.json) SHA256 `d0616baa27a2b275d78cf7983518aabd65b5b42c9887e576863c1cccab297be0`；[独立进程验收](../logs/training_launch/liger_learning_2026-10-22_v2/learning_acceptance.json) SHA256 `f321360ecff238bcd3d5ab5bec82520896f355fb7d1415864fe27eac07fe2e47`，状态 `passed_diagnostic_integrity`。汇报时只读复核源码 / 输入绑定及 35 项产物哈希通过；此收据确认产物完整，不代表学习质量通过，`formal_training_ready=false`。
 
 ## LIGER 低指标诊断
 
