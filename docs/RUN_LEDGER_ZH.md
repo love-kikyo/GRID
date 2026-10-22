@@ -1,12 +1,16 @@
 # Run 台账
 
-最后核验：2026-10-22 19:43（Asia/Shanghai）。147957 完整完成并通过产物验收；单条件 8192 步预算诊断已获作者批准、待提交。147815 保持取消，正式训练及 test 暂停，SIM 不扩 seed。
+最后核验：2026-10-22 19:45（Asia/Shanghai）。单条件 8192 步预算诊断 148939 已提交，PENDING（Resources）；147957 完整完成并通过产物验收。147815 保持取消，正式训练及 test 暂停，SIM 不扩 seed。
 
 ## LIGER 单条件优化预算诊断
 
-作者同意优先排除步数不足 / 过早退火，只重做 raw + final。新增 [入口](../scripts/probe_liger_learning_budget.py) 与 [配置](../configs/baselines/liger_learning_budget_v3.json)，固定 8192 次尝试、warmup51、相同初始化 / 数据 / 4096 目录及联合损失；详细范围只维护在实验计划。尚未提交，不恢复旧第三轮或安排其他条件。
+作者同意优先排除步数不足 / 过早退火，只重做 raw + final。新增 [入口](../scripts/probe_liger_learning_budget.py) 与 [配置](../configs/baselines/liger_learning_budget_v3.json)，固定 8192 次尝试、warmup51、相同初始化 / 数据 / 4096 目录及联合损失；详细范围只维护在实验计划。不恢复旧第三轮或安排其他条件。
 
 本地单核回归 **433 passed、5 skipped，46.18 秒**；跳过项仍为可选 sklearn 对照。新增预算 / 单条件 / 全新初始化 / 来源绑定安全检查及 SID 分层格式数值测试；shell 语法与 diff 空白检查通过。旧 v2 执行源码、配置与产物未修改。
+
+**148939**：19:45:24 提交，执行版本 `b94108c`，实现 `6a1436a`，提交时工作树干净。aias-compute-2 / 单张 4090 / 整项 4 CPU / 24G，45 分钟时限、程序 40 分钟截止；只有此一项，无依赖或自动后继。19:45 状态 PENDING（Resources），尚未分配节点，开始时间 Unknown。固定跑满尝试上限后保存诊断权重并独立进程验收；不把完整性通过等同于拟合成功。
+
+[Manifest](../logs/training_launch/liger_learning_budget_2026-10-22_v3/manifest.json) SHA256 `b771aa54cafdfb12475cd1a7ddbceea475d35ab48a6611ec6547f113179b5b54`；[启动记录](../logs/training_launch/liger_learning_budget_2026-10-22_v3/launch.json)、[stdout](../logs/slurm/GRID-LIGER-BudgetV3-148939.out)、[stderr](../logs/slurm/GRID-LIGER-BudgetV3-148939.err)。从头初始化，不加载 147957 诊断权重；只读取其已验收 train 快照和目录，保留旧报告与所有产物。
 
 ## LIGER 改进学习短测
 
