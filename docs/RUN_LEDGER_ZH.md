@@ -1,14 +1,18 @@
 # Run 台账
 
-最后核验：2026-10-23 21:01（Asia/Shanghai）。149019 集成已验收，但吞吐外推成本不可接受；当前准备有时限的缓存 / batch 效率短测，未提交新正式训练。148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+最后核验：2026-10-23 21:10（Asia/Shanghai）。149742 缓存 / batch 效率短测 RUNNING，只有此一项、无后继；未提交新正式训练。149019 集成已验收，但吞吐外推成本不可接受。148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
 
 ## LIGER 固定特征缓存与效率短测
 
 10-23 作者同意在放弃 baseline 前再尝试一次效率修复，不接受约 20.6 天的单遍外推。新增固定 train-seen 特征缓存与计时组件，旧源文件及产物不变；缓存 11542755 × 128 个 FP32 输入，5909890560 字节（5.50 GiB），不缓存可训练投影。全资产行号、seen / cold、padding 及真实 row0 语义不变。方案与停止条件维护在 [实验计划](EXPERIMENT_PLAN_ZH.md#liger-新版监督与正式预算)。
 
-本次真实目录短测尚未提交；不能把小目录等价通过记作真实加速结论。入口为 [run_liger_efficiency_cpu4.sh](../run_liger_efficiency_cpu4.sh)，配置为 [v4](../configs/baselines/liger_efficiency_probe_v4.json)。先 lazy / cached batch1024 精确对照，通过后才测 cached2048 / 4096；单作业 45 分钟，无后继或正式 checkpoint。
+入口为 [run_liger_efficiency_cpu4.sh](../run_liger_efficiency_cpu4.sh)，配置为 [v4](../configs/baselines/liger_efficiency_probe_v4.json)。先 lazy / cached batch1024 精确对照，通过后才测 cached2048 / 4096；单作业 45 分钟，无后继或正式 checkpoint。真实目录加速尚待结果，不能由小目录等价检查推断。
 
 本地全部 LIGER / launcher / CPU 资源回归 **681 passed、5 skipped，16.80 秒**（单核、`USE_TF=0`）；5 项为缺少可选 sklearn 的对照，独立矩计算等测试仍通过。小目录缓存前后的特征、完整损失与所有梯度逐值相同；新增样本身份 / 计数、资源记录、OOM 阶段分类和计时口径回归。只读 NumPy 输入触发一次旧 `torch.as_tensor` 提示，计算不原地改输入，GPU 路径复制数据，未为消除此提示将缓存改为可写。真实 seen 行集合和标准化统计 canonical hash 绑定已在不分配整表缓存的条件下核验；shell 语法、空白检查和独立代码审查通过。
+
+**149742**：21:10:20 提交并启动，aias-compute-2；21:10:27 为 RUNNING，AllocCPUS=4、24G、45 分钟上限，只有此项且无依赖。执行版本 `848b675`、提交时工作树干净；缓存 / 计时 / 短测入口分别为 `a72b20e` / `c659406` / `e5ab715`。提交前 75 个执行源、35 个输入元数据、9 个上游源及 33 个 train 分片绑定核验通过；未绑定 validation / test 分片。
+
+[Manifest](../logs/training_launch/liger_efficiency_2026-10-23_v4/manifest.json) SHA256 `e7da7da9a54cfd99b1a76e4b855ebbc3098099e60b7f06700a12744ae4595648`；[启动记录](../logs/training_launch/liger_efficiency_2026-10-23_v4/launch.json)、[stdout](../logs/slurm/GRID-LIGER-EffV4-149742.out)、[stderr](../logs/slurm/GRID-LIGER-EffV4-149742.err)。完成后须复核 `cache_equivalence.json` 与 `efficiency_acceptance.json`；通过也不自动授权长训练或正式 batch 选择。
 
 ## LIGER 多前缀正式链路准备
 
