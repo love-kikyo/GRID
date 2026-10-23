@@ -1,6 +1,14 @@
 # Run 台账
 
-最后核验：2026-10-22 21:31（Asia/Shanghai）。新版 LIGER prefix / 标准化集成 149019 已提交，PENDING（Priority）；待集成及正式预算核准。旧 148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+最后核验：2026-10-23 21:01（Asia/Shanghai）。149019 集成已验收，但吞吐外推成本不可接受；当前准备有时限的缓存 / batch 效率短测，未提交新正式训练。148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+
+## LIGER 固定特征缓存与效率短测
+
+10-23 作者同意在放弃 baseline 前再尝试一次效率修复，不接受约 20.6 天的单遍外推。新增固定 train-seen 特征缓存与计时组件，旧源文件及产物不变；缓存 11542755 × 128 个 FP32 输入，5909890560 字节（5.50 GiB），不缓存可训练投影。全资产行号、seen / cold、padding 及真实 row0 语义不变。方案与停止条件维护在 [实验计划](EXPERIMENT_PLAN_ZH.md#liger-新版监督与正式预算)。
+
+本次真实目录短测尚未提交；不能把小目录等价通过记作真实加速结论。入口为 [run_liger_efficiency_cpu4.sh](../run_liger_efficiency_cpu4.sh)，配置为 [v4](../configs/baselines/liger_efficiency_probe_v4.json)。先 lazy / cached batch1024 精确对照，通过后才测 cached2048 / 4096；单作业 45 分钟，无后继或正式 checkpoint。
+
+本地全部 LIGER / launcher / CPU 资源回归 **681 passed、5 skipped，16.80 秒**（单核、`USE_TF=0`）；5 项为缺少可选 sklearn 的对照，独立矩计算等测试仍通过。小目录缓存前后的特征、完整损失与所有梯度逐值相同；新增样本身份 / 计数、资源记录、OOM 阶段分类和计时口径回归。只读 NumPy 输入触发一次旧 `torch.as_tensor` 提示，计算不原地改输入，GPU 路径复制数据，未为消除此提示将缓存改为可写。真实 seen 行集合和标准化统计 canonical hash 绑定已在不分配整表缓存的条件下核验；shell 语法、空白检查和独立代码审查通过。
 
 ## LIGER 多前缀正式链路准备
 
@@ -23,9 +31,13 @@
 
 本地专项回归 **217 passed、5 skipped**（可选 sklearn 对照）；全部 LIGER 与资源 / launcher 回归 **523 passed、5 skipped，15.97 秒**，shell语法与独立代码审查通过。扩大回归时曾因 Transformers 自动导入 TensorFlow 触发登录节点已知 SIGILL；显式 `USE_TF=0` 后完整回归通过，计算节点的实际 TFRecord 读取不取消。
 
-**149019**：21:30:38 提交，执行版本 `4d3d80d`，提交时工作树干净。前缀流 / 标准化runtime / 联合训练步 / gate 分别提交 `50276ec` / `d9ec901` / `bc4eec9` / `61ed0ac`。21:31 状态 PENDING（Priority），未分配节点，Start=Unknown；仅此一项、无依赖及自动后继。启动前全部来源 / 输入 / 统计文件绑定与 actual seen canonical hash 核验通过。
+**149019**：10-22 21:30:38 提交，执行版本 `4d3d80d`，提交时工作树干净。前缀流 / 标准化runtime / 联合训练步 / gate 分别提交 `50276ec` / `d9ec901` / `bc4eec9` / `61ed0ac`。21:53:05–22:05:08，COMPLETED / 0:0，12:03，aias-compute-2 / 单张 4090 / 整项4 CPU。启动前来源 / 输入 / 统计绑定与 actual seen canonical hash 核验通过；没有自动后继。
 
-[Manifest](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/manifest.json) SHA256 `88edc6ea14e1453054964be65f99a45ce669b44b8f79caa65522ed0870d1afe4`；[启动记录](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/launch.json)。预期 stdout / stderr 为 `logs/slurm/GRID-LIGER-PrefixV3-149019.out` / `.err`；完成时必须检查 `prefix_acceptance.json`，不能仅凭 Slurm COMPLETED 放行新正式训练。
+[Manifest](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/manifest.json) SHA256 `88edc6ea14e1453054964be65f99a45ce669b44b8f79caa65522ed0870d1afe4`；[启动记录](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/launch.json)、[stdout](../logs/slurm/GRID-LIGER-PrefixV3-149019.out)、[stderr](../logs/slurm/GRID-LIGER-PrefixV3-149019.err)。[独立收据](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/prefix_acceptance.json) SHA256 `9dcdba9ca30f0d6882a83d2d01a5ebc47631f366eba592b3d00e178a6f93dd1a`，`passed` / `fresh_process_exact_resume=true`，仍为 `formal_training_ready=false`。
+
+连续三步共 3072 个前缀（2644 个历史位置目标 + 428 个原最终 GT），零 AMP 跳步。第一步 checkpoint 在新进程恢复后，后续更新、完整学习状态及 65 条验证的全部 11 个数组与连续运行逐值相同；最终状态哈希 `3e94433be93db923cd1abc2fbbc6ffd8fd1c959a45ca1ae5b6833c8d189ba9cd`。验证来自仅训练两步的模型，Recall / NDCG@5/10/20 全为零、1300 个自然 beam 槽均无有效映射；完整 cold 每用户仍返回 20 个合法物品。这只能验收实现，不能判定新方案的学习质量。
+
+连续三步耗时 112.681 / 42.384 / 36.930 秒；后两步均值 **39.6568 秒**，对完整 44919 批算术外推为 **494.82 小时（20.62 天）/遍**，不含验证、启动、保存及恢复重放，也不是收敛所需总时长。此前按旧 raw/final 吞吐外推的约 114 小时不再适用。训练显存峰值约 6.525 GiB，CPU `[6,7,28,29]`、线程 1。每次更新的全 seen 目录前向和反向重算都重复做固定 FP64 标准化，是待测的加速机会；尚不能把整段变慢全部归因于它。
 
 ## LIGER 单条件优化预算诊断
 
