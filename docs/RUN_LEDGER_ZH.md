@@ -6,7 +6,16 @@
 
 作者在仅 seed42 启动后明确授权：seed42 / 43 / 44 各占一卡，每项整作业最多 4 CPU，所有扫描合计最多 3 GPU / 12 CPU。三个 seed 为独立流程，每条检索→beam 串行且至多一运行、一依赖等待；前项导出与验收成功后才能放行本 seed 后继。此例外仅用于本次两组固定 checkpoint 推理扫描，不扩展至训练、其他实验或新的选权。
 
-Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑定保持不变。Seed43 / 44 目前在独立工作副本 `GRID-sensitivity-multiseed` 适配与短测准备，**尚未提交、尚无新 job ID**；通过各自回归、数据 / checkpoint / validation 选权绑定和真实短测后再启动全量。
+Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑定保持不变。Seed43 / 44 已在独立工作副本 `GRID-sensitivity-multiseed` 完成适配并提交短测，执行分支 `wsdm27-inference-sensitivity-multiseed`、冻结版本 `5878ec5`。本地 76 项回归及独立检查通过，计算节点两项回归也各 76 passed；通过真实短测验收后再启动新增全量。
+
+| Seed | 检索短测 | Beam 短测 | 新增全量 |
+| --- | --- | --- | --- |
+| 43 | 156366，00:41 RUNNING | 156368，afterok:156366 等待 | 尚未提交 |
+| 44 | 156365，00:41 RUNNING | 156367，afterok:156365 等待 | 尚未提交 |
+
+各自固定原 best：43 为 132786 / step100000，44 为 134298 / step80000；各自原 validation 均选 β=0.50，原 test 2,061,101 条不变。只为路径重定位扩展 provenance：预检路径查主目录记录，但实际核验隔离副本源码哈希，模型 / 数据处理代码内容不变。`.project-root` 已显式跟踪并绑定，避免隔离副本错误定位。
+
+证据：[43 manifest](../logs/training_launch/sensitivity_seed43_2026-11-07_v1/manifest.json)（SHA256 `cec064bd6727bdff742044f5da2c0d0896775ac6af88057be908f151bdd1039b`）、[43 启动记录](../logs/training_launch/sensitivity_seed43_2026-11-07_v1/launch.json)；[44 manifest](../logs/training_launch/sensitivity_seed44_2026-11-07_v1/manifest.json)（SHA256 `c25225a522a81a5dc8e817477cb76e6957e16649c8781a644ba18e6b4ea75c73`）、[44 启动记录](../logs/training_launch/sensitivity_seed44_2026-11-07_v1/launch.json)。新增产物分别位于 `logs/analysis/inference_sensitivity_seed{43,44}_2026-11-07_v1`，日志 `logs/slurm/Sens{43,44}-{Smoke,Full}{M,C}-<job>.{out,err}`；不覆盖 seed42 或旧主表。
 
 耗时校正：156362 首批 elapsed 81.17 秒，第 1,000 batch（32,000 条）184.92 秒；扣除初始化后约 308 条/秒，检索组线性外推约 1.88 小时（未含末尾审计）。Beam 尚只有短测估算；每 seed 两组串行暂按约 4–5 小时规划，不作完成时间保证，也不把 8 小时视为实测结果。
 
