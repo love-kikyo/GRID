@@ -1,5 +1,7 @@
 # 当前状态
 
+本目录是 11-07 新建的隔离执行副本，分支 `wsdm27-inference-sensitivity-multiseed`，用于新增 seed43/44 推理扫描，避免修改 seed42 运行源码。资源授权已扩展为三 seed 各 1 GPU / 4 CPU、合计最多 3 GPU / 12 CPU。当前统一状态与任务台账只在主工作目录 [CURRENT_STATUS_ZH.md](/mnt/beegfs/home/MMReco2021/liuyu/GRID/docs/CURRENT_STATUS_ZH.md) 和 [RUN_LEDGER_ZH.md](/mnt/beegfs/home/MMReco2021/liuyu/GRID/docs/RUN_LEDGER_ZH.md) 维护；下文保留创建副本时的历史快照，不代表新增任务的实时状态。
+
 核验时间：2026-11-07 00:30，Asia/Shanghai。此页是本分支状态快照，不是实时监控；此前主实验结果保留不动。
 
 ## 一句话结论
