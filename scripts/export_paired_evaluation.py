@@ -367,8 +367,13 @@ def validate_provenance(
     expected_protocol: str,
     training_preflight: Path,
     source_compatibility: Optional[Path] = None,
+    preflight_source_root: Optional[Path] = None,
 ) -> Tuple[Dict[str, Any], int]:
-    """Refuse exports whose run, preflight, or manifests do not match."""
+    """Refuse exports whose run, preflight, or manifests do not match.
+
+    An explicit preflight source root only relocates recorded source paths.
+    Hashes are always computed from the actual execution worktree files.
+    """
     data_root = Path(str(cfg.data_dir)).expanduser().resolve()
     expected_data_root = expected_data_root.expanduser().resolve()
     if data_root != expected_data_root:
@@ -429,11 +434,16 @@ def validate_provenance(
     }
     applied_changes = []
     verified_training_sources = {}
+    recorded_root = (preflight_source_root.expanduser().resolve()
+                     if preflight_source_root is not None else None)
+    relocated_sources = []
     for path in required_training_sources:
         resolved = path.resolve()
-        entry = preflight_sources.get(str(resolved))
+        recorded_path = ((recorded_root / path.relative_to(ROOT)).resolve()
+                         if recorded_root is not None else resolved)
+        entry = preflight_sources.get(str(recorded_path))
         if entry is None:
-            raise ValueError(f"Training preflight lacks required source file: {resolved}")
+            raise ValueError(f"Training preflight lacks required source file: {recorded_path}")
         current_hash = file_sha256(resolved)
         if entry.get("sha256") != current_hash:
             change = reviewed_changes.get(str(resolved))
@@ -442,6 +452,11 @@ def validate_provenance(
                 raise ValueError(f"Training source changed since preflight: {resolved}")
             applied_changes.append(change)
         verified_training_sources[str(resolved)] = current_hash
+        if recorded_root is not None:
+            relocated_sources.append({"execution_path": str(resolved),
+                                      "preflight_path": str(recorded_path),
+                                      "execution_sha256": current_hash,
+                                      "training_sha256": entry["sha256"]})
     if len(applied_changes) != len(reviewed_changes):
         raise ValueError("Unused source compatibility changes; use a record for this exact run")
 
@@ -487,6 +502,12 @@ def validate_provenance(
         "source_compatibility": compatibility or None,
         "initialization_checkpoint": initialization,
     }
+    if recorded_root is not None:
+        provenance["source_root_relocation"] = {
+            "execution_root": str(ROOT.resolve()),
+            "preflight_source_root": str(recorded_root),
+            "files": relocated_sources,
+        }
     return provenance, expected_samples
 
 
