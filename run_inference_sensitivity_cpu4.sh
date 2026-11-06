@@ -1,8 +1,8 @@
 #!/bin/bash
-# Frozen seed42 inference only. Usage: sbatch SCRIPT MANIFEST OUT PHASE GROUP [SMOKE_DIR]
-#SBATCH --job-name=GRID-Sensitivity42
-#SBATCH --output=logs/slurm/%x-%j.out
-#SBATCH --error=logs/slurm/%x-%j.err
+# Frozen seed42/43/44 inference only. Usage: sbatch SCRIPT MANIFEST OUT PHASE GROUP SMOKE_DIR_OR_DASH
+#SBATCH --job-name=GRID-Sensitivity
+#SBATCH --output=/mnt/beegfs/home/MMReco2021/liuyu/GRID/logs/slurm/%x-%j.out
+#SBATCH --error=/mnt/beegfs/home/MMReco2021/liuyu/GRID/logs/slurm/%x-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -30,7 +30,7 @@ fi
 if [[ "$PHASE" == full && "$SMOKE_DIR" != /* ]]; then
     echo 'Full stage requires absolute accepted smoke directory'; exit 2
 fi
-cd /mnt/beegfs/home/MMReco2021/liuyu/GRID
+cd /mnt/beegfs/home/MMReco2021/liuyu/GRID-sensitivity-multiseed
 export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false USE_TF=0
 export GRID_EXPORT_CPU_BUDGET=4 GRID_CPU_BUDGET=4
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
@@ -47,7 +47,7 @@ if [[ "$PHASE" == full ]]; then EXTRA_ARGS+=(--smoke-dir "$SMOKE_DIR"); fi
 if [[ "$PHASE" == smoke ]]; then
     srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
         "$SENSITIVITY_PYTHON" -m pytest -q tests/test_sensitivity_core.py \
-        tests/test_sensitivity_audit.py tests/test_inference_sensitivity_runner.py
+        tests/test_sensitivity_audit.py tests/test_inference_sensitivity_runner.py tests/test_worktree_provenance.py
 fi
 srun --ntasks=1 --cpus-per-task=4 --cpu-bind=verbose,cores --kill-on-bad-exit=1 \
     "$SENSITIVITY_PYTHON" -m scripts.run_inference_sensitivity \

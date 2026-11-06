@@ -8,7 +8,7 @@ import pytest
 from scripts.audit_inference_sensitivity import GROUPS, _ranks, audit_group, main, sha
 
 
-def fixture(tmp_path, group="retrieval", n=7):
+def fixture(tmp_path, group="retrieval", n=7, seed=42):
     root = tmp_path / "outputs"
     root.mkdir()
     uid = np.arange(n, dtype=np.int64)
@@ -25,13 +25,13 @@ def fixture(tmp_path, group="retrieval", n=7):
     beta.write_text(json.dumps({"input_split": "val", "selection_scope": "validation_only",
                                "input_checkpoint_sha256": "checkpoint",
                                "selected": {"beam_weight": 1., "rerank_weight": .5}}))
-    manifest = {"seed": 42, "groups": GROUPS, "beta": .5, "beam_weight": 1.,
+    manifest = {"seed": seed, "groups": GROUPS, "beta": .5, "beam_weight": 1.,
                 "expected_test_samples": n, "smoke_samples": n,
                 "checkpoint": {"path": "/unused.ckpt", "sha256": "checkpoint"},
                 "reference_test": {"path": str(reference), "sha256": sha(reference)},
                 "frozen_beta": {"path": str(beta), "sha256": sha(beta)},
                 "_manifest_sha256": "manifest"}
-    run = {"status": "complete", "phase": "smoke", "group": group, "processed": n,
+    run = {"status": "complete", "phase": "smoke", "group": group, "processed": n, "seed": seed,
            "expected_samples": n, "manifest_sha256": "manifest", "smoke_gate": {"status": "passed"},
            "hardware": {"name": "NVIDIA RTX 4090"},
            "cpu_budget": {"allowed_cpus": [1, 2, 3, 4], "allocated_cpus": 4, "library_threads": 1},
@@ -64,6 +64,37 @@ def test_retrieval_audit_metrics_and_independent_ranks(tmp_path):
     assert report["independent_sort_and_outranker_ranks_verified"]
     assert all(v == 0 for d in report["minus_c20_m10"].values() for a in d.values() for v in a.values())
     assert not (root / "acceptance.json").exists()  # API is read-only.
+
+
+@pytest.mark.parametrize("seed", [42, 43, 44])
+@pytest.mark.parametrize("group", ["retrieval", "beam"])
+def test_authorized_seed_is_preserved_in_report(tmp_path, seed, group):
+    root, manifest = fixture(tmp_path, group=group, seed=seed)
+    report = audit_group(root, manifest, "smoke", group)
+    assert report["seed"] == seed
+    assert report["status"] == "passed"
+
+
+@pytest.mark.parametrize("seed", [41, 45, "43", 43.0, None])
+def test_unauthorized_seed_is_rejected(tmp_path, seed):
+    root, manifest = fixture(tmp_path)
+    manifest["seed"] = seed
+    with pytest.raises(ValueError, match="Only seeds 42, 43 and 44 are authorized"):
+        audit_group(root, manifest, "smoke", "retrieval")
+
+
+@pytest.mark.parametrize("run_seed", [42, 44, "43", 43.0, None])
+def test_reject_mismatched_or_missing_run_seed(tmp_path, run_seed):
+    root, manifest = fixture(tmp_path, seed=43)
+    run_path = root / "run.json"
+    run = json.loads(run_path.read_text())
+    if run_seed is None:
+        del run["seed"]
+    else:
+        run["seed"] = run_seed
+    run_path.write_text(json.dumps(run))
+    with pytest.raises(ValueError, match="Run seed does not match"):
+        audit_group(root, manifest, "smoke", "retrieval")
 
 
 def test_beam10_does_not_report_at20(tmp_path):

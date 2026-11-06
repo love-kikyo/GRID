@@ -76,6 +76,8 @@ def _metric_sums(rank, ks):
 
 def _validate_run(run, manifest, phase, group, expected):
     require(run.get("status") == "complete", "Run is not complete")
+    require(type(run.get("seed")) is int and run["seed"] == manifest["seed"],
+            "Run seed does not match frozen manifest")
     require(run.get("phase") == phase and run.get("group") == group,
             "Run phase/group mismatch")
     require(run.get("processed") == expected, "Run count mismatch")
@@ -99,7 +101,8 @@ def _validate_run(run, manifest, phase, group, expected):
 
 def _validate_manifest(manifest, phase, group):
     require(phase in {"smoke", "full"} and group in GROUPS, "Invalid phase/group")
-    require(manifest.get("seed") == 42, "Only seed42 is authorized")
+    require(type(manifest.get("seed")) is int and manifest["seed"] in {42, 43, 44},
+            "Only seeds 42, 43 and 44 are authorized")
     require(manifest.get("groups") == GROUPS, "Settings differ from frozen scan")
     require(manifest.get("beta") == .5 and manifest.get("beam_weight") == 1.,
             "Frozen fusion weights changed")
@@ -204,7 +207,7 @@ def audit_group(output_dir: Path, manifest: dict, phase: str, group: str) -> dic
             if name != "c20_m10":
                 deltas[name] = {v: {k: value - center[v][k] for k, value in values.items()}
                                 for v, values in result_settings[name]["metrics"].items()}
-    return {"status": "passed", "phase": phase, "group": group, "seed": 42,
+    return {"status": "passed", "phase": phase, "group": group, "seed": manifest["seed"],
             "checked_at": datetime.now(timezone.utc).isoformat(), "num_examples": count,
             "unique_users": len(users), "settings": result_settings, "minus_c20_m10": deltas,
             "candidate_sets_and_scores_shared_across_M": group == "retrieval",
@@ -216,7 +219,7 @@ def audit_group(output_dir: Path, manifest: dict, phase: str, group: str) -> dic
             "run": {"path": str(run_path.resolve()), "sha256": sha(run_path)},
             "reference_test": manifest["reference_test"], "frozen_beta": manifest["frozen_beta"],
             "manifest_sha256": run.get("manifest_sha256"), "checkpoint": manifest["checkpoint"],
-            "limitations": ["Single fixed training seed; descriptive paired mean differences, no new CI or tuning",
+            "limitations": ["This report covers one fixed training seed; descriptive paired mean differences, no new CI or tuning",
                             "Candidate generation/GT independence relies additionally on the runner smoke gate",
                             "Raw logits align to beam via the original exporter; no second model forward in this auditor",
                             "Runtime BF16 beta0.1 ranking is not the reported FP32 beta0.5 fusion",

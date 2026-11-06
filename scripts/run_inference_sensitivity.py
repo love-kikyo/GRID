@@ -1,4 +1,4 @@
-"""Stream one authorized seed42 sensitivity group, then independently audit it."""
+"""Stream one authorized seed42/43/44 sensitivity group, then audit it."""
 import argparse
 import gc
 import json
@@ -6,14 +6,16 @@ import os
 from pathlib import Path
 import time
 
-from scripts.prepare_inference_sensitivity import GROUPS, sha, write_new
+from scripts.prepare_inference_sensitivity import ASSET_ROOT, ROOT, RUN_IDS, GROUPS, sha, write_new
 
 
 def load_bound_manifest(path):
     if sha(path) != os.environ.get('SENSITIVITY_MANIFEST_SHA256'):
         raise ValueError('Manifest hash binding mismatch')
     m = json.loads(path.read_text())
-    if (m['seed'] != 42 or m['groups'] != GROUPS or m['beta'] != .5 or
+    if (type(m['seed']) is not int or m['seed'] not in RUN_IDS or m['groups'] != GROUPS or m['beta'] != .5 or
+            m.get('schema_version') != 2 or m.get('asset_root') != str(ASSET_ROOT) or
+            m.get('execution_root') != str(ROOT) or
             m['beam_weight'] != 1. or m['runtime_beta'] != .1 or
             m['batch_size'] != 32 or m['num_workers'] != 1 or m['amp'] != 'bf16' or
             m['sequence_length'] != 32 or m['hist_itemkey_length'] != 100 or
@@ -36,6 +38,7 @@ def require_gate(m, group, smoke_dir):
     report = json.loads(acceptance.read_text())
     run = json.loads((smoke_dir / 'run.json').read_text())
     if (report['status'] != 'passed' or run['phase'] != 'smoke' or
+            report.get('seed') != m['seed'] or run.get('seed') != m['seed'] or
             run['group'] != group or run['processed'] != 65 or
             run['manifest_sha256'] != m['_manifest_sha256'] or
             run['smoke_gate']['status'] != 'passed'):
@@ -62,6 +65,8 @@ def run(args):
     from scripts import export_paired_evaluation as e
     from scripts.profile_efficiency_cpu4 import gpu_info, instantiate
     from scripts.sensitivity_core import infer_settings, smoke_gate
+    if e.ROOT.resolve() != ROOT:
+        raise RuntimeError('Exporter imported from a different execution worktree')
     budget = configure_export_cpu(torch, 1)
     cpu = [export_cpu_snapshot(budget['allowed_cpus'])]
     gate_record, gate = None, None
@@ -73,20 +78,21 @@ def run(args):
         if sha(m[key]['path']) != m[key]['sha256']:
             raise ValueError(f'Accepted {key} bytes changed')
     cfg = e.load_run_config(Path(m['run_dir']))
-    if (cfg.seed != 42 or cfg.sequence_length != 32 or cfg.hist_itemkey_length != 100 or
+    if (cfg.seed != m['seed'] or cfg.sequence_length != 32 or cfg.hist_itemkey_length != 100 or
             cfg.model.top_k_for_generation != 20 or cfg.model.top_k_for_score != 10 or
             cfg.model.active_top_k_for_score is not None or
             cfg.model.rerank_objective != 'listwise' or
             cfg.model.rerank_logit_weight != .1 or cfg.model.beam_log_prob_weight != 1.):
         raise ValueError('Unexpected original run configuration')
     provenance, expected = e.validate_provenance(
-        cfg, 'test', Path(m['data_root']), m['protocol'], Path(m['training_preflight']))
+        cfg, 'test', Path(m['data_root']), m['protocol'], Path(m['training_preflight']),
+        preflight_source_root=Path(m['asset_root']))
     if expected != m['expected_test_samples']:
         raise ValueError('Test count changed')
     e.configure_dataloader(cfg, 'test', 32, 1)
     device = torch.device('cuda')
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
+    torch.manual_seed(m['seed'])
+    torch.cuda.manual_seed_all(m['seed'])
     hardware = gpu_info(torch)
     model, loading = instantiate(cfg, {'model': 'listwise', 'checkpoint': m['checkpoint']}, device, torch)
     model.requires_grad_(False)
@@ -162,7 +168,8 @@ def run(args):
     if hardware_end['uuid'] != hardware['uuid']:
         raise RuntimeError('GPU changed within allocation')
     report = {
-        'status': 'complete', 'phase': args.phase, 'group': args.group, 'seed': 42,
+        'status': 'complete', 'phase': args.phase, 'group': args.group, 'seed': m['seed'],
+        'execution_root': str(ROOT), 'asset_root': str(ASSET_ROOT),
         'processed': processed, 'expected_samples': expected, 'batches': batches,
         'manifest_sha256': m['_manifest_sha256'], 'source_git_commit': m['source_git_commit'],
         'job_id': os.environ.get('SLURM_JOB_ID'), 'hardware': hardware, 'hardware_end': hardware_end,
