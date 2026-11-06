@@ -1,10 +1,18 @@
 # Run 台账
 
-最后更新：2026-11-07（Asia/Shanghai）。当前补充 seed42 推理敏感性；作业状态以相应时间点核验为准，退出码为 0 不自动代表验收通过。
+最后更新：2026-11-07（Asia/Shanghai）。当前补充三 seed 推理敏感性；作业状态以相应时间点核验为准，退出码为 0 不自动代表验收通过。
+
+## 三 seed 并行扩展授权（2026-11-07）
+
+作者在仅 seed42 启动后明确授权：seed42 / 43 / 44 各占一卡，每项整作业最多 4 CPU，所有扫描合计最多 3 GPU / 12 CPU。三个 seed 为独立流程，每条检索→beam 串行且至多一运行、一依赖等待；前项导出与验收成功后才能放行本 seed 后继。此例外仅用于本次两组固定 checkpoint 推理扫描，不扩展至训练、其他实验或新的选权。
+
+Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑定保持不变。Seed43 / 44 目前在独立工作副本 `GRID-sensitivity-multiseed` 适配与短测准备，**尚未提交、尚无新 job ID**；通过各自回归、数据 / checkpoint / validation 选权绑定和真实短测后再启动全量。
+
+耗时校正：156362 首批 elapsed 81.17 秒，第 1,000 batch（32,000 条）184.92 秒；扣除初始化后约 308 条/秒，检索组线性外推约 1.88 小时（未含末尾审计）。Beam 尚只有短测估算；每 seed 两组串行暂按约 4–5 小时规划，不作完成时间保证，也不把 8 小时视为实测结果。
 
 ## Seed42 推理敏感性（2026-11-07）
 
-作者授权固定 Joint-listwise seed42 best step100000，检索 C20/M0、5、10、20 与 beam C10、20、40/M10。β=0.50 沿用 validation，test 2,061,101 条不变；无新训练、其他 seed 或序列长度扫描。执行分支 `wsdm27-inference-sensitivity-seed42`，仅新增入口和测试，原模型 / checkpoint / 导出不覆盖。
+最初授权固定 Joint-listwise seed42 best step100000，检索 C20/M0、5、10、20 与 beam C10、20、40/M10。β=0.50 沿用 validation，test 2,061,101 条不变；该次提交未包含新训练、其他 seed 或序列长度扫描。后续三 seed 扩展另记于上节。执行分支 `wsdm27-inference-sensitivity-seed42`，仅新增入口和测试，原模型 / checkpoint / 导出不覆盖。
 
 提交前：两处验收门禁问题已修复，最终本地 43 项测试通过（12.71 秒）；独立代码审查完成。源码固定 `e190e6e`，提交时工作树干净；[manifest](../logs/training_launch/sensitivity_seed42_2026-11-07_v1/manifest.json) SHA256 `6b7a007b294607cd4cce423bc64609b4726abd6809d1af82e134190832bac36f`；[启动记录](../logs/training_launch/sensitivity_seed42_2026-11-07_v1/launch.json)。执行期间只维护文档，不改变绑定源码。
 
