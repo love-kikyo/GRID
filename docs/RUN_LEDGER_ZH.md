@@ -6,12 +6,14 @@
 
 作者在仅 seed42 启动后明确授权：seed42 / 43 / 44 各占一卡，每项整作业最多 4 CPU，所有扫描合计最多 3 GPU / 12 CPU。三个 seed 为独立流程，每条检索→beam 串行且至多一运行、一依赖等待；前项导出与验收成功后才能放行本 seed 后继。此例外仅用于本次两组固定 checkpoint 推理扫描，不扩展至训练、其他实验或新的选权。
 
-Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑定保持不变。Seed43 / 44 已在独立工作副本 `GRID-sensitivity-multiseed` 完成适配并提交短测，执行分支 `wsdm27-inference-sensitivity-multiseed`、冻结版本 `5878ec5`。本地 76 项回归及独立检查通过，计算节点两项回归也各 76 passed；通过真实短测验收后再启动新增全量。
+Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑定保持不变。Seed43 / 44 在独立工作副本 `GRID-sensitivity-multiseed` 完成适配，执行分支 `wsdm27-inference-sensitivity-multiseed`、冻结版本 `5878ec5`。本地 76 项回归及独立检查通过；新增四项计算节点回归各 76 passed、四份真实短测及独立只读重审均通过后，已启动新增全量。
 
 | Seed | 检索短测 | Beam 短测 | 新增全量 |
 | --- | --- | --- | --- |
-| 43 | 156366，00:41 RUNNING | 156368，afterok:156366 等待 | 尚未提交 |
-| 44 | 156365，00:41 RUNNING | 156367，afterok:156365 等待 | 尚未提交 |
+| 43 | 156366，已验收 | 156368，已验收 | 00:47：156371 检索 RUNNING → 156373 beam PENDING / Dependency |
+| 44 | 156365，已验收 | 156367，已验收 | 00:47：156370 检索 RUNNING → 156372 beam PENDING / Dependency |
+
+四项短测均 COMPLETED / 0:0，两项检索各 2m35s、两项 beam 各 2m00s。各组导出 65 条；首 32 条六设置精确等价 / 共享候选 / GT 无关 / 缓存隔离检查通过，模型加载无 missing / unexpected。四份 acceptance 独立重算除时间戳逐字段相同，实际全量门禁调用通过；哈希留存在各自启动记录。Seed43 CPU affinity `[14,15,36,37]`、seed44 `[12,13,34,35]`，均在四核内且 GPU UUID 不同，峰值 allocated 9.18 GiB（包含六设置门禁）。新增全量各 1×4090 / 4 CPU / 24 GiB、12h 上限；上限不是预计耗时。
 
 各自固定原 best：43 为 132786 / step100000，44 为 134298 / step80000；各自原 validation 均选 β=0.50，原 test 2,061,101 条不变。只为路径重定位扩展 provenance：预检路径查主目录记录，但实际核验隔离副本源码哈希，模型 / 数据处理代码内容不变。`.project-root` 已显式跟踪并绑定，避免隔离副本错误定位。
 
@@ -29,8 +31,8 @@ Seed42 的 156362 / 156363 不取消、不重跑，既有源码和 manifest 绑�
 | --- | --- | --- |
 | 156360 | 检索组 65 条 smoke，包含所有设置的等价 / GT 无关门禁 | COMPLETED / 0:0，2m36s；43 项回归、真实输出及独立复核通过 |
 | 156361 | Beam 组 65 条 smoke，afterok:156360 | COMPLETED / 0:0，1m43s；43 项回归、真实输出及独立复核通过 |
-| 156362 | 全量检索组 C20/M0、5、10、20 | 00:30 RUNNING，aias-compute-2 |
-| 156363 | 全量 beam 组 C10、40/M10，C20 中心复用上一组 | 00:30 PENDING / Dependency，afterok:156362；前项导出与验收均通过才放行 |
+| 156362 | 全量检索组 C20/M0、5、10、20 | 00:47 RUNNING，aias-compute-2；原任务不动 |
+| 156363 | 全量 beam 组 C10、40/M10，C20 中心复用上一组 | 00:47 PENDING / Dependency，afterok:156362；前项导出与验收均通过才放行 |
 
 每项 1×4090、4 CPU、24 GiB 申请；smoke 30 分钟上限，全量各 12 小时上限（不是预计耗时）。产物根目录 `logs/analysis/inference_sensitivity_seed42_2026-11-07_v1`；原始日志 `logs/slurm/Sens42-{Smoke,Full}{M,C}-<job>.{out,err}`。执行源码哈希保持不变，间隔提交仅为文档。
 
