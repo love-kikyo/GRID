@@ -6,7 +6,14 @@
 
 作者授权固定 Joint-listwise seed42 best step100000，检索 C20/M0、5、10、20 与 beam C10、20、40/M10。β=0.50 沿用 validation，test 2,061,101 条不变；无新训练、其他 seed 或序列长度扫描。执行分支 `wsdm27-inference-sensitivity-seed42`，仅新增入口和测试，原模型 / checkpoint / 导出不覆盖。
 
-提交前：两处验收门禁问题已修复，最终本地 43 项测试通过（12.71 秒）；独立代码审查完成。尚未记作 GPU 短测或全量完成。后续运行证据将更新在本节。
+提交前：两处验收门禁问题已修复，最终本地 43 项测试通过（12.71 秒）；独立代码审查完成。源码固定 `e190e6e`，提交时工作树干净；[manifest](../logs/training_launch/sensitivity_seed42_2026-11-07_v1/manifest.json) SHA256 `6b7a007b294607cd4cce423bc64609b4726abd6809d1af82e134190832bac36f`；[启动记录](../logs/training_launch/sensitivity_seed42_2026-11-07_v1/launch.json)。执行期间只维护文档，不改变绑定源码。
+
+| Job | 用途 | 最近核验 |
+| --- | --- | --- |
+| 156360 | 检索组 65 条 smoke，包含所有设置的等价 / GT 无关门禁 | 00:25 RUNNING，aias-compute-2；计算节点 43 项回归通过 |
+| 156361 | Beam 组 65 条 smoke，afterok:156360 | 00:25 PENDING / Dependency |
+
+每项 1×4090、4 CPU、24 GiB 申请、30 分钟上限。产物根目录 `logs/analysis/inference_sensitivity_seed42_2026-11-07_v1`；原始日志 `logs/slurm/Sens42-Smoke{M,C}-<job>.{out,err}`。全量尚未提交，须通过实际 smoke 验收；不能把上述本地回归当作 GPU 验收完成。
 
 ## 内部实验冻结交付（待作者确认）
 

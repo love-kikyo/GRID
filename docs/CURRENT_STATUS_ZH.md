@@ -4,13 +4,13 @@
 
 ## 一句话结论
 
-**作者新授权 seed42 Joint-listwise 两组固定 checkpoint 推理扫描，正在进行提交前短测准备。** 检索扫描 C20/M0、5、10、20；beam 扫描 C10、20、40/M10，共享中心设置。固定 validation β=0.50 与完整 test，不重训、不扩 seed。独立分支 `wsdm27-inference-sensitivity-seed42`，原主表及历史产物不覆盖。详情见 [扫描计划](EXPERIMENT_PLAN_ZH.md#新增seed42-推理敏感性2026-11-07)。
+**作者新授权 seed42 Joint-listwise 两组固定 checkpoint 推理扫描，GPU 短测已启动。** 156360 检索短测运行，156361 beam 短测 afterok 等待（00:25 快照）；全量尚未提交。检索扫描 C20/M0、5、10、20；beam 扫描 C10、20、40/M10，共享中心设置。固定 validation β=0.50 与完整 test，不重训、不扩 seed。独立分支 `wsdm27-inference-sensitivity-seed42`，原主表及历史产物不覆盖。详情见 [扫描计划](EXPERIMENT_PLAN_ZH.md#新增seed42-推理敏感性2026-11-07)。
 
 ## 当前进度
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
-| Seed42 固定 checkpoint 两组推理扫描 | 提交前准备 | 先验收 65 条真实数据、全部六设置与原入口一致性；每项 1 GPU / 4 CPU；通过后全量串行 |
+| Seed42 固定 checkpoint 两组推理扫描 | GPU 短测已提交 | 156360 → 156361，各 65 条；每项 1 GPU / 4 CPU；通过后全量串行 |
 | A + H1 + L2 数据构建 / 全量审计 | 已完成 | 固定 history-last-user-v1；[数据协议](DATA_PROTOCOL_ZH.md) |
 | 三个 seed × 四模型训练 | 已完成 | 既有 best checkpoint 固定，不因选权或 test 重选 |
 | 三个 seed 的全量 validation / 选权 | 已完成 | 每个重排 run 独立验收；九组选权均为固定网格边界 beta=0.50；SID 不搜索 beta |
