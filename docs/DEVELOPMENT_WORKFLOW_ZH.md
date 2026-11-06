@@ -2,7 +2,7 @@
 
 ## 分支与提交
 
-当前工作分支：`wsdm27-history-last-user-v1`。原探索分支保留；不重写其历史、不强推、不顺手合并回 main。
+当前工作分支：`wsdm27-inference-sensitivity-seed42`（11-07 从 `wsdm27-history-last-user-v1` 新建，仅补 seed42 推理扫描）。原分支及其他探索分支保留；不重写其历史、不强推、不顺手合并回 main。
 
 沿用已确认的小步提交原则：一个逻辑完整、可以单独解释和回退的改动做一次 commit；不按聊天轮次或机械行数提交。
 
