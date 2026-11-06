@@ -1,16 +1,16 @@
 # 当前状态
 
-核验时间：2026-11-07，Asia/Shanghai。此页是本分支状态快照，不是实时监控；此前主实验结果保留不动。
+核验时间：2026-11-07 00:30，Asia/Shanghai。此页是本分支状态快照，不是实时监控；此前主实验结果保留不动。
 
 ## 一句话结论
 
-**作者新授权 seed42 Joint-listwise 两组固定 checkpoint 推理扫描，GPU 短测已启动。** 156360 检索短测运行，156361 beam 短测 afterok 等待（00:25 快照）；全量尚未提交。检索扫描 C20/M0、5、10、20；beam 扫描 C10、20、40/M10，共享中心设置。固定 validation β=0.50 与完整 test，不重训、不扩 seed。独立分支 `wsdm27-inference-sensitivity-seed42`，原主表及历史产物不覆盖。详情见 [扫描计划](EXPERIMENT_PLAN_ZH.md#新增seed42-推理敏感性2026-11-07)。
+**Seed42 两组固定 checkpoint 推理扫描已启动：156362 检索全量运行，156363 beam 全量 afterok 等待。** 两组 GPU 短测与独立产物复核均通过。检索扫描 C20/M0、5、10、20；beam 扫描 C10、20、40/M10，共享中心设置。固定 validation β=0.50 与完整 test，不重训、不扩 seed。独立分支 `wsdm27-inference-sensitivity-seed42`，原主表及历史产物不覆盖。详情见 [扫描计划](EXPERIMENT_PLAN_ZH.md#新增seed42-推理敏感性2026-11-07)。
 
 ## 当前进度
 
 | 工作项 | 状态 | 证据 / 说明 |
 | --- | --- | --- |
-| Seed42 固定 checkpoint 两组推理扫描 | GPU 短测已提交 | 156360 → 156361，各 65 条；每项 1 GPU / 4 CPU；通过后全量串行 |
+| Seed42 固定 checkpoint 两组推理扫描 | 全量一运行、一等待 | 156360 / 156361 各 65 条验收通过；156362 → 156363，每组完整 test，每项 1 GPU / 4 CPU |
 | A + H1 + L2 数据构建 / 全量审计 | 已完成 | 固定 history-last-user-v1；[数据协议](DATA_PROTOCOL_ZH.md) |
 | 三个 seed × 四模型训练 | 已完成 | 既有 best checkpoint 固定，不因选权或 test 重选 |
 | 三个 seed 的全量 validation / 选权 | 已完成 | 每个重排 run 独立验收；九组选权均为固定网格边界 beta=0.50；SID 不搜索 beta |
@@ -37,8 +37,8 @@
 
 ## 下一步
 
-1. 验收两组 65 条 smoke：原入口 M10 一致、M 分支候选固定、GT 无关、C40 显存及完整输出结构。
-2. 门禁通过后提交检索全量，beam 全量作为唯一 afterok 后继；完成后汇总覆盖率、Recall / NDCG，不把推理 M0 等同于无检索训练消融。
+1. 监控 156362 检索全量；导出及产物验收全部成功后自动放行唯一后继 156363。
+2. 两组全量验收后汇总覆盖率、Recall / NDCG，不把推理 M0 等同于无检索训练消融；65 条短测不用于效果结论。
 
 口径与限制：重排方法的正式 selected 指标按各自冻结 validation beta=0.50 在 FP32 分数上重排；导出保留训练时 runtime beta=0.1 排序，不能混作主表。SID 只报告 beam。Joint 模型更新生成器，不要求跨方法共享同一候选池。已知 split 重叠继续披露，不追加去重；不为 beta 重训。Seed 44 listwise 续训未恢复数据游标，不宣称与不中断训练逐步一致。训练自带有限 batch test 不并入全量主表。
 

@@ -10,10 +10,16 @@
 
 | Job | 用途 | 最近核验 |
 | --- | --- | --- |
-| 156360 | 检索组 65 条 smoke，包含所有设置的等价 / GT 无关门禁 | 00:25 RUNNING，aias-compute-2；计算节点 43 项回归通过 |
-| 156361 | Beam 组 65 条 smoke，afterok:156360 | 00:25 PENDING / Dependency |
+| 156360 | 检索组 65 条 smoke，包含所有设置的等价 / GT 无关门禁 | COMPLETED / 0:0，2m36s；43 项回归、真实输出及独立复核通过 |
+| 156361 | Beam 组 65 条 smoke，afterok:156360 | COMPLETED / 0:0，1m43s；43 项回归、真实输出及独立复核通过 |
+| 156362 | 全量检索组 C20/M0、5、10、20 | 00:30 RUNNING，aias-compute-2 |
+| 156363 | 全量 beam 组 C10、40/M10，C20 中心复用上一组 | 00:30 PENDING / Dependency，afterok:156362；前项导出与验收均通过才放行 |
 
-每项 1×4090、4 CPU、24 GiB 申请、30 分钟上限。产物根目录 `logs/analysis/inference_sensitivity_seed42_2026-11-07_v1`；原始日志 `logs/slurm/Sens42-Smoke{M,C}-<job>.{out,err}`。全量尚未提交，须通过实际 smoke 验收；不能把上述本地回归当作 GPU 验收完成。
+每项 1×4090、4 CPU、24 GiB 申请；smoke 30 分钟上限，全量各 12 小时上限（不是预计耗时）。产物根目录 `logs/analysis/inference_sensitivity_seed42_2026-11-07_v1`；原始日志 `logs/slurm/Sens42-{Smoke,Full}{M,C}-<job>.{out,err}`。执行源码哈希保持不变，间隔提交仅为文档。
+
+短测证据：[检索 acceptance](../logs/analysis/inference_sensitivity_seed42_2026-11-07_v1/smoke_retrieval/acceptance.json) SHA256 `6372d071b4c2db90b37d9229c3ae40e590cfd8612110d091c09daf93461b00e4`；[beam acceptance](../logs/analysis/inference_sensitivity_seed42_2026-11-07_v1/smoke_beam/acceptance.json) SHA256 `f43a5dbaa3c205d263b315da7b61f05cf6700be91d46c345315842ebdc42cf79`。各 65 条完整结构 / 身份核对、首 32 条六设置精确一致 / 缓存隔离 / GT 无关门禁通过；模型参数版本未变、无梯度。独立重算 acceptance（除时间戳）逐字段相同，真实 `require_gate` 放行验证通过。
+
+两项均为 aias-compute-2 RTX4090，进程树 CPU affinity `[6,7,32,33]`、线程池=1。短测 peak allocated 9.18 GiB / reserved 11.72 GiB，包含六设置门禁而非某个设置的独立效率测量。两满 batch 的组 forward 均值：检索 96.36 ms、beam 97.78 ms；仅 forward 线性外推各约 1.72 / 1.75 小时，不含读取 / 写盘 / 哈希 / 审计，须由全量进度校正。65 条指标不用于效果结论。
 
 ## 内部实验冻结交付（待作者确认）
 
