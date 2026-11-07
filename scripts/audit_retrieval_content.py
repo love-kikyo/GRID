@@ -1,16 +1,18 @@
-"""Read-only acceptance of the five frozen seed42 retrieval-content policies."""
+"""Read-only acceptance of the five frozen per-seed retrieval-content policies."""
 from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 
 import h5py
 import numpy as np
 
 from scripts.audit_inference_sensitivity import _metric_sums, _packed, _ranks, require, sha
+from scripts.compare_retrieval_paired_reports import compare_paired_reports, _is_statistical_float
 from scripts.audit_retrieval_diagnostic import (
     FIELDS, MAX_ITEMKEY, SMOKE_FLAGS as DIAGNOSTIC_FLAGS, _contexts, _delta, _shape_check,
 )
@@ -22,7 +24,8 @@ SMOKE_FLAGS = DIAGNOSTIC_FLAGS + ('subset_matches_frozen_diagnostic',)
 
 def _manifest_check(m, phase):
     require(phase in {'smoke', 'full'}, 'Invalid content phase')
-    require(type(m.get('seed')) is int and m['seed'] == 42, 'Only seed42 is authorized')
+    require(type(m.get('seed')) is int and m['seed'] in (42, 43, 44),
+            'Only seeds42/43/44 are authorized')
     require(m.get('policies') == POLICIES and m.get('C') == 20
             and m.get('physical_slots') == 10, 'Content policies or dimensions changed')
     require(m.get('beta') == .5 and m.get('beam_weight') == 1.
@@ -116,7 +119,7 @@ def _prior_smoke_check(run, m, phase):
             and paired_record.get('sha256') == sha(paired_path), 'Prior smoke paired path/hash mismatch')
     paired = json.loads(paired_path.read_text())
     require(paired.get('status') == 'passed' and paired.get('phase') == 'smoke'
-            and type(paired.get('seed')) is int and paired['seed'] == 42
+            and type(paired.get('seed')) is int and paired['seed'] == m['seed']
             and paired.get('num_examples') == m['smoke_samples'] and paired.get('policies') == POLICIES,
             'Prior smoke paired identity mismatch')
     for key in ('manifest_sha256', 'source_git_commit', 'checkpoint', 'reference_test', 'frozen_beta', 'run', 'artifacts'):
@@ -126,6 +129,48 @@ def _prior_smoke_check(run, m, phase):
             and paired.get('no_parameter_selection') is True
             and paired.get('all_point_estimates_match_acceptance') is True,
             'Prior smoke paired statistics/acceptance mismatch')
+    _paired_comparison_check(record.get('paired_comparison'))
+    # Recompute the small accepted smoke on this CPU as well. Numerical tails
+    # may differ across CPUs, so the earlier difference list is not compared
+    # byte-for-byte; both computations must satisfy the same bounded rule.
+    from scripts.analyze_retrieval_content import analyze
+    compare_paired_reports(paired, analyze(path.parent, m, 'smoke'))
+
+
+def _paired_comparison_check(review):
+    require(type(review) is dict and set(review) == {
+        'status', 'tolerance', 'ignored_runtime_fields', 'exact_equal_excluding_runtime_fields',
+        'tolerated_differences', 'max_abs_difference'}, 'Prior smoke numeric review missing or malformed')
+    require(review['status'] == 'passed'
+            and review['tolerance'] == {'abs_tol': 1e-12, 'rel_tol': 0.}
+            and all(type(v) is float for v in review['tolerance'].values())
+            and review['ignored_runtime_fields'] == ['checked_at', 'analysis_cpu_affinity'],
+            'Prior smoke numeric rule changed')
+    differences = review['tolerated_differences']
+    require(type(differences) is list
+            and review['exact_equal_excluding_runtime_fields'] is (not bool(differences)),
+            'Prior smoke numeric summary inconsistent')
+    paths = set()
+    for difference in differences:
+        require(type(difference) is dict and set(difference) == {
+            'path', 'recorded', 'fresh', 'absolute_difference'}, 'Prior smoke numeric difference malformed')
+        path = difference['path']
+        require(type(path) is str and path.startswith('/') and path not in paths,
+                'Prior smoke numeric path malformed')
+        parts = tuple(path[1:].split('/'))
+        if len(parts) == 6 and parts[4] == 'paired_bootstrap_ci' and parts[5] in ('0', '1'):
+            parts = parts[:-1] + (int(parts[-1]),)
+        require(_is_statistical_float(parts), 'Prior smoke numeric path outside allowlist')
+        paths.add(path)
+        require(all(type(difference[k]) is float and math.isfinite(difference[k])
+                    for k in ('recorded', 'fresh', 'absolute_difference'))
+                and difference['absolute_difference'] == abs(difference['recorded'] - difference['fresh'])
+                and 0 < difference['absolute_difference'] <= 1e-12,
+                'Prior smoke numeric difference invalid')
+    maximum = review['max_abs_difference']
+    require(type(maximum) is float and math.isfinite(maximum)
+            and maximum == max((d['absolute_difference'] for d in differences), default=0.),
+            'Prior smoke numeric maximum invalid')
 
 
 def audit(output_dir: Path, manifest: dict, phase: str) -> dict:
@@ -192,7 +237,7 @@ def audit(output_dir: Path, manifest: dict, phase: str) -> dict:
                             'fusion_minus_beam': {k: metrics['fused'][k] - metrics['beam'][k]
                                                   for k in metrics['fused']}}
     return {
-        'status': 'passed', 'phase': phase, 'seed': 42, 'checked_at': datetime.now(timezone.utc).isoformat(),
+        'status': 'passed', 'phase': phase, 'seed': manifest['seed'], 'checked_at': datetime.now(timezone.utc).isoformat(),
         'policies': POLICIES, 'num_examples': count, 'unique_users': len(users), 'settings': settings,
         'minus_sim10': {p: _delta(settings[p]['metrics'], settings['sim10']['metrics'])
                         for p in POLICIES if p != 'sim10'},

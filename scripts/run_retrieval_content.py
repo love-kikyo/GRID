@@ -1,4 +1,4 @@
-"""Frozen seed42 full-test retrieval-content comparison, with smoke gating."""
+"""Frozen per-seed full-test retrieval-content comparison, with smoke gating."""
 import argparse
 import json
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import time
 
 from scripts.prepare_retrieval_content import ROOT, POLICIES, load_manifest, sha, write_new
+from scripts.compare_retrieval_paired_reports import compare_paired_reports
 
 
 def require_gate(manifest, directory):
@@ -14,9 +15,13 @@ def require_gate(manifest, directory):
     path = directory / 'acceptance.json'
     acceptance = json.loads(path.read_text())
     run = json.loads((directory / 'run.json').read_text())
-    if (acceptance.get('status') != 'passed' or acceptance.get('seed') != 42 or
+    seed = manifest.get('seed')
+    if (type(seed) is not int or seed not in (42, 43, 44) or
+            acceptance.get('status') != 'passed' or type(acceptance.get('seed')) is not int or
+            acceptance.get('seed') != seed or
             acceptance.get('phase') != 'smoke' or acceptance.get('num_examples') != 65 or
-            run.get('phase') != 'smoke' or run.get('seed') != 42 or run.get('processed') != 65 or
+            run.get('phase') != 'smoke' or type(run.get('seed')) is not int or
+            run.get('seed') != seed or run.get('processed') != 65 or
             run.get('manifest_sha256') != manifest['_manifest_sha256'] or
             run.get('smoke_gate', {}).get('status') != 'passed'):
         raise ValueError('Wrong smoke acceptance identity')
@@ -29,18 +34,21 @@ def require_gate(manifest, directory):
     paired = json.loads(paired_path.read_text())
     from scripts.analyze_retrieval_content import analyze
     fresh_paired = analyze(directory, manifest, 'smoke')
-    # The review process can have a different CPU affinity; all scientific
-    # fields and artifact bindings must reproduce exactly.
-    transient = {'checked_at', 'analysis_cpu_affinity'}
-    if ({k: v for k, v in paired.items() if k not in transient} !=
-            {k: v for k, v in fresh_paired.items() if k not in transient}):
-        raise ValueError('Smoke paired analysis differs from current artifacts')
+    # Keep exact identity/hash/structure checks, permitting only the previously
+    # accepted 1e-12 absolute round-off tolerance on statistical float leaves.
+    try:
+        paired_comparison = compare_paired_reports(paired, fresh_paired)
+    except ValueError as error:
+        raise ValueError('Smoke paired analysis differs from current artifacts') from error
     return {'path': str(path), 'sha256': sha(path),
-            'paired_analysis': {'path': str(paired_path), 'sha256': sha(paired_path)}}, run['smoke_gate']
+            'paired_analysis': {'path': str(paired_path), 'sha256': sha(paired_path)},
+            'paired_comparison': paired_comparison}, run['smoke_gate']
 
 
-def check_config(cfg):
-    if (cfg.seed != 42 or cfg.sequence_length != 32 or cfg.hist_itemkey_length != 100 or
+def check_config(cfg, seed=42):
+    if (type(seed) is not int or seed not in (42, 43, 44) or
+            type(cfg.seed) is not int or cfg.seed != seed or
+            cfg.sequence_length != 32 or cfg.hist_itemkey_length != 100 or
             cfg.model.top_k_for_generation != 20 or cfg.model.top_k_for_score != 10 or
             cfg.model.active_top_k_for_score is not None or cfg.model.rerank_objective != 'listwise' or
             cfg.model.rerank_logit_weight != .1 or cfg.model.beam_log_prob_weight != 1.):
@@ -78,7 +86,7 @@ def run(args):
         if sha(manifest[field]['path']) != manifest[field]['sha256']:
             raise ValueError(f'Changed accepted {field}')
     cfg = export.load_run_config(Path(manifest['run_dir']))
-    check_config(cfg)
+    check_config(cfg, manifest['seed'])
     provenance, expected = export.validate_provenance(
         cfg, 'test', Path(manifest['data_root']), manifest['protocol'], Path(manifest['training_preflight']),
         preflight_source_root=Path(manifest['asset_root']))
@@ -161,7 +169,7 @@ def run(args):
     if hardware_end['uuid'] != hardware['uuid']:
         raise RuntimeError('GPU changed within export allocation')
     write_new(args.output_dir / 'run.json', {
-        'status': 'complete', 'phase': args.phase, 'seed': 42, 'processed': processed,
+        'status': 'complete', 'phase': args.phase, 'seed': manifest['seed'], 'processed': processed,
         'expected_samples': expected, 'policies': POLICIES, 'batches': batches,
         'manifest_sha256': manifest['_manifest_sha256'], 'source_git_commit': manifest['source_git_commit'],
         'job_id': os.environ.get('SLURM_JOB_ID'), 'hardware': hardware, 'hardware_end': hardware_end,

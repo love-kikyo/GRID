@@ -7,9 +7,10 @@ import pytest
 
 from scripts.audit_retrieval_content import MAX_ITEMKEY, POLICIES, SMOKE_FLAGS, audit, main, sha
 from scripts.prepare_retrieval_content import STATISTICS
+from scripts.compare_retrieval_paired_reports import compare_paired_reports
 
 
-def fixture(tmp_path, n=7, phase='smoke'):
+def fixture(tmp_path, n=7, phase='smoke', seed=42):
     root = tmp_path / 'out'
     root.mkdir()
     full = n if phase == 'full' else n + 5
@@ -25,7 +26,7 @@ def fixture(tmp_path, n=7, phase='smoke'):
     selection.write_text(json.dumps({'input_split': 'val', 'selection_scope': 'validation_only',
                                     'input_checkpoint_sha256': 'checkpoint',
                                     'selected': {'beam_weight': 1., 'rerank_weight': .5}}))
-    m = dict(seed=42, C=20, physical_slots=10, policies=POLICIES,
+    m = dict(seed=seed, C=20, physical_slots=10, policies=POLICIES,
              protocol='history-last-user-v1', beta=.5, beam_weight=1., runtime_beta=.1,
              source_git_commit='fixture-commit', batch_size=32, amp='bf16', random_seed=42,
              statistics=STATISTICS,
@@ -37,7 +38,7 @@ def fixture(tmp_path, n=7, phase='smoke'):
                 random_namespace='grid-retrieval-diagnostic-v1-history-positions',
                 candidate_positions={p: [50] for p in POLICIES},
                 input_lengths={p: [13] for p in POLICIES}, **{k: True for k in SMOKE_FLAGS})
-    run = dict(status='complete', seed=42, phase=phase, processed=n, expected_samples=full,
+    run = dict(status='complete', seed=seed, phase=phase, processed=n, expected_samples=full,
                manifest_sha256='manifest', smoke_gate=gate, prior_smoke_acceptance=None,
                **{k: m[k] for k in ('source_git_commit', 'checkpoint', 'policies', 'beta',
                                    'runtime_beta', 'batch_size', 'amp')}, training_performed=False,
@@ -87,9 +88,11 @@ def fixture(tmp_path, n=7, phase='smoke'):
         receipt.write_text(json.dumps(audit(prior_dir, m, 'smoke')))
         from scripts.analyze_retrieval_content import analyze
         paired_path = prior_dir / 'paired.json'
-        paired_path.write_text(json.dumps(analyze(prior_dir, m, 'smoke')))
+        paired = analyze(prior_dir, m, 'smoke')
+        paired_path.write_text(json.dumps(paired))
         run['prior_smoke_acceptance'] = {'path': str(receipt), 'sha256': sha(receipt),
-                                         'paired_analysis': {'path': str(paired_path), 'sha256': sha(paired_path)}}
+                                         'paired_analysis': {'path': str(paired_path), 'sha256': sha(paired_path)},
+                                         'paired_comparison': compare_paired_reports(paired, paired)}
         (root / 'run.json').write_text(json.dumps(run))
     return root, m
 
@@ -285,11 +288,12 @@ def test_source_binding_and_incomplete_marker(tmp_path):
         audit(root, m, 'smoke')
 
 
-def test_cli_exclusive_and_real_65_row_runner_gate(tmp_path, monkeypatch):
+@pytest.mark.parametrize('seed', [42, 43, 44])
+def test_cli_exclusive_and_real_65_row_runner_gate(tmp_path, monkeypatch, seed):
     from scripts.run_retrieval_content import require_gate
     from scripts.analyze_retrieval_content import analyze
 
-    root, m = fixture(tmp_path, n=65)
+    root, m = fixture(tmp_path, n=65, seed=seed)
     path = tmp_path / 'manifest.json'
     del m['_manifest_sha256']
     path.write_text(json.dumps(m))
@@ -303,9 +307,42 @@ def test_cli_exclusive_and_real_65_row_runner_gate(tmp_path, monkeypatch):
     paired_path = root / 'paired.json'
     paired_path.write_text(json.dumps(analyze(root, m, 'smoke')))
     record, gate = require_gate(m, root)
-    assert record == {'path': str(receipt), 'sha256': sha(receipt),
-                      'paired_analysis': {'path': str(paired_path), 'sha256': sha(paired_path)}}
+    assert record['path'] == str(receipt) and record['sha256'] == sha(receipt)
+    assert record['paired_analysis'] == {'path': str(paired_path), 'sha256': sha(paired_path)}
+    assert record['paired_comparison']['status'] == 'passed'
+    assert json.loads(receipt.read_text())['seed'] == seed
     assert gate['samples'] == 32 and all(gate[k] is True for k in SMOKE_FLAGS)
     with pytest.raises(ValueError, match='Acceptance already exists'):
         main()
     assert receipt.read_bytes() == previous
+
+
+@pytest.mark.parametrize('seed', [43, 44])
+@pytest.mark.parametrize('phase', ['smoke', 'full'])
+def test_additional_seed_small_h5_audit_and_mixed_seed_rejection(tmp_path, seed, phase):
+    root, manifest = fixture(tmp_path, seed=seed, phase=phase)
+    report = audit(root, manifest, phase)
+    assert report['seed'] == seed and report['num_examples'] == 7
+    assert report['settings']['sim10']['metrics']['beam']['recall@5'] == 2 / 7
+    update_run(root, seed=42)
+    with pytest.raises(ValueError, match='Run seed mismatch'):
+        audit(root, manifest, phase)
+
+
+@pytest.mark.parametrize('change', [
+    lambda p: p.pop('paired_comparison'),
+    lambda p: p['paired_comparison'].update(tolerance={'abs_tol': 1e-6, 'rel_tol': 0.}),
+    lambda p: p['paired_comparison'].update(status='failed'),
+    lambda p: p['paired_comparison'].update(ignored_runtime_fields=['seed']),
+    lambda p: p['paired_comparison'].update(max_abs_difference=float('nan')),
+    lambda p: p['paired_comparison'].update(exact_equal_excluding_runtime_fields=False),
+    lambda p: p['paired_comparison'].update(tolerated_differences=[{
+        'path': '/seed', 'recorded': 43., 'fresh': 43. + 1e-13, 'absolute_difference': 1e-13}]),
+])
+def test_full_requires_strict_numeric_smoke_review(tmp_path, change):
+    root, manifest = fixture(tmp_path, seed=43, phase='full')
+    run = json.loads((root / 'run.json').read_text())
+    change(run['prior_smoke_acceptance'])
+    update_run(root, **run)
+    with pytest.raises(ValueError, match='Prior smoke numeric'):
+        audit(root, manifest, 'full')

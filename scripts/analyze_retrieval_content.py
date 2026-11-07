@@ -57,7 +57,7 @@ def _bind_inputs(directory, m, phase):
     run = json.loads(run_path.read_text())
     _run_check(run, m, phase, count)
     require(receipt.get('status') == 'passed' and receipt.get('phase') == phase
-            and type(receipt.get('seed')) is int and receipt['seed'] == 42
+            and type(receipt.get('seed')) is int and receipt['seed'] == m['seed']
             and receipt.get('num_examples') == count and receipt.get('unique_users') == count,
             'Acceptance identity mismatch')
     require(receipt.get('manifest_sha256') == m['_manifest_sha256']
@@ -158,7 +158,7 @@ def analyze(output_dir: Path, manifest: dict, phase: str) -> dict:
             'Input changed during analysis')
     require(sha(directory / 'acceptance.json') == receipt_record['sha256'], 'Acceptance changed during analysis')
     return {
-        'status': 'passed', 'phase': phase, 'seed': 42, 'checked_at': datetime.now(timezone.utc).isoformat(),
+        'status': 'passed', 'phase': phase, 'seed': manifest['seed'], 'checked_at': datetime.now(timezone.utc).isoformat(),
         'num_examples': count, 'policies': POLICIES, 'statistics': STATISTICS,
         'sample_unit': 'paired_user', 'bootstrap_method': 'paired_nonparametric_multinomial_counts',
         'rng_policy': 'Independent reset to seed2027 per contrast/metric; sorted unique delta values',

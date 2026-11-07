@@ -8,12 +8,13 @@ import numpy as np
 import pytest
 
 from scripts.analyze_paired_evaluation import paired_bootstrap_ci
+from scripts.compare_retrieval_paired_reports import compare_paired_reports
 from scripts.analyze_retrieval_content import (
     POLICIES, STATISTICS, _contributions, analyze, comparisons, main, sha,
 )
 
 
-def fixture(tmp_path, n=9, phase='smoke'):
+def fixture(tmp_path, n=9, phase='smoke', seed=42):
     from scripts.audit_retrieval_content import SMOKE_FLAGS, audit
     root = tmp_path / ('prior' if phase == 'full' else 'out')
     root.mkdir()
@@ -29,7 +30,7 @@ def fixture(tmp_path, n=9, phase='smoke'):
     selection.write_text(json.dumps({'input_split': 'val', 'selection_scope': 'validation_only',
                                     'input_checkpoint_sha256': 'checkpoint',
                                     'selected': {'beam_weight': 1., 'rerank_weight': .5}}))
-    m = dict(seed=42, C=20, physical_slots=10, policies=POLICIES,
+    m = dict(seed=seed, C=20, physical_slots=10, policies=POLICIES,
              protocol='history-last-user-v1', beta=.5, beam_weight=1., runtime_beta=.1,
              source_git_commit='fixture-commit', batch_size=32, amp='bf16', random_seed=42,
              expected_test_samples=full, smoke_samples=n, full_samples=full, statistics=STATISTICS,
@@ -43,7 +44,7 @@ def fixture(tmp_path, n=9, phase='smoke'):
                 random_namespace='grid-retrieval-diagnostic-v1-history-positions',
                 candidate_positions={p: [58] for p in POLICIES},
                 input_lengths={p: [13] for p in POLICIES}, **{key: True for key in SMOKE_FLAGS})
-    run = dict(status='complete', seed=42, phase='smoke', processed=n, expected_samples=full,
+    run = dict(status='complete', seed=seed, phase='smoke', processed=n, expected_samples=full,
                manifest_sha256=m['_manifest_sha256'], smoke_gate=gate, prior_smoke_acceptance=None,
                **{k: m[k] for k in ('source_git_commit', 'checkpoint', 'policies', 'beta',
                                    'runtime_beta', 'batch_size', 'amp')}, training_performed=False,
@@ -79,7 +80,8 @@ def fixture(tmp_path, n=9, phase='smoke'):
             f['rerank_input_length'] = np.full(n, 13, dtype=np.int16)
     (root / 'acceptance.json').write_text(json.dumps(audit(root, m, 'smoke')))
     if phase == 'full':
-        (root / 'paired.json').write_text(json.dumps(analyze(root, m, 'smoke')))
+        paired = analyze(root, m, 'smoke')
+        (root / 'paired.json').write_text(json.dumps(paired))
         destination = tmp_path / 'out'
         destination.mkdir()
         for policy in POLICIES:
@@ -88,6 +90,7 @@ def fixture(tmp_path, n=9, phase='smoke'):
         run['prior_smoke_acceptance'] = {
             'path': str(root / 'acceptance.json'), 'sha256': sha(root / 'acceptance.json'),
             'paired_analysis': {'path': str(root / 'paired.json'), 'sha256': sha(root / 'paired.json')},
+            'paired_comparison': compare_paired_reports(paired, paired),
         }
         root = destination
         (root / 'run.json').write_text(json.dumps(run))
@@ -207,3 +210,22 @@ def test_cli_exclusive_output(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='already exists'):
         main()
     assert (root / 'paired.json').read_bytes() == saved
+
+
+@pytest.mark.parametrize('seed', [43, 44])
+@pytest.mark.parametrize('phase', ['smoke', 'full'])
+def test_additional_seeds_have_identical_statistics_for_identical_predictions(tmp_path, seed, phase):
+    original_dir, new_dir = tmp_path / 'original', tmp_path / 'new'
+    original_dir.mkdir()
+    new_dir.mkdir()
+    old_root, old_m = fixture(original_dir, seed=42, phase=phase)
+    root, manifest = fixture(new_dir, seed=seed, phase=phase)
+    original = analyze(old_root, old_m, phase)
+    report = analyze(root, manifest, phase)
+    assert report['seed'] == seed and report['num_examples'] == 9
+    assert report['comparisons'] == original['comparisons']
+    assert report['point_estimates'] == original['point_estimates']
+    assert report['statistics'] == original['statistics']
+    update_receipt(root, lambda r: r.update(seed=42))
+    with pytest.raises(ValueError, match='Acceptance identity'):
+        analyze(root, manifest, phase)
