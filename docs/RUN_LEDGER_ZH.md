@@ -1,14 +1,22 @@
 # Run 台账
 
-最后更新：2026-11-07（Asia/Shanghai）。当前准备作者新批准的seed42五组全量验证；三seed推理敏感性和小规模诊断已完成。作业状态以相应时间点核验为准，退出码为0不自动代表验收通过。
+最后更新：2026-11-08（Asia/Shanghai）。当前推进seed42五组全量验证；三seed推理敏感性和小规模诊断已完成。作业状态以相应时间点核验为准，退出码为0不自动代表验收通过。
 
 ## Seed42 五组固定槽全量验证（2026-11-07）
 
 作者批准固定原best/C20/β=0.50，单seed完整test 2,061,101条的 sim10/recent10/random10/mask5/mask0 对照。仅新增入口与测试，执行分支 `wsdm27-retrieval-content-full`，源码冻结 `1c8fbe9`；旧模型、诊断源码与导出保持不动。五策略共用fresh beam，sim10中心同次重算；主要比较为sim10−recent10的fusion NDCG@10，其他raw/fusion与@5/10/20作辅助，全部报告用户配对区间。不是新holdout，也不把单seed用户区间当作训练seed稳健性。
 
-本地389项回归通过（23.68秒，单核）、两份独立交叉检查无阻塞。23:26提交65条端到端短测 **156937**，包括真实推理、产物验收和13对×6指标配对统计；须独立验收后再提交一项全量，当前全量尚未提交。每项1×4090 / 4CPU / 24GiB；smoke上限30分钟，全量上限6小时（预计2–3小时，上限不是预计用时）。证据：[manifest](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/manifest.json)，SHA256 `b3bdced637c5ef0744b7452896dade6b2f89a69003c76e75befab2a56c503322`；[启动记录](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/launch.json)。
+本地389项回归通过（23.68秒，单核）、两份独立交叉检查无阻塞。23:26提交65条端到端短测 **156937**，包括真实推理、产物验收和13对×6指标配对统计；当时仅提交短测，须独立验收后再提交一项全量。每项1×4090 / 4CPU / 24GiB；smoke上限30分钟，全量上限6小时（预计2–3小时，上限不是预计用时）。证据：[manifest](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/manifest.json)，SHA256 `b3bdced637c5ef0744b7452896dade6b2f89a69003c76e75befab2a56c503322`；[启动记录](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/launch.json)。
 
-23:30资源核验：156937仍PENDING，调度原因Priority；暂估11-08 04:10:22开始，并非保证。两个4090节点虽有部分GPU未分配，可调度内存分别仅11,104MiB / 3,872MiB，均不足本任务24GiB；不能用物理FreeMem替代调度预留。历史同模型156362.0 / 156461.0的MaxRSS分别18,245,824KiB / 18,293,380KiB（约17.4GiB），因此未为了提前运行而压低内存申请，也未迁移、重复提交或排入全量。短测尚无推理/统计产物，下一步是其结束后独立验收。
+11-07 23:30资源核验历史：156937当时PENDING，调度原因Priority；暂估11-08 04:10:22开始，并非保证。两个4090节点虽有部分GPU未分配，可调度内存分别仅11,104MiB / 3,872MiB，均不足本任务24GiB；不能用物理FreeMem替代调度预留。历史同模型156362.0 / 156461.0的MaxRSS分别18,245,824KiB / 18,293,380KiB（约17.4GiB），因此未为了提前运行而压低内存申请，也未迁移、重复提交或排入全量。
+
+11-08实际结果：**156937 COMPLETED / 0:0**，00:13:30–00:15:46，2m16s，比原调度估计提前；节点153项回归通过。五份预测各65条、三batch；共享候选、GT无关、缓存隔离、新旧入口等价及真实位置58 / 输入长度13全部通过。单4090、CPU affinity `[0,1,28,33]` / 线程池1，模型加载missing/unexpected均0。原[数据验收](../logs/analysis/retrieval_content_seed42_full_2026-11-07_v1/smoke/acceptance.json) SHA256 `b298bf9852ae7b5cffe6b69aca4c3ab26b3860ff31f3a2ebe6fbfec3b89e7638`；原[配对报告](../logs/analysis/retrieval_content_seed42_full_2026-11-07_v1/smoke/paired.json) SHA256 `e4a693b079e87a890512caa2d6ef5096f4e60956cbd2ef0fabe76d1850ad69ab`。
+
+独立重审发现原full门禁的浮点精确相等误拒：78个区间仅 `sim10_minus_mask0:raw / ndcg@5` 下界从0.09279855887629447变为0.09279855887629448（1 ULP，1.3878×10⁻¹⁷）；主比较、全部点估计、其他区间与来源字段一致，同机两次复算一致。没有证明具体硬件/BLAS原因；不是预测或数据错配。作者同意只修复验收比较并继续：绝对容差1e-12 / 相对容差0，仅白名单有限统计float，结构、类型、身份、计数、配置及哈希仍exact；不覆盖原报告，不重跑模型短测。
+
+11-08修复与重审完成：比较器及测试提交 `341971b`，独立验收扩展及测试提交 `cf40004`；执行树干净，仅新增5文件，原43份执行源码未改。最终289项回归通过（21.48秒、单核），包括严格数值白名单、NaN/Inf拒绝、来源/资源/哈希绑定、验收禁止覆盖、任务ID缺失拒绝与异常恢复。两次独立CPU重审原65条产物均通过，仅上述1 ULP差异；[重审收据](../logs/training_launch/retrieval_content_seed42_full_2026-11-08_v2/smoke_reacceptance.json) SHA256 `284134073f33bd089bb1b62a6874973b3f57b967b136587ea21b91d39abae52d`。
+
+00:57:58提交唯一全量任务 **157058**；00:58核验 **PENDING / Priority**，暂无预计启动时间，没有后继任务。保持1×4090 / 4CPU / 24GiB、2,061,101条及上述五策略。计算节点先重新CPU验收旧smoke，再依次运行全量推理、产物审计、配对统计与扩展来源验收；全部通过才算完成。推理源码仍绑定 `1c8fbe9`，验收扩展另绑定 `cf40004`，不把新增验收源码混称旧版本。新[扩展manifest](../logs/training_launch/retrieval_content_seed42_full_2026-11-08_v2/manifest.json) SHA256 `1687f3536f5b32de08964b9855a5c7a506f3121d3d0c82fe4a0f8c8436cc025a`；[完整启动记录](../logs/training_launch/retrieval_content_seed42_full_2026-11-08_v2/launch.json)。本次没有新增训练、其他seed、选权或GPU短测。
 
 ## Seed42 检索布局 / 内容诊断（2026-11-07）
 
