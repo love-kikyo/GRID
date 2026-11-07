@@ -4,7 +4,9 @@
 
 ## Seed42 检索布局 / 内容诊断（2026-11-07）
 
-作者在审阅负面长度扫描后批准两项小规模诊断。固定 seed42 best / C20 / β=0.50；65条短测后取冻结 test 前16,384条。七设置为 sim10、固定10槽 mask0/mask5、同10槽 recent10/random10、内容相同但物理缩短的 short0/short5。不重训、不扩seed，不作正式全量效果或参数选择。执行副本 `GRID-sensitivity-multiseed` 分支 `wsdm27-retrieval-diagnostics`；目前实现与回归中，尚未提交新任务。
+作者在审阅负面长度扫描后批准两项小规模诊断。固定 seed42 best / C20 / β=0.50；65条短测后取冻结 test 前16,384条。七设置为 sim10、固定10槽 mask0/mask5、同10槽 recent10/random10、内容相同但物理缩短的 short0/short5。不重训、不扩seed，不作正式全量效果或参数选择。执行副本 `GRID-sensitivity-multiseed` 分支 `wsdm27-retrieval-diagnostics`，源码冻结 `d34aab2`；原模型源码不改。本地211项回归及独立代码复核通过。
+
+15:03已提交并运行65条短测 **156454**；仅此项1×4090 / 4 CPU / 24 GiB，30分钟为上限而非预计耗时。诊断须等短测独立验收后再提交。证据：[manifest](../logs/training_launch/retrieval_diagnostic_seed42_2026-11-07_v1/manifest.json)（SHA256 `160a1a3efa4f9a7c37c2e3effc16c5282eaf71495c25c4249ba15836b98a1e93`）、[启动记录](../logs/training_launch/retrieval_diagnostic_seed42_2026-11-07_v1/launch.json)。
 
 ## 已完成：三 seed 推理扫描结果（2026-11-07）
 
