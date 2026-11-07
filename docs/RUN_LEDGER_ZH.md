@@ -8,6 +8,8 @@
 
 本地389项回归通过（23.68秒，单核）、两份独立交叉检查无阻塞。23:26提交65条端到端短测 **156937**，包括真实推理、产物验收和13对×6指标配对统计；须独立验收后再提交一项全量，当前全量尚未提交。每项1×4090 / 4CPU / 24GiB；smoke上限30分钟，全量上限6小时（预计2–3小时，上限不是预计用时）。证据：[manifest](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/manifest.json)，SHA256 `b3bdced637c5ef0744b7452896dade6b2f89a69003c76e75befab2a56c503322`；[启动记录](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/launch.json)。
 
+23:30资源核验：156937仍PENDING，调度原因Priority；暂估11-08 04:10:22开始，并非保证。两个4090节点虽有部分GPU未分配，可调度内存分别仅11,104MiB / 3,872MiB，均不足本任务24GiB；不能用物理FreeMem替代调度预留。历史同模型156362.0 / 156461.0的MaxRSS分别18,245,824KiB / 18,293,380KiB（约17.4GiB），因此未为了提前运行而压低内存申请，也未迁移、重复提交或排入全量。短测尚无推理/统计产物，下一步是其结束后独立验收。
+
 ## Seed42 检索布局 / 内容诊断（2026-11-07）
 
 作者在审阅负面长度扫描后批准两项小规模诊断。固定 seed42 best / C20 / β=0.50；65条短测后取冻结 test 前16,384条。七设置为 sim10、固定10槽 mask0/mask5、同10槽 recent10/random10、内容相同但物理缩短的 short0/short5。不重训、不扩seed，不作正式全量效果或参数选择。执行副本 `GRID-sensitivity-multiseed` 分支 `wsdm27-retrieval-diagnostics`，源码冻结 `d34aab2`；原模型源码不改。本地211项回归及独立代码复核通过。
