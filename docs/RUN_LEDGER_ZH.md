@@ -4,7 +4,9 @@
 
 ## Seed42 五组固定槽全量验证（2026-11-07）
 
-作者批准固定原best/C20/β=0.50，单seed完整test 2,061,101条的 sim10/recent10/random10/mask5/mask0 对照。仅新增入口与测试，执行分支 `wsdm27-retrieval-content-full`；旧模型、诊断源码与导出保持不动。五策略共用fresh beam，sim10中心同次重算；主要比较为sim10−recent10的fusion NDCG@10，其他raw/fusion与@5/10/20作辅助，全部报告用户配对区间。当前实现/回归中，尚未提交新任务；先65条端到端短测（含配对统计）验收，再提交一项全量，1×4090 / 4CPU。不是新holdout，也不把单seed用户区间当作训练seed稳健性。
+作者批准固定原best/C20/β=0.50，单seed完整test 2,061,101条的 sim10/recent10/random10/mask5/mask0 对照。仅新增入口与测试，执行分支 `wsdm27-retrieval-content-full`，源码冻结 `1c8fbe9`；旧模型、诊断源码与导出保持不动。五策略共用fresh beam，sim10中心同次重算；主要比较为sim10−recent10的fusion NDCG@10，其他raw/fusion与@5/10/20作辅助，全部报告用户配对区间。不是新holdout，也不把单seed用户区间当作训练seed稳健性。
+
+本地389项回归通过（23.68秒，单核）、两份独立交叉检查无阻塞。23:26提交65条端到端短测 **156937**，包括真实推理、产物验收和13对×6指标配对统计；须独立验收后再提交一项全量，当前全量尚未提交。每项1×4090 / 4CPU / 24GiB；smoke上限30分钟，全量上限6小时（预计2–3小时，上限不是预计用时）。证据：[manifest](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/manifest.json)，SHA256 `b3bdced637c5ef0744b7452896dade6b2f89a69003c76e75befab2a56c503322`；[启动记录](../logs/training_launch/retrieval_content_seed42_full_2026-11-07_v1/launch.json)。
 
 ## Seed42 检索布局 / 内容诊断（2026-11-07）
 
