@@ -8,6 +8,8 @@ Seed42 执行分支：`wsdm27-inference-sensitivity-seed42`（11-07 从 `wsdm27-
 
 11-07 后续：作者批准seed42五组固定槽全量验证，从诊断版本 `d34aab2` 新建 `wsdm27-retrieval-content-full`；新增全量包装、验收与配对统计，冻结诊断文件不修改。仍一次一项、1 GPU / 4 CPU，不扩其他seed或训练。
 
+11-08 后续授权：作者明确追加五策略对照的seed43/44，并要求独立并行排队，不设相互依赖。新工作副本 `GRID-retrieval-content-multiseed` 从 `cf40004` 建立分支 `wsdm27-retrieval-content-multiseed`；seed42原副本与已排队任务不动。仅本次三seed固定槽对照允许合计最多3 GPU / 12 CPU，各项仍1 GPU / 4 CPU / 24GiB；新增两seed各自短测通过才自动进入全量。此授权覆盖上段最初“不扩seed”的边界，不泛化为并行训练或重跑已完成的长度扫描。
+
 沿用已确认的小步提交原则：一个逻辑完整、可以单独解释和回退的改动做一次 commit；不按聊天轮次或机械行数提交。
 
 - 一个 bug 修复与对应测试放一起；不要拆成“先修复、以后补测试”。

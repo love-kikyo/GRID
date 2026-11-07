@@ -1,6 +1,26 @@
 # Run 台账
 
-最后更新：2026-11-08（Asia/Shanghai）。当前推进seed42五组全量验证；三seed推理敏感性和小规模诊断已完成。作业状态以相应时间点核验为准，退出码为0不自动代表验收通过。
+最后更新：2026-11-08（Asia/Shanghai）。当前五组固定槽全量验证已扩至seed42/43/44，三项独立排队；原推理敏感性和小规模诊断已完成。作业状态以相应时间点核验为准，退出码为0不自动代表验收通过。
+
+## Seed43 / 44 五组固定槽全量扩展（2026-11-08）
+
+作者澄清新增两项指检索对照而非Pairwise，并明确确认并行等待。新执行副本 `GRID-retrieval-content-multiseed` / 分支 `wsdm27-retrieval-content-multiseed` 从seed42验收扩展版本 `cf40004` 建立；适配与测试提交 `eb29d7f`，独立流水线提交 `26c68901751c7256ca76f537f27a8a4eb4422fd8`。仅参数化训练seed与对应资产身份、集成已验收的浮点比较规则；模型、检索核心、配对统计算法均未改变，seed42原工作树保持干净不动。
+
+本地507项回归通过（35.63秒、单核2），独立27项启动/worktree测试通过。各新manifest独立load验证47份执行源码、10份输入元数据；43绑定132786 best100000，44绑定134298 best80000，各自validation β=0.50，推理/内容随机seed42、bootstrap seed2027保持不变。准备阶段只读取小文件，不重新加载checkpoint或扫描大H5。
+
+01:24:51各提交一项完整流水线；01:25核验如下，均无依赖字段，资源可用时可与seed42并行（不是按afterok串联）：
+
+| Seed | Job | 此次范围 | 状态 |
+| --- | --- | --- | --- |
+| 42 | 157058（原任务） | 复用156937短测，再五策略全量 | PENDING / Priority；调度暂估11-08 16:36开始，非保证 |
+| 43 | 157086 | 新65条短测及验收→五策略全量及审计/统计 | PENDING / Priority；暂无预计启动时间 |
+| 44 | 157087 | 同seed43，各自独立资产与输出 | PENDING / Priority；暂无预计启动时间 |
+
+每项1×4090 / 4CPU / 24GiB，三项合计最多3GPU / 12CPU；新增任务不锁单节点，使用rtx4090分区匹配资源。每项全量仍2,061,101条，预计启动后约2–3小时、不含排队；6小时为作业上限，不是预计用时。新增job顺序执行节点回归、smoke推理/审计/统计、full入口再次重审smoke、full推理/审计/统计；任何阶段失败即停，当前尚无新增GPU短测或全量结果。
+
+01:27启动核验：**157086已RUNNING**，01:25:16在aias-compute-4启动，AllocCPUS=4 / 24GiB；`.0`节点回归304 passed（28.52秒），COMPLETED / 0:0。`.1`正在短测推理初始化，日志CPU绑定mask `0x3000000000003`（4个逻辑CPU），无致命错误；尚未生成smoke验收或进入full，不能将节点单测通过当作模型短测通过。157058 / 157087仍PENDING / Priority，三项dependency均为空。
+
+证据：seed43 [manifest](../logs/training_launch/retrieval_content_seed43_full_2026-11-08_v1/manifest.json) SHA256 `31efa966e1974187c83139d2d47812b344f15534daebffe92fab647a9df046b3`、[启动记录](../logs/training_launch/retrieval_content_seed43_full_2026-11-08_v1/launch.json)；seed44 [manifest](../logs/training_launch/retrieval_content_seed44_full_2026-11-08_v1/manifest.json) SHA256 `3ddfc5a9c3c165dba87eca4920df5ddbd6dd4192e77089993a7eaf9d8dbe248f`、[启动记录](../logs/training_launch/retrieval_content_seed44_full_2026-11-08_v1/launch.json)。五策略、固定候选控制和主要比较沿用下节；不重训、不选新β、不重复M长度扫描，不据test挑checkpoint。
 
 ## Seed42 五组固定槽全量验证（2026-11-07）
 
