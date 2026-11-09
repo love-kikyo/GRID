@@ -1,8 +1,88 @@
 # Run 台账
 
-最后更新：2026-11-08（Asia/Shanghai）。当前五组固定槽全量验证已扩至seed42/43/44，三项独立排队；原推理敏感性和小规模诊断已完成。作业状态以相应时间点核验为准，退出码为0不自动代表验收通过。
+最后更新：2026-11-09（America/Denver）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部完成并通过验收，当前队列为空。四模型正式主表保持冻结，不与重新导出的扫描/诊断中心结果混用。
 
-## Seed43 / 44 五组固定槽全量扩展（2026-11-08）
+## 结果索引
+
+| 实验 | 结论与范围 | 数字入口 |
+| --- | --- | --- |
+| 四模型正式主实验 | SID / Listwise / Pointwise / Separate-small，三seed完整test；Listwise四项均值最高 | [正式主表](#三-seed-主表) |
+| 固定十槽检索内容对照 | 三seed完整test；相似度选取的融合指标小幅优于最近历史，raw并非始终更优 | [最新全量结果](#三-seed-固定槽检索结果) |
+| M与beam推理扫描 | 三seed完整test；物理长度改变会退化；C40提高覆盖与最终指标，不据此改主表 | [扫描总表](#已完成三-seed-推理扫描结果2026-11-07) |
+| 布局诊断 | seed42前16,384条；同内容固定槽与物理缩短差别大 | [诊断七设置](#seed42-检索布局--内容诊断2026-11-07) |
+| 统一硬件效率 | seed44单4090；cache加速自身实现，但Joint比Separate-small慢且显存更大 | [效率表](#已验收统一硬件效率复测) |
+| 自然beam命中分组 | 三seed描述性分析，不是生成/排序贡献的因果拆解 | [分组结果](#已验收三-seed-自然-beam-命中分组) |
+| SIM / LIGER探索 | SIM仅seed42；LIGER无可并入正式test主表的结果 | [探索结论](#外部-baseline-探索结果) |
+
+所有效果指标均为0–1尺度。三seed标准差描述训练随机性；每seed用户配对CI描述该模型在本test上的用户重采样不确定性，两者不合并。正式Separate是small，并没有新协议下Separate-large或Pairwise的三seed结果。原始`logs/`资产不随Git上传；表格可直接审阅，最新检索对照的全精度数字另见 [受版本控制的数值快照](results/retrieval_content_multiseed_2026-11-09.json)。
+
+## 三 seed 固定槽检索结果
+
+三项作业及各step均由`sacct`确认COMPLETED / 0:0。每seed五份预测各2,061,101条、2,061,101唯一用户，`run=complete`、`acceptance=passed`、`paired=passed`；每项13对×6指标。Seed42另通过扩展来源验收。固定各自Joint-listwise best、自然beam20、validation β=0.50和十个物理槽；同seed五策略共享本次生成的候选与分数，不使用旧导出拼接。
+
+| Seed | Job | 节点 | 总作业耗时 | 验收 |
+| --- | --- | --- | --- | --- |
+| 42 | 157058 | aias-compute-2 | 2h12m27s | 全量产物、统计、扩展来源通过 |
+| 43 | 157086 | aias-compute-4 | 2h09m19s | 独立65条短测及全量产物、统计通过 |
+| 44 | 157087 | aias-compute-4 | 2h08m38s | 独立65条短测及全量产物、统计通过 |
+
+每项1×RTX4090 / 4CPU，库线程1；不同节点作业耗时不作为统一硬件效率结论。以下均值 ± 样本标准差来自三个训练seed（ddof=1）；完整Recall/NDCG@5/10/20及各seed值在数值快照中。
+
+| 策略 | Raw NDCG@10 | Fusion NDCG@10 |
+| --- | ---: | ---: |
+| 共同beam-only | — | 0.258887 ± 0.000703 |
+| sim10 相似度10项 | 0.256348 ± 0.001435 | 0.262799 ± 0.000605 |
+| recent10 最近10项 | 0.256669 ± 0.001051 | 0.262442 ± 0.000623 |
+| random10 随机10项 | 0.208885 ± 0.009209 | 0.259865 ± 0.001226 |
+| mask5 固定十槽保留前5项 | 0.248386 ± 0.003063 | 0.262496 ± 0.000561 |
+| mask0 固定十槽全部屏蔽 | 0.081661 ± 0.049801 | 0.258329 ± 0.000984 |
+
+预先固定的主要比较为 **sim10 − recent10 的融合NDCG@10**。95%区间来自每seed内部5,000次用户配对bootstrap，随机种子2027；其他比较为辅助探索，不声称多重检验同时显著。
+
+| Seed | sim10 | recent10 | 差值 | 95%用户配对CI |
+| --- | ---: | ---: | ---: | --- |
+| 42 | 0.262132237 | 0.261738609 | +0.000393627 | [+0.000363807, +0.000422662] |
+| 43 | 0.263311015 | 0.262923895 | +0.000387120 | [+0.000356204, +0.000418044] |
+| 44 | 0.262954690 | 0.262661998 | +0.000292692 | [+0.000260574, +0.000324135] |
+
+三seed差值均值 ± 样本SD为 **+0.000357813 ± 0.000056490**，即约+0.0358个百分点；按均值之比，相对recent10约+0.136%。三个seed同向且各自CI均高于零，支持**融合下的小幅稳定收益**，不是大幅优势，也不是跨训练seed显著性检验。
+
+- sim10融合相对自身beam在三个seed均提高（分别+0.004055935、+0.004045646、+0.003633891）；但raw相对recent10在seed42/44较低、seed43较高，不能说相似度选取全面更优。
+- mask5融合接近sim10；mask0融合相对beam两负一正。mask0仍保留SID历史KV cache，既不是完全无历史模型，也不替代匹配的无检索重训。
+- recent/random选定集合后仍按候选相似度排序；控制的是选取集合，不是彻底取消相似度运算。固定槽实验隔离了物理长度变化，但不证明原M扫描退化只有一个内部原因。
+- 全量test含先前观察的小子集，不称为新独立holdout；不据test重选β、checkpoint或正式主配置。五策略覆盖率相同，三seedcoverage@20均值为0.291023422，排序变化不能解释为候选覆盖变化。
+
+本轮复核小JSON来源哈希、状态、样本数及汇总算术；全量H5逐行审计和bootstrap由上述已完成作业执行，本次不重复大文件扫描或模型推理。源目录为 `logs/analysis/retrieval_content_seed42_full_2026-11-08_v2/full/`、`retrieval_content_seed43_full_2026-11-08_v1/full/`、`retrieval_content_seed44_full_2026-11-08_v1/full/`；每目录含`run.json`、`acceptance.json`和`paired.json`，来源SHA256保存在数值快照。
+
+## 外部 baseline 探索结果
+
+这些结果单列，不并入四模型三seed正式主表。作者已决定停止继续扩展，下面是完成情况，不是新的待提交训练。
+
+**SIM-style独立重排：seed42完整test，2,061,101条。** 独立validation选得β=0.09；SID teacher及同候选对照的口径保持固定。
+
+| 排序 | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| SID beam | 0.267156 | 0.271581 | 0.250433 | 0.251868 |
+| SIM纯ESU | 0.071994 | 0.141784 | 0.042616 | 0.064888 |
+| SIM融合 β=0.09 | 0.267155 | 0.271563 | 0.250434 | 0.251863 |
+| Separate-small融合 β=0.50 | 0.272527 | 0.274050 | 0.254558 | 0.255053 |
+
+SIM融合减SID的NDCG@10差值为−0.000004174，95%配对CI为[−0.000014982,+0.000006520]；四项指标区间均跨零。未发现明确提升，因此不扩seed；不把它写成“不可比较”或“已证明等价”。来源：[完整配对报告](../logs/analysis/paired_evaluation/paired_report_sim_seed42_full_v1.json)，SHA256 `cfd50605a0266fa6e36ceae45f2ee79996dce0c73bab01d522213dcba51a95f9`；[验收](../logs/analysis/paired_evaluation/paired_sim_seed42_acceptance_v1.json)。
+
+**LIGER：没有预算匹配、可进入正式test主表的结果。**
+
+| 阶段 | 完成情况 | 能支持的结论 |
+| --- | --- | --- |
+| 原最终GT监督版 | 完成2 epoch；第3 epoch取消；347,416条validation的hybrid R@10=0.039296、N@10=0.034568 | 这是validation而非test；不能与正式test表直接对比 |
+| 实现修复后的8192步拟合诊断 148939 | 8190次成功更新、2次跳过；fit128条R/N均1.0，reserved128条均0 | 小集可拟合，不代表泛化解决；未读validation/test |
+| 多历史前缀监督短测 149019 | 前缀监督、新进程恢复验收通过 | 实现门禁通过，不是正式模型完成训练 |
+| 效率探针 149742 | cached4096约38.17 prefix样本/s；单4090一遍45,996,113前缀粗估334.74h | 仅3个预热后步骤的外推，不是实测整轮/收敛时间，无多卡实测 |
+
+后续诊断仍标记`formal_training_ready=false`，无自动后继；不恢复旧第3轮、不将不同实现的训练轮次拼接。来源：[原epoch02 validation](../logs/train/runs/liger_train_seed42_epoch02_2026-10-21_v1/validation-epoch02/report.json)、[8192步验收](../logs/training_launch/liger_learning_budget_2026-10-22_v3/budget_acceptance.json)、[前缀门禁](../logs/training_launch/liger_prefix_gate_2026-10-22_v3/prefix_acceptance.json)、[效率验收](../logs/training_launch/liger_efficiency_2026-10-23_v4/efficiency_acceptance.json)（SHA256 `c74ad3e93542bf9277318ff157f704dac130871b029dca1cd226b22f07c25bc6`）。
+
+## 历史启动记录：Seed43 / 44 五组固定槽全量扩展（2026-11-08）
+
+以下排队/运行状态是启动时快照，三项最终完成情况见上方最新全量结果。
 
 作者澄清新增两项指检索对照而非Pairwise，并明确确认并行等待。新执行副本 `GRID-retrieval-content-multiseed` / 分支 `wsdm27-retrieval-content-multiseed` 从seed42验收扩展版本 `cf40004` 建立；适配与测试提交 `eb29d7f`，独立流水线提交 `26c68901751c7256ca76f537f27a8a4eb4422fd8`。仅参数化训练seed与对应资产身份、集成已验收的浮点比较规则；模型、检索核心、配对统计算法均未改变，seed42原工作树保持干净不动。
 
@@ -22,7 +102,9 @@
 
 证据：seed43 [manifest](../logs/training_launch/retrieval_content_seed43_full_2026-11-08_v1/manifest.json) SHA256 `31efa966e1974187c83139d2d47812b344f15534daebffe92fab647a9df046b3`、[启动记录](../logs/training_launch/retrieval_content_seed43_full_2026-11-08_v1/launch.json)；seed44 [manifest](../logs/training_launch/retrieval_content_seed44_full_2026-11-08_v1/manifest.json) SHA256 `3ddfc5a9c3c165dba87eca4920df5ddbd6dd4192e77089993a7eaf9d8dbe248f`、[启动记录](../logs/training_launch/retrieval_content_seed44_full_2026-11-08_v1/launch.json)。五策略、固定候选控制和主要比较沿用下节；不重训、不选新β、不重复M长度扫描，不据test挑checkpoint。
 
-## Seed42 五组固定槽全量验证（2026-11-07）
+## 历史启动记录：Seed42 五组固定槽全量验证（2026-11-07）
+
+以下保留短测、门禁修复和排队记录；157058最终已完成并验收，当前没有待运行任务。
 
 作者批准固定原best/C20/β=0.50，单seed完整test 2,061,101条的 sim10/recent10/random10/mask5/mask0 对照。仅新增入口与测试，执行分支 `wsdm27-retrieval-content-full`，源码冻结 `1c8fbe9`；旧模型、诊断源码与导出保持不动。五策略共用fresh beam，sim10中心同次重算；主要比较为sim10−recent10的fusion NDCG@10，其他raw/fusion与@5/10/20作辅助，全部报告用户配对区间。不是新holdout，也不把单seed用户区间当作训练seed稳健性。
 
@@ -77,16 +159,16 @@
 | 43 | 156371 / 1h52m54s | 156373 / 1h55m15s | 3h48m09s |
 | 44 | 156370 / 1h54m35s | 156372 / 1h55m24s | 3h49m59s |
 
-三seed均值（0–1尺度；本表不另列SD，逐seed原值见各自验收报告）：
+三seed均值（0–1尺度）；融合NDCG@10另列样本SD（ddof=1），2026-11-09从各seed既有验收报告汇总，未重跑推理：
 
-| C / M | Beam NDCG@10 | Raw NDCG@10 | Fusion NDCG@10 | Fusion Recall@10 |
-| --- | --- | --- | --- | --- |
-| 20 / 0 | 0.25889 | 0.08984 | 0.25873 | 0.28572 |
-| 20 / 5 | 0.25889 | 0.07996 | 0.25870 | 0.28580 |
-| 20 / 10 | 0.25889 | 0.25635 | 0.26280 | 0.28852 |
-| 20 / 20 | 0.25889 | 0.05997 | 0.25815 | 0.28590 |
-| 10 / 10 | 0.25838 | — | 0.26101 | 0.28472 |
-| 40 / 10 | 0.25907 | — | 0.26410 | 0.29165 |
+| C / M | Beam NDCG@10 | Raw NDCG@10 | Fusion NDCG@10 ± SD | Fusion Recall@10 | Coverage@C |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20 / 0 | 0.258887 | 0.089839 | 0.258726 ± 0.000881 | 0.285723 | 0.291023 |
+| 20 / 5 | 0.258887 | 0.079964 | 0.258705 ± 0.000676 | 0.285803 | 0.291023 |
+| 20 / 10 | 0.258887 | 0.256348 | 0.262799 ± 0.000605 | 0.288520 | 0.291023 |
+| 20 / 20 | 0.258887 | 0.059967 | 0.258145 ± 0.000602 | 0.285903 | 0.291023 |
+| 10 / 10 | 0.258380 | 0.258900 | 0.261013 ± 0.000848 | 0.284715 | 0.284715 |
+| 40 / 10 | 0.259071 | 0.245896 | 0.264100 ± 0.000474 | 0.291649 | 0.297825 |
 
 M10三个seed均最好，但其他长度raw排序大幅退化，不只是β问题；M同时改变位置/长度，检索内容贡献尚未隔离。C40较C20三个seed均提升，平均fusion Recall@10相对+1.08%、NDCG@10相对+0.50%；不据test重选原主表配置，无新增CI/显著性结论。原始结果：`logs/analysis/inference_sensitivity_seed{42,43,44}_2026-11-07_v1/full_{retrieval,beam}/acceptance.json`；旧主表不覆盖。
 
