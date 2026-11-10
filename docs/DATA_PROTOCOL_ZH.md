@@ -102,6 +102,8 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 
 作者允许清理可重新下载的原始二进制和已失效的中间TFRecord，前提是保留正式数据的重建链。为此新增版本管理的 [固定来源清单](repro/taobao_history_last_user_v1_sources.json) 与 [下载／校验入口](repro/download_taobao_sources.py)：清单包含161个train、49个test文件的精确名称、大小和SHA256；另列13个可选feature-map文件、固定SID/item2row哈希、构建代码哈希、参数、计数和环境版本。
 
+11-10 16:26（UTC+08）已完成精确清理：210个上游Parquet、13个feature-map和496个旧中间TFRecord永久删除，未建立备份；正式46个TFRecord、固定编码资产、源代码及小型追溯元数据保留。逐文件结果见[清理明细](results/storage_cleanup_2026-11-10.json)，复现时按以下入口重新下载，不依赖已删除的旧中间集。下载入口17项离线测试通过，不等同于全量数据重建验收。
+
 本轮实际访问了Hugging Face固定revision的官方文件树，223个本地来源文件的路径、大小及ETag均与远端一致；train/test各一个分片及SCL keys下载端点的一字节请求返回HTTP206。210个分片和SCL keys/values的本地字节身份复用139022全量验收并复查当前size/mtime；另外11个feature-map本轮重算内容哈希并匹配下载ETag。**这不是本轮重新下载并全量构建的声明，也不能保证上游服务永久可用。**
 
 恢复步骤：

@@ -1,19 +1,39 @@
 # Run 台账
 
-最后更新：2026-11-10（本次服务器记录 UTC+08:00）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部验收；新增当前版本随机初始化Listwise seed42，状态见下节。四模型正式主表保持冻结，不与新训练或诊断中心结果混用。
+最后更新：2026-11-10（本次服务器记录 UTC+08:00）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部验收；当前版本随机初始化Listwise seed42已进入正式训练。已批准存储清理完成，记录见下节。四模型正式主表保持冻结，不与新训练或诊断中心结果混用。
+
+## 2026-11-10 已批准存储清理
+
+作者批准原建议A1–A5，并追加“原始文件和中间产物可清理，须能从重新下载原始文件重建最终数据”。仅按逐文件清单删除，没有删除整个数据根目录。**753个文件永久删除，按删除前实际分配块释放131,847,964,672字节，即122.792986GiB；未建立隔离副本。**
+
+| 已执行范围 | 文件数 | 实际释放GiB |
+| --- | ---: | ---: |
+| A1–A4：旧20k进度、CPU恢复短测及LIGER周期/旧诊断checkpoint | 23 | 13.227418 |
+| A5：旧错误协议的预测H5/NPZ | 11 | 6.339979 |
+| Taobao旧曝光行粒度中间TFRecord | 496 | 33.115300 |
+| 上游joined Parquet：161 train + 49 test | 210 | 63.489902 |
+| 上游可选feature-map二进制 | 13 | 6.620388 |
+
+完整路径、删除前身份、分组和原审计记录哈希见受Git管理的[清理明细](results/storage_cleanup_2026-11-10.json)。执行记录保留在`logs/cleanup/2026-11-10/{approved_A_execution,approved_source_execution}/`，含逐文件删除journal；原提案和历史验收不改写。旧来源全量审计、旧checkpoint恢复审计中的部分输入如今按批准删除，不代表其历史报告仍可直接在当前文件树重跑。
+
+- **保留**整个`GRID/data/`、全部12个主表checkpoint、12份test与9份validation预测、三seed参数扫描及固定槽预测、当前158562训练输出。可选B1/B2未获批准，SIM及LIGER代表性模型/缓存未删。
+- **保留**整个`Taobao/cache/`（尤其item2row）、`Taobao/src/`、原始README、train/test元数据、下载`.metadata`、既有配置/指标/必要日志。删除前后A阶段399个、原始数据阶段906个保护文件的路径身份/大小/mtime等检查通过；不是本轮对所有大文件重算内容哈希。
+- 清理后工作区单独`du -x -B1 -s`约127.95GiB；GRID约126.85GiB，Taobao约1.09GiB。训练日志持续增长，数值仅为11-10 16:30前后的快照，不将共享文件系统的可用空间变化归因于本次清理。
+- 原始文件已核对上游固定revision的223条路径、大小及ETag，3个下载端点实际请求通过；来源SHA256、下载入口及17项离线测试已在`bbf5664`保存。[数据协议及恢复命令](DATA_PROTOCOL_ZH.md#11-10原始副本清理后的下载与恢复)明确：固定上游 + 保留SID/item2row → 样本内容/顺序/划分重建，不保证新压缩文件逐字节一致，也不承诺从重新聚类恢复同一SID。本轮未全量重新下载/构建，不能保证上游永久可用。
+- 已删实验权重和旧预测无本地恢复副本；原始文件需要重新下载。旧中间TFRecord不属于正式构建链，无需恢复它们才能重建正式数据。训练代码、数据协议及主表数字未改。
 
 ## 当前版本随机初始化 Listwise
 
-作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。**158562已于11-10 15:41:58（UTC+08）提交，15:42查询为PENDING / Resources；尚未开始短测或正式训练。**
+作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。158562于11-10 15:41:58（UTC+08）提交，15:42曾为PENDING / Resources；15:49:17在aias-compute-2开始运行。**三rank两步短测验收通过，15:56:25独立启动正式训练；16:27查询为RUNNING。** 短测12份审计JSON、正式run初始化/训练开始/前两步更新9份JSON均`passed`；正式初始化记录checkpoint/resume均为null、构造参数未被替换、optimizer初始为空。此为入口及实际更新证据，尚不是训练质量或最终checkpoint验收。
 
 - 入口：`run_click_listwise_random_init.sh`。当前数据/模型/损失不改；`ckpt_path=null`、`model.load_only_weights=false`、`model.manual_ckpt_path=null`，禁用自动重启callback且拒绝已有run目录。
 - 3×4090、整项3CPU、60GiB；两步真实DDP短测验收通过后，同一资源分配内独立启动正式训练。短测不存checkpoint，正式训练不接续短测参数。
 - 保持Joint阶段120000步上限及原早停、调度、batch；不补算teacher步数，不声称总训练预算已经与预训练方案匹配。训练内test关闭，best验收后再运行规范的validation选权及全量test。
 - 两步短测和正式run均记录实际初始化与前两步更新证据；旧9月Joint从teacher启动的结论不因新增随机初始化实验而改写。
-- 资源检查时用户队列为空；4090节点虽有空闲GPU，但没有单节点同时满足3GPU/60GiB的可分配资源，预计排队，不迁移到3090或削减内存规避等待。
+- 提交前资源检查时用户队列为空；当时没有单节点同时满足3GPU/60GiB的可分配资源，因此先排队，未迁移到3090或削减内存。之后按原资源申请正常启动。
 - 审计能力提交 `d45e0bc`，启动入口及范围记录提交 `1e1449d`；提交时工作树干净。49项相关pytest通过，最终启动器改动后7项再验通过，shell语法及diff检查通过；独立审查无阻断问题。作业获得资源后会再运行同组CPU测试，不把这些单测等同于真实三卡短测已经通过。
 - 提交命令：`sbatch --parsable --export=ALL,GRID_RANDOM_INIT_COMMIT=1e1449d2613ac245323660af68c3c377153b90a7 run_click_listwise_random_init.sh 42`。Slurm确认 `NumCPUs=3 / NumTasks=3 / CPUsPerTask=1 / gpu:4090:3 / mem=60G`，仅此一项作业，没有依赖队列或额外seed。
-- 提交记录：`logs/training_launch/listwise_random_seed42_158562.json`；原始日志 `logs/slurm/GRID-List-Random42-158562.{out,err}`；审计 `logs/random_init_audit/seed42_158562/{smoke,formal}/`；preflight `logs/training_preflight/listwise_random_seed42_158562.json`。实际run为 `logs/train/runs/<启动日期>/{random-init-smoke-listwise-seed42-158562,click-listwise-random-seed42-158562}`，不把提交日期当作尚未发生的启动日期。
+- 提交记录：`logs/training_launch/listwise_random_seed42_158562.json`；原始日志 `logs/slurm/GRID-List-Random42-158562.{out,err}`；审计 `logs/random_init_audit/seed42_158562/{smoke,formal}/`；preflight `logs/training_preflight/listwise_random_seed42_158562.json`。实际run已建立于 `logs/train/runs/2026-11-10/{random-init-smoke-listwise-seed42-158562,click-listwise-random-seed42-158562}`。节点49项回归再次通过，短测聚合验收确认三rank初始参数一致；不把两步结果当作完整模型指标。
 
 ## 结果索引
 
