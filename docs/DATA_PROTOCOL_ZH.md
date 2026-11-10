@@ -98,6 +98,21 @@ TFRecord 仅含 `user_id`、`sequence_data`。后者仍包含最后的目标项�
 
 以下命令复现的是“同一上游 shards + 同一编码资产 → 处理后的样本”，不是已完成第三方独立复现的声明。发布包需随附新增来源清单 / 核验报告和固定编码资产；本地 `logs/` 中的记录不会随普通 Git clone 自动提供。
 
+### 11-10：原始副本清理后的下载与恢复
+
+作者允许清理可重新下载的原始二进制和已失效的中间TFRecord，前提是保留正式数据的重建链。为此新增版本管理的 [固定来源清单](repro/taobao_history_last_user_v1_sources.json) 与 [下载／校验入口](repro/download_taobao_sources.py)：清单包含161个train、49个test文件的精确名称、大小和SHA256；另列13个可选feature-map文件、固定SID/item2row哈希、构建代码哈希、参数、计数和环境版本。
+
+本轮实际访问了Hugging Face固定revision的官方文件树，223个本地来源文件的路径、大小及ETag均与远端一致；train/test各一个分片及SCL keys下载端点的一字节请求返回HTTP206。210个分片和SCL keys/values的本地字节身份复用139022全量验收并复查当前size/mtime；另外11个feature-map本轮重算内容哈希并匹配下载ETag。**这不是本轮重新下载并全量构建的声明，也不能保证上游服务永久可用。**
+
+恢复步骤：
+
+1. 从Git获得当前构建代码、下方命令及来源清单；下载入口只依赖标准库和下载模式下的`huggingface_hub`，不导入训练框架。
+2. 另行携带保留的 `Taobao/cache/sid_item2row_scl_emb_int8_p90.pkl` 和正式SID数组。它们是固定编码资产，不能仅靠Git clone或重新聚类替代。整个`Taobao/cache/`、原始README、下载`.metadata`、`Taobao/src/`及历史生成日志保留。
+3. 按下方新增下载命令恢复210个joined Parquet并逐文件校验SHA256。正式样本构建不需要旧`Taobao/grid_tfrecord`，也不需要重新下载feature maps；如要复查原始特征，下载命令另加`--include-feature-maps`。
+4. 在**新输出目录**执行下方build → audit → preflight，核对6,573,674 / 347,416 / 2,061,101条和33 / 2 / 11个分片。逐样本内容、顺序和用户集合是复现目标；不要求压缩TFRecord或新manifest字节一致。
+
+新下载的mtime、下载缓存元数据与本地路径会变化，不能拿旧`source_snapshot`的mtime门禁直接判定重下载失败，也不能改旧manifest伪装原构建。旧来源报告仅保留历史证据，新下载按本页SHA256清单验收并产生新构建记录。训练前核验器只依赖正式TFRecord、其manifest/audit、固定SID和item2row，不要求已删除的原始Parquet仍在。
+
 ### 环境与构建命令
 
 当前环境实查：Python 3.10.19、NumPy 2.0.2、PyArrow 20.0.0、tensorflow-cpu 2.18.0；模型 / 导出使用 torch 2.6.0+cu124、lightning 2.5.0、hydra-core 1.3.2、omegaconf 2.3.0、h5py 3.14.0。[requirements.txt](../requirements.txt) 为仓库依赖清单，不保证它与后续安装过的当前环境完全相同。TensorFlow 读取和全量构建应在兼容的计算节点运行，不在登录节点重跑全量数据。
@@ -112,7 +127,11 @@ ITEM_MAPPING=/mnt/beegfs/home/MMReco2021/liuyu/Taobao/cache/sid_item2row_scl_emb
 SID_ARRAY=/mnt/beegfs/home/MMReco2021/liuyu/GRID/data/taobao/semantic_id/sid_reindexing_scl_emb_int8_p90.npy
 REPRO_ROOT=/path/to/new/history-last-user-v1-reproduction
 test ! -e "$REPRO_ROOT"
-sha256sum "$ITEM_MAPPING" "$SID_ARRAY"
+
+# 精确固定revision下载；已有文件若不匹配则报错，不覆盖。
+# 只校验既有完整下载时另加 --verify-only。
+"$DATA_PYTHON" docs/repro/download_taobao_sources.py \
+  --destination "$TAOBAO_SOURCE" --item2row "$ITEM_MAPPING" --sid "$SID_ARRAY"
 
 "$DATA_PYTHON" scripts/build_taobao_next_item_dataset.py \
   --split train --data-dir "$TAOBAO_SOURCE" --item2row-path "$ITEM_MAPPING" \
