@@ -1,6 +1,16 @@
 # Run 台账
 
-最后更新：2026-11-09（America/Denver）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部完成并通过验收，当前队列为空。四模型正式主表保持冻结，不与重新导出的扫描/诊断中心结果混用。
+最后更新：2026-11-10（本次服务器记录 UTC+08:00）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部验收；新增当前版本随机初始化Listwise seed42，状态见下节。四模型正式主表保持冻结，不与新训练或诊断中心结果混用。
+
+## 当前版本随机初始化 Listwise
+
+作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。准备中，尚未提交作业。
+
+- 入口：`run_click_listwise_random_init.sh`。当前数据/模型/损失不改；`ckpt_path=null`、`model.load_only_weights=false`、`model.manual_ckpt_path=null`，禁用自动重启callback且拒绝已有run目录。
+- 3×4090、整项3CPU、60GiB；两步真实DDP短测验收通过后，同一资源分配内独立启动正式训练。短测不存checkpoint，正式训练不接续短测参数。
+- 保持Joint阶段120000步上限及原早停、调度、batch；不补算teacher步数，不声称总训练预算已经与预训练方案匹配。训练内test关闭，best验收后再运行规范的validation选权及全量test。
+- 两步短测和正式run均记录实际初始化与前两步更新证据；旧9月Joint从teacher启动的结论不因新增随机初始化实验而改写。
+- 资源检查时用户队列为空；4090节点虽有空闲GPU，但没有单节点同时满足3GPU/60GiB的可分配资源，预计排队，不迁移到3090或削减内存规避等待。
 
 ## 结果索引
 

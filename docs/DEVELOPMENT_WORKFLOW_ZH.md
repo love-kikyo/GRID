@@ -2,6 +2,8 @@
 
 ## 分支与提交
 
+2026-11-10：作者授权当前版本随机初始化Listwise，主工作目录从 `3f99a53` 新建 `wsdm27-listwise-random-init-seed42`。现有推理扫描分支与结果保留；新入口不改主模型数学实现。每项执行前绑定源码commit与文件哈希，运行期间仅允许不影响执行的文档更新；不自动push。
+
 Seed42 执行分支：`wsdm27-inference-sensitivity-seed42`（11-07 从 `wsdm27-history-last-user-v1` 新建，最初仅补 seed42 推理扫描）。同日后续授权新增 seed43 / 44，使用独立工作副本 `GRID-sensitivity-multiseed` 适配，不修改 seed42 运行中已绑定源码。原分支及其他探索分支保留；不重写其历史、不强推、不顺手合并回 main。
 
 11-07 下午：六项扫描完成后，在该隔离副本从 `5878ec5` 新建 `wsdm27-retrieval-diagnostics`，仅新增单 seed 布局 / 内容诊断入口；旧扫描分支保留。新诊断仍按单项 1 GPU / 4 CPU 串行验收，不沿用三 seed 并行例外扩大范围。
