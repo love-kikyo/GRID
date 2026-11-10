@@ -4,13 +4,16 @@
 
 ## 当前版本随机初始化 Listwise
 
-作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。准备中，尚未提交作业。
+作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。**158562已于11-10 15:41:58（UTC+08）提交，15:42查询为PENDING / Resources；尚未开始短测或正式训练。**
 
 - 入口：`run_click_listwise_random_init.sh`。当前数据/模型/损失不改；`ckpt_path=null`、`model.load_only_weights=false`、`model.manual_ckpt_path=null`，禁用自动重启callback且拒绝已有run目录。
 - 3×4090、整项3CPU、60GiB；两步真实DDP短测验收通过后，同一资源分配内独立启动正式训练。短测不存checkpoint，正式训练不接续短测参数。
 - 保持Joint阶段120000步上限及原早停、调度、batch；不补算teacher步数，不声称总训练预算已经与预训练方案匹配。训练内test关闭，best验收后再运行规范的validation选权及全量test。
 - 两步短测和正式run均记录实际初始化与前两步更新证据；旧9月Joint从teacher启动的结论不因新增随机初始化实验而改写。
 - 资源检查时用户队列为空；4090节点虽有空闲GPU，但没有单节点同时满足3GPU/60GiB的可分配资源，预计排队，不迁移到3090或削减内存规避等待。
+- 审计能力提交 `d45e0bc`，启动入口及范围记录提交 `1e1449d`；提交时工作树干净。49项相关pytest通过，最终启动器改动后7项再验通过，shell语法及diff检查通过；独立审查无阻断问题。作业获得资源后会再运行同组CPU测试，不把这些单测等同于真实三卡短测已经通过。
+- 提交命令：`sbatch --parsable --export=ALL,GRID_RANDOM_INIT_COMMIT=1e1449d2613ac245323660af68c3c377153b90a7 run_click_listwise_random_init.sh 42`。Slurm确认 `NumCPUs=3 / NumTasks=3 / CPUsPerTask=1 / gpu:4090:3 / mem=60G`，仅此一项作业，没有依赖队列或额外seed。
+- 提交记录：`logs/training_launch/listwise_random_seed42_158562.json`；原始日志 `logs/slurm/GRID-List-Random42-158562.{out,err}`；审计 `logs/random_init_audit/seed42_158562/{smoke,formal}/`；preflight `logs/training_preflight/listwise_random_seed42_158562.json`。实际run为 `logs/train/runs/<启动日期>/{random-init-smoke-listwise-seed42-158562,click-listwise-random-seed42-158562}`，不把提交日期当作尚未发生的启动日期。
 
 ## 结果索引
 
