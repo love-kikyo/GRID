@@ -224,3 +224,110 @@ def test_original_full_state_resume_retains_prefix_cursor_and_requires_new_bindi
     with pytest.raises(ValueError, match='binding'):
         restore_checkpoint(checkpoint, resumed.model, resumed.optimizer, resumed.scheduler,
                            resumed.scaler, {'purpose': 'old-final-only'})
+
+
+def test_opt_in_sampled_all_classes_matches_full_joint_update():
+    exact, sampled = fixture(), fixture()
+    expected = step(exact)
+    actual = step(sampled, dense_sampling={'num_negatives': 100, 'seed': 42})
+    for key in ('sid_loss', 'dense_loss', 'total_loss', 'grad_norm'):
+        assert actual[key] == pytest.approx(expected[key], rel=1e-6, abs=1e-7)
+    for a, b in zip(exact.model.parameters(), sampled.model.parameters()):
+        torch.testing.assert_close(a, b, rtol=1e-6, atol=1e-7)
+    assert 'dense_objective' not in exact.progress
+    assert actual['dense_objective'] == sampled.progress['dense_objective']
+    assert actual['forced_positive_classes'] == 3
+    assert actual['sampled_negative_classes'] == 2
+    assert actual['dense_candidate_classes'] == len(sampled.seen)
+    assert actual['sampling_attempt'] == 0
+    assert actual['prefix_identity_sha256'] == expected['prefix_identity_sha256']
+
+
+def test_sampled_joint_training_retains_query_weights_and_both_parameter_updates():
+    f = fixture()
+    f.examples.append(expand_training_records([Record(9, (1, 0), 'c' * 64)])[0])
+    before = copy.deepcopy(f.model.state_dict())
+    result = step(f, dense_sampling={'num_negatives': 1, 'seed': 42})
+    assert result['rows'] == result['prefix_count'] == 4
+    assert result['forced_positive_classes'] == 3
+    assert result['sampled_negative_classes'] == 1 and result['dense_candidate_classes'] == 4
+    assert result['total_loss'] == pytest.approx(result['sid_loss'] + result['dense_loss'])
+    for name, value in f.model.state_dict().items():
+        assert not torch.equal(value, before[name]), name
+
+
+@pytest.mark.parametrize('change', ['negative_count', 'seed', 'version', 'temperature',
+                                  'disable', 'enable_on_old'])
+def test_sampled_objective_cannot_silently_change_after_first_attempt(change):
+    f = fixture()
+    config = {'num_negatives': 1, 'seed': 42}
+    step(f, dense_sampling=None if change == 'enable_on_old' else config)
+    if change == 'negative_count': config = dict(config, num_negatives=2)
+    if change == 'seed': config = dict(config, seed=43)
+    if change == 'version': f.progress['dense_objective']['sampling_version'] = 'other-version'
+    if change == 'temperature': f.progress['dense_objective']['temperature'] = .1
+    if change == 'disable': config = None
+    before = copy.deepcopy(f.progress)
+    with pytest.raises(ValueError, match='dense objective'):
+        step(f, dense_sampling=config)
+    assert f.progress == before and len(f.calls) == 1
+
+
+@pytest.mark.parametrize('config', [{}, {'num_negatives': 1}, {'seed': 42},
+    {'num_negatives': 0, 'seed': 42}, {'num_negatives': True, 'seed': 42},
+    {'num_negatives': 1, 'seed': -1}, {'num_negatives': 1, 'seed': 42, 'extra': 1},
+    True, 'sampled'])
+def test_bad_sampling_config_fails_before_model_forward(config):
+    f = fixture()
+    with pytest.raises(ValueError, match='Sampling config'):
+        step(f, dense_sampling=config)
+    assert not f.calls and f.progress['attempts'] == 0
+
+
+def test_sampled_amp_skip_advances_sampling_attempt_not_successful_update(monkeypatch):
+    from src.baselines import liger_prefix_training as training
+    observed = []
+    original = training.sampled_catalog_cross_entropy
+    def traced(*args, **kwargs):
+        observed.append(kwargs['attempt'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(training, 'sampled_catalog_cross_entropy', traced)
+    f = fixture()
+    f.scaler = FakeAmpScaler()
+    config = {'num_negatives': 1, 'seed': 42}
+    hook = f.model.query.register_hook(lambda grad: torch.full_like(grad, float('inf')))
+    skipped = step(f, dense_sampling=config)
+    hook.remove()
+    accepted = step(f, dense_sampling=config)
+    assert skipped['skipped'] and not accepted['skipped']
+    assert observed == [0, 1]
+    assert skipped['sampling_attempt'] == 0 and accepted['sampling_attempt'] == 1
+    assert accepted['attempt'] == 2 and accepted['updates'] == 1
+
+
+def test_sampled_checkpoint_resume_reproduces_sampling_dropout_and_updates(tmp_path):
+    from src.baselines.liger_state import capture, restore_checkpoint, save_checkpoint
+    from src.baselines.liger_sampled_catalog import sampling_binding
+    config = {'num_negatives': 1, 'seed': 42}
+    binding = {'dense_objective': sampling_binding(config), 'fixture': 'train-seen-only'}
+    def make():
+        f = fixture()
+        # Preserve optimizer parameter identities, introduce a real model RNG draw.
+        f.model.emb_proj = torch.nn.Sequential(torch.nn.Dropout(.25), f.model.emb_proj)
+        return f
+    uninterrupted = make()
+    step(uninterrupted, dense_sampling=config)
+    path = tmp_path / 'sampled-step1.pt'
+    save_checkpoint(path, capture(uninterrupted.model, uninterrupted.optimizer,
+        uninterrupted.scheduler, uninterrupted.scaler, uninterrupted.progress, binding))
+    expected = step(uninterrupted, dense_sampling=config)
+    resumed = make()
+    resumed.progress = restore_checkpoint(path, resumed.model, resumed.optimizer,
+        resumed.scheduler, resumed.scaler, binding)
+    actual = step(resumed, dense_sampling=config)
+    assert actual == expected and resumed.progress == uninterrupted.progress
+    for a, b in zip(resumed.model.parameters(), uninterrupted.model.parameters()):
+        torch.testing.assert_close(a, b, atol=0, rtol=0)
+    with pytest.raises(ValueError, match='binding'):
+        restore_checkpoint(path, resumed.model, resumed.optimizer, resumed.scheduler,
+                           resumed.scaler, dict(binding, dense_objective=sampling_binding(dict(config, seed=43))))

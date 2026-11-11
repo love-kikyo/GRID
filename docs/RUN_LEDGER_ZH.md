@@ -1,6 +1,24 @@
 # Run 台账
 
-最后核验：2026-10-23 21:10（Asia/Shanghai）。149742 缓存 / batch 效率短测 RUNNING，只有此一项、无后继；未提交新正式训练。149019 集成已验收，但吞吐外推成本不可接受。148939 诊断已收尾，147815 保持取消。SIM 不扩 seed，test 与论文暂停。
+更新：2026-11-12（Asia/Shanghai），本分支新增 LIGER 采样损失的 CPU 验收。未提交 GPU 任务或正式训练；149742 已结束，下方原10-23提交记录只作历史追溯。
+
+## LIGER 采样损失实现与 CPU 验收
+
+作者批准先实现与单测，分支 `wsdm27-liger-sampled-loss-v1` 从旧前缀分支 `570d333` 分出。新增[采样损失](../src/baselines/liger_sampled_catalog.py)、[数学与边界测试](../tests/test_liger_sampled_catalog.py)，并在[前缀训练步](../src/baselines/liger_prefix_training.py)加入显式可选接入及恢复测试。数学契约、后续顺序和放行边界维护在实验计划，不改原 SID / SCL / 数据 / cold 候选规则。
+
+本轮 CPU 专项：采样模块63项通过，前缀训练集成39项通过；全部 LIGER 回归 **756 passed、5 skipped，12.10秒**，单核2、Torch/BLAS线程1、GPU不可见。跳过项是缺少可选 sklearn 的标准化对照。旧完整损失的只读 NumPy 提示保留，不改缓存可写性。未读取正式训练 / 验证 / 测试数据或加载正式 checkpoint；toy checkpoint 仅用于恢复单测。
+
+首次扩大回归时 Transformers 自动导入 TensorFlow，在登录节点触发已知 SIGILL；按照此前项目约定加 `USE_TF=0` 重跑后完整通过，没有升级环境或修改数据读取实现。复现命令：
+
+```bash
+USE_TF=0 CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 taskset -c 2 /home/MMReco2021/.conda/envs/GRID/bin/python -m pytest -q tests/test_liger*.py
+```
+
+核验包括：采满补集的 loss / query与投影梯度对照；部分采样独立公式；Floyd小集合随机路径穷举与分母估计；GT重复、补集耗尽、masked常数；万亿项虚拟目录只读取14行；dropout共享梯度及恢复；AMP跳步仍前进采样attempt；拒绝恢复后改变目标 / K / seed / 温度版本。独立审查未发现阻断问题。
+
+边界：本次只完成核心函数与训练步显式接入，旧入口默认仍为 full-catalog CE。新的 GPU runner / manifest / DDP / 实际8K或32K显存吞吐尚未实现或验收；没有正式效果结果、速度结论或自动后继。
+
+原149742结果补记：[效率验收](../logs/training_launch/liger_efficiency_2026-10-23_v4/efficiency_acceptance.json)为 `passed_efficiency_probe`；cached4096三个预热后步骤平均107.31秒、38.17 prefix/s，单遍334.74小时仅为短测外推。原损失每步前后向合计遍历23,085,510行，缓存未解决全目录稠密训练成本；本次不重复原效率任务，也不将该历史估算用于采样版。
 
 ## LIGER 固定特征缓存与效率短测
 

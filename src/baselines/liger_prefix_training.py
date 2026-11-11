@@ -1,8 +1,10 @@
-"""Equal-prefix SID + exact full-seen dense training with fixed step budgets.
+"""Equal-prefix SID + dense training with fixed step budgets.
 
 Every PrefixExample supplies the same four SID labels and one dense GT. A parent
 may occur repeatedly with different prefix positions; parent IDs are provenance
-only. Neither the objective nor the catalog is replaced by a diagnostic subset.
+only. Exact full-seen CE remains the default. Explicit dense_sampling enables
+corrected shared-negative training over that SAME catalog, not a diagnostic
+subset. Its objective identity is bound to progress; no silent resume switching.
 """
 import hashlib
 from numbers import Integral
@@ -12,6 +14,7 @@ import numpy as np
 import torch
 
 from src.baselines.liger_full_catalog import full_catalog_cross_entropy
+from src.baselines.liger_sampled_catalog import sampled_catalog_cross_entropy, sampling_binding
 from src.baselines.liger_state import tree_digest
 from src.baselines.liger_supervision import pack_supervised_batch
 
@@ -87,7 +90,8 @@ def prefix_identity_digest(identity):
 
 
 def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
-               sids, content, seen, catalog, progress, *, chunk_size=65536, expected_gradients=152):
+               sids, content, seen, catalog, progress, *, chunk_size=65536, expected_gradients=152,
+               dense_sampling=None):
     """Consume one prefix batch; AMP skips consume attempts/data, not updates."""
     budget = {key: progress.get(key) for key in ('max_optimizer_steps', 'max_attempts')}
     check_progress(progress, budget)
@@ -96,6 +100,10 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
         raise ValueError('Expected training mode and the original aligned schedule')
     if progress['attempts'] >= progress['max_attempts'] or scheduler.updates >= scheduler.total:
         raise ValueError('Training attempt/update budget exhausted')
+    objective = sampling_binding(dense_sampling) if dense_sampling is not None else None
+    if (('dense_objective' in progress and progress['dense_objective'] != objective)
+            or (objective is not None and 'dense_objective' not in progress and progress['attempts'])):
+        raise ValueError('Cannot change the dense objective or sampling config on resume')
     if (len(catalog) != len(seen) or getattr(catalog, 'content', None) is not content
             or getattr(catalog, 'rows', None) is not seen):
         raise ValueError('Training requires the same content and complete frozen seen RowCatalog')
@@ -112,9 +120,16 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
     labels = torch.as_tensor(positions, dtype=torch.long, device=device)
     batch = {key: torch.from_numpy(value) for key, value in inputs.items()}
     outputs, _ = evaluation.model_forward(model, batch, device, 4, method)
-    dense_loss = full_catalog_cross_entropy(
-        model.predicted_embedding.float(), labels, model.emb_proj, catalog,
-        chunk_size=chunk_size, temperature=.07, masked_count=len(content) - len(seen))
+    if objective is None:
+        dense_loss = full_catalog_cross_entropy(
+            model.predicted_embedding.float(), labels, model.emb_proj, catalog,
+            chunk_size=chunk_size, temperature=.07, masked_count=len(content) - len(seen))
+    else:
+        dense_loss = sampled_catalog_cross_entropy(
+            model.predicted_embedding.float(), labels, model.emb_proj, catalog,
+            num_negatives=objective['num_negatives'], seed=objective['seed'],
+            attempt=progress['attempts'], temperature=objective['temperature'],
+            masked_count=len(content) - len(seen))
     loss = outputs.loss + dense_loss
     if not torch.isfinite(loss).item():
         raise ValueError('Nonfinite prefix training loss')
@@ -143,6 +158,8 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
     if any(int(state['step'].item()) != progress['updates'] for state in optimizer.state.values()):
         raise ValueError('Optimizer update counters diverged')
     final_count = int(identity['is_final'].sum())
+    if objective is not None:
+        progress['dense_objective'] = objective
     progress['data_chain'] = hashlib.sha256((progress['data_chain'] + data_sha).encode()).hexdigest()
     progress['next_batch'] += 1
     progress['batches_consumed'] += 1
@@ -151,7 +168,7 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
     progress['prefix_count'] += len(records)
     progress['final_count'] += final_count
     check_progress(progress, budget)
-    return dict(
+    result = dict(
         batch=progress['next_batch'], rows=len(records), attempt=progress['attempts'],
         prefix_count=len(records), final_target_count=final_count,
         batch_unique_parents=len(np.unique(identity['parent_user_ids'])),
@@ -161,3 +178,10 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
         scale_before=old_scale, scale_after=scaler.get_scale(),
         sid_loss=outputs.loss.item(), dense_loss=dense_loss.item(), total_loss=loss.item(),
         gradient_tensors=len(gradients), grad_norm=norm.item() if norm is not None else None)
+    if objective is not None:
+        forced = len(np.unique(positions))
+        sampled = min(objective['num_negatives'], len(seen) - forced)
+        result.update(dense_objective=dict(objective), forced_positive_classes=forced,
+                      sampled_negative_classes=sampled, dense_candidate_classes=forced + sampled,
+                      sampling_attempt=progress['attempts'] - 1)
+    return result
