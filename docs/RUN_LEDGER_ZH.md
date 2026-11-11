@@ -1,6 +1,18 @@
 # Run 台账
 
-最后更新：2026-11-10（本次服务器记录 UTC+08:00）；历史作业时间保留原日志时区。三 seed 五组固定槽全量验证全部验收；当前版本随机初始化Listwise seed42已进入正式训练。已批准存储清理完成，记录见下节。四模型正式主表保持冻结，不与新训练或诊断中心结果混用。
+最后更新：2026-11-11；新增作业时间同时注明客户端America/Denver与原日志UTC+08，历史记录保留原时区。158562已完成，作者授权固定90k的五策略检索对照。已批准存储清理完成，记录见下节。四模型正式主表保持冻结，不与新训练或诊断结果混用。
+
+## 随机初始化90k固定十槽对照
+
+作者明确要求在158562保留的`checkpoint_000_090000.ckpt`上复做此前检索槽位实验。新分支`wsdm27-random-init-retrieval-seed42`，只新增评估入口与测试，`src/`模型/训练代码不变。执行入口`run_random_retrieval_content_cpu4.sh`，一个1×4090 / 4CPU / 24GiB作业，6h上限；获资源后的预计用时约2.5–3h，非保证。不扩seed、不重训、不据test挑β或checkpoint。
+
+固定五组为`sim10 / recent10 / random10 / mask5 / mask0`：十个物理槽位、C20、原上下文与随机规则、每批一次fresh beam且五组共享候选和生成分数。runtime β仍0.1，报告层β必须来自该90k模型自己的完整validation，并在五策略间固定；不能沿用旧teacher-initialized模型的0.50。
+
+流水线依次为：严格加载90k并绑定正式随机初始化审计 → 新进程单卡单worker、`persistent_workers=false`完整读取347416条validation → 51档β（0至0.50、步长0.01，beam权重1；N10/N5/R10/R5字典序，平局较小β）选权及204个指标独立复算 → 65条五策略真实短测及产物/统计验收 → 完整2061101条test、五份预测及13对×6指标用户配对bootstrap。任何阶段失败即止，不跳过门禁。
+
+旧seed42 validation/test预测仅提供`user_id/example_hash/target_sid`身份参照，明确不读取其候选或分数作为新模型输出。原检索core、布局观察和比较容差复用已验收版本；报告端将旧硬编码β改为新选权文件所绑定的值，含β=0和非0.5回归。mask0仍保留SID历史KV，不能替代无检索重训；单seed用户区间不等于多seed稳健性。
+
+训练内validation的持久游标问题不会延续至本次全新非持久化、完整单次读取，但本流程也**不能追溯重选此前所有时点的最佳checkpoint**：本次固定作者指定的现存90k，只评价它的完整结果。现有主表和既有三seed对照不覆盖或替换。当前状态为入口准备、待提交；正式结果必须以新`acceptance.json`及`paired.json`为准。
 
 ## 2026-11-10 已批准存储清理
 
@@ -25,6 +37,10 @@
 ## 当前版本随机初始化 Listwise
 
 作者明确不再追求旧版本，授权在当前正式版本上跑随机初始化Listwise；先seed42。执行分支 `wsdm27-listwise-random-init-seed42`，从 `3f99a53` 建立。158562于11-10 15:41:58（UTC+08）提交，15:42曾为PENDING / Resources；15:49:17在aias-compute-2开始运行。**三rank两步短测验收通过，15:56:25独立启动正式训练；16:27查询为RUNNING。** 短测12份审计JSON、正式run初始化/训练开始/前两步更新9份JSON均`passed`；正式初始化记录checkpoint/resume均为null、构造参数未被替换、optimizer初始为空。此为入口及实际更新证据，尚不是训练质量或最终checkpoint验收。
+
+完成更新：`sacct`确认158562及各step全部COMPLETED / 0:0，11-11 06:49:01 America/Denver（原日志北京时间21:49:01）结束，总29h59m44s。实际更新115000次，95k至115k连续五次监控R@5未超过90k而早停；唯一现存checkpoint为90k，并非只训练了90k。三个rank的finished审计均passed/global_step115000，末尾聚合审计passed，随机初始化及前两步参数更新证据完整。
+
+90k训练内R@5=0.273813695、NDCG@10=0.257733434；115k末轮分别0.272393763/0.256197512，均不是正式全量test。运行中发现validation `persistent_workers=true`且5000批截断时自定义迭代器未复位，后续轮次续读；40k/80k仅2155批，其他通常5000批。因此跨轮输入范围不固定，best/早停有额外波动；本轮没有中途改训练实现或重新训练。新独立评估使用fresh单次完整读取，结果另记。
 
 - 入口：`run_click_listwise_random_init.sh`。当前数据/模型/损失不改；`ckpt_path=null`、`model.load_only_weights=false`、`model.manual_ckpt_path=null`，禁用自动重启callback且拒绝已有run目录。
 - 3×4090、整项3CPU、60GiB；两步真实DDP短测验收通过后，同一资源分配内独立启动正式训练。短测不存checkpoint，正式训练不接续短测参数。
