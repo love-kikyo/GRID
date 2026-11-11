@@ -12,7 +12,11 @@
 
 旧seed42 validation/test预测仅提供`user_id/example_hash/target_sid`身份参照，明确不读取其候选或分数作为新模型输出。原检索core、布局观察和比较容差复用已验收版本；报告端将旧硬编码β改为新选权文件所绑定的值，含β=0和非0.5回归。mask0仍保留SID历史KV，不能替代无检索重训；单seed用户区间不等于多seed稳健性。
 
-训练内validation的持久游标问题不会延续至本次全新非持久化、完整单次读取，但本流程也**不能追溯重选此前所有时点的最佳checkpoint**：本次固定作者指定的现存90k，只评价它的完整结果。现有主表和既有三seed对照不覆盖或替换。当前状态为入口准备、待提交；正式结果必须以新`acceptance.json`及`paired.json`为准。
+训练内validation的持久游标问题不会延续至本次全新非持久化、完整单次读取，但本流程也**不能追溯重选此前所有时点的最佳checkpoint**：本次固定作者指定的现存90k，只评价它的完整结果。现有主表和既有三seed对照不覆盖或替换；正式结果必须以新`acceptance.json`及`paired.json`为准。
+
+提交更新：执行源码`f94d6347f950feb89c1b5517f69ec7b0ec3eaec2`，本地显式单核且模拟分配环境的299项回归通过（28.01s，仅2项依赖弃用警告），实际run配置加载及fresh/nonpersistent向datamodule传递检查通过。独立审查发现并在提交前修正了新增验收器的SID合法域：导出token为1–4096、0为padding，编码检查用base4097；含4096/非法0和全部51个FP32β的回归通过。未修改模型或原导出/选权算法。
+
+11-11 07:36:33 America/Denver（22:36:33 UTC+08）提交唯一作业**159687**并立即在aias-compute-4 RUNNING；Slurm确认1GPU4090/4CPU/24GiB、6h上限、无dependency。记录：[launch.json](../logs/training_launch/random_init_retrieval_seed42_158562_2026-11-11_v1/launch.json)，输出根`logs/analysis/random_init_retrieval_seed42_158562_2026-11-11_v1/`，日志`logs/slurm/Random42-RetrContent-159687.{out,err}`。manifest在本checkpoint完整validation验收后才生成并绑定选权SHA；启动记录不冒充GPU短测或全量验收已经完成。未提交额外seed或其他后继作业。
 
 ## 2026-11-10 已批准存储清理
 
