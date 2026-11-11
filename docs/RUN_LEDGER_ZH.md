@@ -1,6 +1,16 @@
 # Run 台账
 
-更新：2026-11-12（Asia/Shanghai），本分支新增 LIGER 采样损失的 CPU 验收。未提交 GPU 任务或正式训练；149742 已结束，下方原10-23提交记录只作历史追溯。
+更新：2026-11-12 02:20（Asia/Shanghai），新增 LIGER 采样资源短测159735，RUNNING，无正式训练或后继。149742及下方10-23记录只作历史追溯。
+
+## LIGER 8K / 32K 采样资源短测
+
+作者批准资源短测，验收后再决定正式预算。实现分两次提交：`37902ef`（配置 / 来源绑定 / 入口与测试）、`13ed6d3`（训练计时 / 独立验收与测试）。提交前工作树干净；全部 LIGER、launcher与CPU资源回归 **870 passed、5 skipped、1 warning，22.53秒**，单CPU、GPU不可见；跳过和旧只读NumPy提示口径同下方CPU实现验收。独立代码复核未发现阻断问题。
+
+**159735**：02:20:00提交，02:20:01启动，02:20:08为RUNNING。`aias-compute-4` / rtx4090 / 1GPU / 整项4CPU / 24G / 45分钟，无依赖、无后继。固定batch1024、seed42随机初始化，各配置12步（2预热+10计时），分别从第2步新进程恢复10步；同一12288条训练前缀快照，按需读取标准化物品行。只测资源与恢复，不读取validation/test、不以短测loss选配置、不沿用旧训练权重。
+
+[配置](../configs/baselines/liger_sampled_probe_v1.json)、[入口](../run_liger_sampled_probe_cpu4.sh)、[Manifest](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/manifest.json)、[启动记录](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledV1-159735.out)、[stderr](../logs/slurm/GRID-LIGER-SampledV1-159735.err)。Manifest SHA256 `49083f28baae7b246e0f63cb500dd168688f64509b82f9e044aa627606014ab6`；执行源 `13ed6d3ad7d3bf8140215d043cf7fb09b499c438`。新绑定显式记录两份prefix训练文件的已验收迁移，其余旧源和资产身份不变，不改旧manifest。
+
+待验收 `n8192_acceptance.json`、`n32768_acceptance.json`、`sampled_probe_acceptance.json`。吞吐口径为预加载输入下完整同步训练步，不是端到端；显存为PyTorch allocated/reserved，RSS为进程自身而非整个作业。单遍纯训练外推不等于收敛时间；完整cold验证成本另行处理。两份step2 checkpoint仅供恢复核验，不是正式训练结果。
 
 ## LIGER 采样损失实现与 CPU 验收
 
@@ -16,7 +26,7 @@ USE_TF=0 CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NU
 
 核验包括：采满补集的 loss / query与投影梯度对照；部分采样独立公式；Floyd小集合随机路径穷举与分母估计；GT重复、补集耗尽、masked常数；万亿项虚拟目录只读取14行；dropout共享梯度及恢复；AMP跳步仍前进采样attempt；拒绝恢复后改变目标 / K / seed / 温度版本。独立审查未发现阻断问题。
 
-边界：本次只完成核心函数与训练步显式接入，旧入口默认仍为 full-catalog CE。新的 GPU runner / manifest / DDP / 实际8K或32K显存吞吐尚未实现或验收；没有正式效果结果、速度结论或自动后继。
+该阶段边界：当时只完成核心函数与训练步显式接入，旧入口默认仍为 full-catalog CE。后续GPU短测见本页上方；DDP与正式训练均未放行，没有正式效果结果或自动后继。
 
 原149742结果补记：[效率验收](../logs/training_launch/liger_efficiency_2026-10-23_v4/efficiency_acceptance.json)为 `passed_efficiency_probe`；cached4096三个预热后步骤平均107.31秒、38.17 prefix/s，单遍334.74小时仅为短测外推。原损失每步前后向合计遍历23,085,510行，缓存未解决全目录稠密训练成本；本次不重复原效率任务，也不将该历史估算用于采样版。
 
