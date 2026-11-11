@@ -1,16 +1,30 @@
 # Run 台账
 
-更新：2026-11-12 02:20（Asia/Shanghai），新增 LIGER 采样资源短测159735，RUNNING，无正式训练或后继。149742及下方10-23记录只作历史追溯。
+更新：2026-11-12 02:29（Asia/Shanghai），LIGER 采样资源短测159735已COMPLETED / 0:0，两配置及独立复核通过；无正式训练或后继。149742及下方10-23记录只作历史追溯。
 
 ## LIGER 8K / 32K 采样资源短测
 
 作者批准资源短测，验收后再决定正式预算。实现分两次提交：`37902ef`（配置 / 来源绑定 / 入口与测试）、`13ed6d3`（训练计时 / 独立验收与测试）。提交前工作树干净；全部 LIGER、launcher与CPU资源回归 **870 passed、5 skipped、1 warning，22.53秒**，单CPU、GPU不可见；跳过和旧只读NumPy提示口径同下方CPU实现验收。独立代码复核未发现阻断问题。
 
-**159735**：02:20:00提交，02:20:01启动，02:20:08为RUNNING。`aias-compute-4` / rtx4090 / 1GPU / 整项4CPU / 24G / 45分钟，无依赖、无后继。固定batch1024、seed42随机初始化，各配置12步（2预热+10计时），分别从第2步新进程恢复10步；同一12288条训练前缀快照，按需读取标准化物品行。只测资源与恢复，不读取validation/test、不以短测loss选配置、不沿用旧训练权重。
+**159735**：02:20:00提交，02:20:01–02:27:57运行，**COMPLETED / 0:0，7分56秒**。`aias-compute-4` / rtx4090 / 同一张4090 / 整项4CPU / 24G / 45分钟上限，无依赖、无后继。固定batch1024、seed42随机初始化，各配置12步（2预热+10计时），分别从第2步新进程恢复10步；同一12288条训练前缀快照，按需读取标准化物品行。只测资源与恢复，不读取validation/test、不以短测loss选配置、不沿用旧训练权重。
 
 [配置](../configs/baselines/liger_sampled_probe_v1.json)、[入口](../run_liger_sampled_probe_cpu4.sh)、[Manifest](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/manifest.json)、[启动记录](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledV1-159735.out)、[stderr](../logs/slurm/GRID-LIGER-SampledV1-159735.err)。Manifest SHA256 `49083f28baae7b246e0f63cb500dd168688f64509b82f9e044aa627606014ab6`；执行源 `13ed6d3ad7d3bf8140215d043cf7fb09b499c438`。新绑定显式记录两份prefix训练文件的已验收迁移，其余旧源和资产身份不变，不改旧manifest。
 
-待验收 `n8192_acceptance.json`、`n32768_acceptance.json`、`sampled_probe_acceptance.json`。吞吐口径为预加载输入下完整同步训练步，不是端到端；显存为PyTorch allocated/reserved，RSS为进程自身而非整个作业。单遍纯训练外推不等于收敛时间；完整cold验证成本另行处理。两份step2 checkpoint仅供恢复核验，不是正式训练结果。
+已验收[8K](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/n8192_acceptance.json)、[32K](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/n32768_acceptance.json)、[总报告](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/sampled_probe_acceptance.json)及[结束后独立复核](../logs/training_launch/liger_sampled_resource_2026-11-12_v1/postrun_review.json)。总报告SHA256 `73e3467223abb35456b4981c460c38d2ae7cdf71e82240c58d81bd9969700628`。节点启动前224项测试通过；两配置均12次成功更新、无AMP跳步、无OOM；新进程后10步训练记录及完整学习状态逐值一致。共同fixture含1740个原最终GT，每批唯一GT为974–1008，实际目录每步只读取1次、行数恰为K+唯一GT。实际CPU绑定 `[0,1,28,29]`，库线程1。结束后只读复核83个执行源、38个输入元数据、9个上游源、报告链和两份诊断checkpoint哈希；独立重算指标与恢复对照通过，未在登录节点加载大checkpoint张量。
+
+| 资源指标（固定batch1024） | 8192负例 | 32768负例 |
+| --- | ---: | ---: |
+| 10步平均 / 中位耗时，秒 | 3.46995 / 3.28292 | 6.49598 / 6.70652 |
+| 单步最小–最大，秒 | 1.12810–5.26477 | 4.48449–8.89767 |
+| 吞吐，prefix/s | 295.11 | 157.64 |
+| GPU allocated峰值，GiB | 4.782 | 5.743 |
+| GPU reserved峰值，GiB | 5.146 | 6.189 |
+| 进程自身RSS高水位，GiB | 6.091 | 7.110 |
+| 44919批单遍纯训练外推，小时 | 43.30 | 81.05 |
+
+吞吐使用预先声明的连续运行10步，包含采样、物品行获取与标准化、前后向及optimizer，不是端到端；显存为PyTorch allocated/reserved，RSS为进程自身而非整个作业。初始化分别31.48 / 26.51秒，诊断保存1.21 / 2.97秒；两者及输入准备、恢复、validation/test均不计入训练步吞吐。两份约116MiB的step2 checkpoint仅供恢复核验，不是正式训练结果。
+
+**预算限制：** 恢复重放平均步时为4.563 / 4.652秒，与连续运行有明显差异；它复用相同输入及负例，不作为第二套独立训练吞吐或择优替换连续结果。连续运行目录获取均值为0.811 / 3.322秒，该计时包括读取及标准化且可能与GPU重叠，不能用相减得到纯GPU时间。缓存、随机页读取或共享节点负载可能影响波动，目前未定因。因此本次可确认“显存容纳、训练与恢复正确”，不能承诺完整训练必需43/81小时、32K稳定慢1.87倍或已经拟合。正式预算未选择；建议先检查读取波动与更大batch的稳定吞吐，再结合学习与完整cold验证成本决策，任何追加短测另行确认。
 
 ## LIGER 采样损失实现与 CPU 验收
 
