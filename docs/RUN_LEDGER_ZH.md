@@ -1,6 +1,16 @@
 # Run 台账
 
-更新：2026-11-12 02:29（Asia/Shanghai），LIGER 采样资源短测159735已COMPLETED / 0:0，两配置及独立复核通过；无正式训练或后继。149742及下方10-23记录只作历史追溯。
+更新：2026-11-11 21:59（America/Denver，UTC−7），LIGER读取 / batch短测159857已RUNNING；159735已验收，无正式训练或后继。下方历史记录保留原Asia/Shanghai时间，本轮客户端时间比Slurm原始时间早15小时。
+
+## LIGER 读取诊断与更大 batch
+
+作者批准先核查读取波动、测试更大batch，再决定正式预算。新增代码分三次提交：`3b66d00`（数值不变的访问计时与测试）、`761eba6`（新配置 / 来源绑定 / launcher）、`1b5e441`（独立训练短测及缓存等价 / 容量验收与测试）。没有修改159735及更早任务的执行源。提交前全部LIGER / launcher / CPU资源回归 **1010 passed、5 skipped、1 warning，37.40秒**；单核、线程1、GPU不可见，独立交叉复核通过。5个skip仍是可选sklearn缺失，warning仍为旧只读NumPy提示。
+
+**159857**：客户端时间21:59:15提交，21:59:16启动，21:59:24核验RUNNING（Slurm原始时间分别为次日12:59:15 / 16 / 24）。`aias-compute-4` / rtx4090 / 单4090 / 整项4CPU / 24G / 45分钟，无依赖、无后继。8K与32K各测lazy1024、cached1024、cached2048、cached4096；同一81920条真实训练前缀，每配置新进程和相同随机初始化，20步（5预热+15计时）。先完成两组1024缓存前后逐值学习状态对照，再放行2048 / 4096；同K的2048训练CUDA OOM后跳过4096。无validation/test、无checkpoint产生或加载、无正式训练。
+
+[配置](../configs/baselines/liger_sampled_scaling_v2.json)、[入口](../run_liger_sampled_scaling_cpu4.sh)、[Manifest](../logs/training_launch/liger_sampled_scaling_2026-11-11_v2/manifest.json)、[启动记录](../logs/training_launch/liger_sampled_scaling_2026-11-11_v2/launch.json)、[stdout](../logs/slurm/GRID-LIGER-ScalingV2-159857.out)、[stderr](../logs/slurm/GRID-LIGER-ScalingV2-159857.err)。Manifest SHA256 `aebc060e3555a5a759b6109e0e402d9a2040491d7420c819d1b67fab6364c558`，执行源 `1b5e441562969114fa2b54d8222155c78c81ece5`；全部83个前序执行源保留原哈希，无漂移例外。
+
+本轮把历史侧B次读取与候选侧1次读取分开计时，并记录raw gather、标准化外层CPU差值及进程I/O / faults。缓存只存冻结标准化输入，约5.50GiB临时RAM；每进程重新构建并全量逐位核验，不新增大型磁盘资产，不缓存可训练投影。构建 / 核验 / 初始化成本单列；计时包含观测开销，不将CPU差值相减当纯GPU时间，不将零I/O计数当作无BeeGFS读取。待验收 `cache_equivalence.json` 与 `scaling_acceptance.json`；更大batch结果只证明资源可行性，不证明与原batch优化等价或已拟合。
 
 ## LIGER 8K / 32K 采样资源短测
 
