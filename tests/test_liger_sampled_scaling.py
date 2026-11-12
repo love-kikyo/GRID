@@ -3,6 +3,7 @@ import copy
 from functools import lru_cache
 import math
 import statistics
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +34,52 @@ def test_deadline_is_shared_across_backend_and_batch_cases(monkeypatch):
         probe.deadline({'deadline_unix_seconds': 100.})
 
 
+def numpy_policy():
+    return dict(environment_value='0', effective_madvise_hugepage=False, numpy_version='fixture',
+        verification_api='numpy._core._multiarray_umath._get_madvise_hugepage',
+        scope='current NumPy process only; no global kernel settings written',
+        interpretation='diagnostic mitigation; hugepage compaction is not a proven cause of previous slowdown')
+
+
+def test_live_numpy_policy_checks_effective_state_not_just_environment(monkeypatch):
+    monkeypatch.setenv('NUMPY_MADVISE_HUGEPAGE', '0')
+    fake = SimpleNamespace(__version__='fixture', _core=SimpleNamespace(
+        _multiarray_umath=SimpleNamespace(_get_madvise_hugepage=lambda: False)))
+    result = probe.numpy_memory_policy(fake)
+    assert result == numpy_policy()
+    fake._core._multiarray_umath._get_madvise_hugepage = lambda: True
+    with pytest.raises(ValueError): probe.numpy_memory_policy(fake)
+    fake._core._multiarray_umath._get_madvise_hugepage = None
+    with pytest.raises(ValueError): probe.numpy_memory_policy(fake)
+
+
+@pytest.mark.parametrize('value', [None, '1', 'false'])
+def test_policy_rejects_unset_or_wrong_import_time_environment(monkeypatch, value):
+    if value is None: monkeypatch.delenv('NUMPY_MADVISE_HUGEPAGE', raising=False)
+    else: monkeypatch.setenv('NUMPY_MADVISE_HUGEPAGE', value)
+    fake = SimpleNamespace(__version__='fixture', _core=SimpleNamespace(
+        _multiarray_umath=SimpleNamespace(_get_madvise_hugepage=lambda: False)))
+    with pytest.raises(ValueError): probe.numpy_memory_policy(fake)
+
+
+def test_chunk_progress_deadline_checked_every_chunk_without_logging_every_chunk(monkeypatch):
+    checked, events = [], []
+    monkeypatch.setattr(probe, 'deadline', lambda receipt: checked.append(receipt))
+    monkeypatch.setattr(probe, 'record_phase', lambda report, phase, **kw: events.append((phase, kw['progress'])))
+    receipt = {'deadline_unix_seconds': 100.}
+    callback = probe.cache_progress_callback({}, receipt, started=0., every_chunks=2)
+    for stage in ('cache_build', 'cache_verification'):
+        for rows in (2, 4, 6):
+            callback(stage=stage, completed_rows=rows, total_rows=6)
+    assert checked == [receipt] * 6
+    assert [(phase, values['completed_rows']) for phase, values in events] == [
+        ('cache_build_progress', 4), ('cache_build_progress', 6),
+        ('cache_verification_progress', 4), ('cache_verification_progress', 6)]
+    def expired(receipt): raise TimeoutError('expired')
+    monkeypatch.setattr(probe, 'deadline', expired)
+    with pytest.raises(TimeoutError): callback(stage='cache_build', completed_rows=2, total_rows=6)
+
+
 @lru_cache()
 def examples():
     return tuple(expand_training_records([
@@ -61,6 +108,29 @@ def memory(stage):
         threads=1, clock_ticks_per_second=100, monotonic_seconds=1.,
         proc_cpu_user_seconds=.2, proc_cpu_system_seconds=.3, proc_cpu_total_seconds=.5,
         resource_cpu_user_seconds=.21, resource_cpu_system_seconds=.31)
+
+
+def phase_progress(backend):
+    result = []
+    def event(phase, **extra):
+        io = dict(schema='liger.process_access_io.v1', pid=123, monotonic_seconds=float(len(result)),
+            process_cpu_seconds=.2, minor_faults=7, major_faults=0,
+            io=io_delta()['io'], errors=[], unavailable_fields=[], timing_scope='fixture I/O scope')
+        result.append(dict(phase=phase, elapsed_seconds=float(len(result)),
+                           allowed_cpus=[0, 1, 2, 3], memory=memory(phase), io=io, **extra))
+    event('runtime_initialization')
+    event('after_runtime')
+    if backend == 'cached_seen':
+        for stage in ('cache_build', 'cache_verification'):
+            event(stage)
+            for chunks in list(range(16, 177, 16)) + [177]:
+                event(stage + '_progress', completed_rows=min(chunks * 65536, 11542755),
+                      total_rows=11542755, completed_chunks=chunks)
+            event('after_' + stage)
+    event('after_backend')
+    event('training_complete')
+    event('complete')
+    return result
 
 
 @lru_cache()
@@ -112,11 +182,12 @@ def report_template(size=1024, backend='lazy', negatives=8192):
     report = dict(status='passed', **setting, **manifest, job_id='job', manifest_sha256='d' * 64,
         fixture_receipt=fixture_entry, steps=steps, elapsed_seconds=30.,
         gpu=dict(name='RTX 4090', uuid='same', total_bytes=24 * 1024**3),
-        versions={'torch': 'fixture'}, initial_state_sha256='a' * 64,
+        versions={'torch': 'fixture', 'numpy': 'fixture'}, initial_state_sha256='a' * 64,
         learning_state_sha256='b' * 64, final_progress=p, checkpoint_binding=binding,
         setup_seconds=20., cache_build_seconds=0. if backend == 'lazy' else 30.,
         cache_verify_seconds=0. if backend == 'lazy' else 10.,
         train_seen_rows=11542755, cold_rows=23915712,
+        numpy_memory_policy=numpy_policy(), phase_progress=phase_progress(backend),
         resources=dict(allocated_cpus=4, user_cpu_ceiling=4, library_threads=1,
                        job_id='job', allowed_cpus=[0, 1, 2, 3]),
         cpu_checks=[dict(allowed_cpus=[0, 1, 2, 3],
@@ -219,7 +290,8 @@ def test_equivalence_never_applies_across_batch_or_changed_learning(change):
 
 
 @pytest.mark.parametrize('change', ['scope', 'binding', 'cpu', 'memory', 'cache_bytes', 'cache_hash',
-    'cache_source', 'progress', 'identity', 'candidate', 'warmup', 'gpu_memory'])
+    'cache_source', 'progress', 'identity', 'candidate', 'warmup', 'gpu_memory',
+    'numpy_policy', 'phase', 'chunk_progress', 'phase_affinity'])
 def test_top_level_report_rejects_unsafe_or_misleading_artifacts(change):
     r, kwargs = report(1024, 'cached_seen')
     if change == 'scope': r['validation_test_records_read'] = True
@@ -233,7 +305,11 @@ def test_top_level_report_rejects_unsafe_or_misleading_artifacts(change):
     elif change == 'identity': r['steps'][0]['training']['prefix_identity_sha256'] = 'changed'
     elif change == 'candidate': r['steps'][0]['training']['dense_candidate_classes'] += 1
     elif change == 'warmup': r['steps'][4]['measured'] = True
-    else: r['steps'][0]['peak_gpu_reserved_bytes'] = 25 * 1024**3
+    elif change == 'gpu_memory': r['steps'][0]['peak_gpu_reserved_bytes'] = 25 * 1024**3
+    elif change == 'numpy_policy': r['numpy_memory_policy']['effective_madvise_hugepage'] = True
+    elif change == 'phase': r['phase_progress'].pop()
+    elif change == 'chunk_progress': r['phase_progress'][3]['completed_rows'] += 1
+    else: r['phase_progress'][0]['allowed_cpus'] = [0]
     with pytest.raises((AssertionError, ValueError)):
         gate.validate_report(r, **kwargs)
 
@@ -246,6 +322,7 @@ def oom_report():
     r['steps'] = r['steps'][:3]
     r['cpu_checks'] = r['cpu_checks'][:5]
     r['memory'] = r['memory'][:5] + [memory('failure')]
+    r['phase_progress'] = r['phase_progress'][:-2]
     return r, kwargs
 
 

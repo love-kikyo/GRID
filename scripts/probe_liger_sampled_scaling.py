@@ -1,6 +1,7 @@
 """Train-only reading diagnostics and sampled-loss batch-capacity probe.
 
-No old source is modified. Frozen-input RAM caching must reproduce the complete
+Historical run artifacts remain immutable; this version uses an explicitly
+audited source migration. Frozen-input RAM caching must reproduce the complete
 learning trajectory at batch1024 before larger batches are allowed. Larger
 batches are resource cases, not equivalent optimization trajectories. Each case
 owns a fresh process, model and (when requested) immutable CPU feature cache.
@@ -19,6 +20,59 @@ from scripts.probe_liger_cpu4 import sha, write_new
 from scripts.probe_liger_sampled import base_report, deadline
 
 
+def numpy_memory_policy(np_module=None):
+    """Verify a process-local allocation policy, not a global kernel change.
+
+    NumPy reads this environment variable on import. Checking the live getter
+    detects a too-late environment change. This mitigation does not establish
+    hugepage compaction as the cause of the previous preparation slowdown.
+    """
+    if np_module is None:
+        import numpy as np_module
+    if os.environ.get('NUMPY_MADVISE_HUGEPAGE') != '0':
+        raise ValueError('NUMPY_MADVISE_HUGEPAGE=0 must be set before Python/NumPy import')
+    core = getattr(np_module, '_core', None)
+    getter = getattr(getattr(core, '_multiarray_umath', None), '_get_madvise_hugepage', None)
+    if not callable(getter) or getter() is not False:
+        raise ValueError('Cannot verify that process-local NumPy hugepage advice is disabled')
+    return dict(environment_value='0', effective_madvise_hugepage=False,
+        numpy_version=np_module.__version__, verification_api='numpy._core._multiarray_umath._get_madvise_hugepage',
+        scope='current NumPy process only; no global kernel settings written',
+        interpretation='diagnostic mitigation; hugepage compaction is not a proven cause of previous slowdown')
+
+
+def record_phase(report, phase, *, started, progress=None):
+    """Bounded diagnostic heartbeat; no CUDA synchronization or RNG mutation."""
+    from src.baselines.liger_access_timing import io_snapshot
+    from src.baselines.liger_efficiency_timing import process_memory_snapshot
+    allowed = sorted(os.sched_getaffinity(0))
+    assert 1 <= len(allowed) <= 4
+    event = dict(phase=phase, elapsed_seconds=time.monotonic() - started,
+        allowed_cpus=allowed, memory=process_memory_snapshot(), io=io_snapshot())
+    if progress is not None:
+        event.update(progress)
+    report['phase_progress'].append(event)
+    print('[liger-scaling-phase] ' + json.dumps(dict(case=report['name'], **event)), flush=True)
+
+
+def cache_progress_callback(report, receipt, *, started, every_chunks=16):
+    """Check the shared deadline every completed chunk; log only bounded groups."""
+    if type(every_chunks) is not int or every_chunks <= 0:
+        raise ValueError('Progress heartbeat interval must be a positive integer')
+    counts = {}
+    def progress(*, stage, completed_rows, total_rows):
+        deadline(receipt)
+        assert stage in ('cache_build', 'cache_verification')
+        assert type(completed_rows) is int and type(total_rows) is int
+        assert 0 < completed_rows <= total_rows
+        counts[stage] = counts.get(stage, 0) + 1
+        if counts[stage] % every_chunks == 0 or completed_rows == total_rows:
+            record_phase(report, stage + '_progress', started=started,
+                progress=dict(completed_rows=completed_rows, total_rows=total_rows,
+                              completed_chunks=counts[stage]))
+    return progress
+
+
 def capacity_oom(stage, batch_size, attempt):
     return (stage == 'training_attempt' and batch_size in (2048, 4096)
             and isinstance(attempt, int) and not isinstance(attempt, bool) and 1 <= attempt <= 20)
@@ -33,7 +87,8 @@ def fixture(path):
     started = time.time()
     receipt = base_report(path, m)
     receipt.update(started_unix_seconds=started,
-                   deadline_unix_seconds=started + c['deadline_seconds'])
+                   deadline_unix_seconds=started + c['deadline_seconds'],
+                   numpy_memory_policy=numpy_memory_policy())
     ctx = PrefixRuntime(m, build_model=False)
     import tensorflow as tf
     tf.config.set_visible_devices([], 'GPU')
@@ -75,6 +130,8 @@ def load_fixture(path, m, *, check_deadline=True):
     assert receipt['status'] == 'passed' and receipt['job_id'] == os.environ['SLURM_JOB_ID']
     assert receipt['manifest_sha256'] == sha(path)
     assert receipt['source_git_commit'] == m['source_git_commit'] and receipt['phase'] == m['phase']
+    assert receipt['numpy_memory_policy']['environment_value'] == '0'
+    assert receipt['numpy_memory_policy']['effective_madvise_hugepage'] is False
     if check_deadline:
         deadline(receipt)
     assert sha(receipt['fixture']['path']) == receipt['fixture']['sha256']
@@ -121,7 +178,8 @@ def run_case(path, name):
     output = path.parent / f'{name}.json'
     assert not output.exists()
     receipt, examples, fixture_entry = load_fixture(path, m)
-    report = dict(base_report(path, m), **setting, fixture_receipt=fixture_entry, steps=[], memory=[])
+    report = dict(base_report(path, m), **setting, fixture_receipt=fixture_entry, steps=[], memory=[],
+                  phase_progress=[], numpy_memory_policy=numpy_memory_policy())
     started = time.monotonic()
     stage, attempt, ctx = 'preconditions', None, None
     try:
@@ -133,6 +191,7 @@ def run_case(path, name):
                 return
         deadline(receipt)
         stage = 'runtime_initialization'
+        record_phase(report, stage, started=started)
         ctx = PrefixRuntime(m)
         ctx.binding = dict(ctx.binding, dense_objective=objective,
             probe_fixture_sha256=fixture_entry['sha256'], probe_case=name,
@@ -146,22 +205,29 @@ def run_case(path, name):
             setup_seconds=time.monotonic() - started,
             train_seen_rows=len(ctx.seen), cold_rows=len(ctx.cold))
         report['memory'].append(dict(stage='after_runtime', **process_memory_snapshot()))
+        record_phase(report, 'after_runtime', started=started)
         deadline(receipt)
         if setting['backend'] == 'cached_seen':
             expected = dict(standardization_stats_sha256=ctx.standardization['stats_sha256'],
                 seen_rows_sha256=ctx.standardization['seen_rows_sha256'],
                 source_sha256=ctx.standardization['content_sha256'])
             stage = 'cache_build'
+            record_phase(report, stage, started=started)
             begin = time.monotonic()
+            progress = cache_progress_callback(report, receipt, started=started)
             content, catalog, report['cache'] = build_cached_seen(
-                standardized, ctx.seen, expected_binding=expected, chunk_size=65536)
+                standardized, ctx.seen, expected_binding=expected, chunk_size=65536,
+                progress_callback=progress)
             report['cache_build_seconds'] = time.monotonic() - begin
+            record_phase(report, 'after_cache_build', started=started)
             deadline(receipt)
             stage = 'cache_verification'
+            record_phase(report, stage, started=started)
             begin = time.monotonic()
             report['cache_verification'] = verify_cached_seen(content, catalog,
-                expected_binding=expected, chunk_size=65536)
+                expected_binding=expected, chunk_size=65536, progress_callback=progress)
             report['cache_verify_seconds'] = time.monotonic() - begin
+            record_phase(report, 'after_cache_verification', started=started)
         else:
             report['cache_build_seconds'] = report['cache_verify_seconds'] = 0.
         deadline(receipt)
@@ -170,6 +236,7 @@ def run_case(path, name):
         timed_catalog = TimedCatalog(CatalogAccessView(catalog, history))
         ctx.content, ctx.catalog = history, timed_catalog
         report['memory'].append(dict(stage='after_backend', **process_memory_snapshot()))
+        record_phase(report, 'after_backend', started=started)
         p = initial_progress(**ctx.training_budget)
         budget = dict(ctx.training_budget, batch_size=setting['batch_size'],
                       prefixes_per_epoch=m['counts']['prefix_examples_per_pass'])
@@ -210,10 +277,12 @@ def run_case(path, name):
         report.update(learning_state_sha256=tree_digest(state), final_progress=p,
             cpu_checks=ctx.cpu_checks,
             timing_scope='instrumented preloaded real prefixes; synchronized full train step; cache/setup/input/validation excluded')
+        record_phase(report, 'training_complete', started=started)
         stage = 'final_binding_check'
         binding(path)
         deadline(receipt)
         stage = 'complete'
+        record_phase(report, stage, started=started)
         report['status'] = 'passed'
     except torch.cuda.OutOfMemoryError:
         valid = capacity_oom(stage, setting['batch_size'], attempt)

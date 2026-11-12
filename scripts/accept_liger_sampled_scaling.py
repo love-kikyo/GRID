@@ -22,6 +22,56 @@ WARMUP = 5
 FIXTURE_PREFIXES = 81920
 
 
+def validate_numpy_policy(policy, expected_version=None):
+    assert policy['environment_value'] == '0'
+    assert policy['effective_madvise_hugepage'] is False
+    assert isinstance(policy['numpy_version'], str) and policy['numpy_version']
+    assert policy['verification_api'] == 'numpy._core._multiarray_umath._get_madvise_hugepage'
+    assert 'current NumPy process only' in policy['scope']
+    assert 'no global kernel settings written' in policy['scope']
+    assert 'not a proven cause' in policy['interpretation']
+    if expected_version is not None:
+        assert policy['numpy_version'] == expected_version
+
+
+def validate_phase_progress(report):
+    phases = report['phase_progress']
+    if report['status'] == 'skipped_after_cuda_oom':
+        assert phases == []
+        return
+    names = ['runtime_initialization', 'after_runtime']
+    if report['backend'] == 'cached_seen':
+        for stage in ('cache_build', 'cache_verification'):
+            names.append(stage)
+            chunks = list(range(16, math.ceil(11542755 / 65536), 16)) + [math.ceil(11542755 / 65536)]
+            progress = [row for row in phases if row['phase'] == stage + '_progress']
+            assert [row['completed_chunks'] for row in progress] == chunks
+            assert all(row['total_rows'] == 11542755 and row['completed_rows'] ==
+                       min(row['completed_chunks'] * 65536, 11542755) for row in progress)
+            names.extend([stage + '_progress'] * len(chunks))
+            names.append('after_' + stage)
+    names.append('after_backend')
+    if report['status'] == 'passed':
+        names.extend(['training_complete', 'complete'])
+    assert [row['phase'] for row in phases] == names
+    previous = -1.
+    pids = set()
+    for row in phases:
+        assert _finite(row['elapsed_seconds']) and row['elapsed_seconds'] >= previous
+        previous = row['elapsed_seconds']
+        assert row['allowed_cpus'] == report['resources']['allowed_cpus']
+        validate_memory_snapshot(row['memory'])
+        io = row['io']
+        assert io['schema'] == 'liger.process_access_io.v1' and _integer(io['pid'], 1)
+        pids.add(io['pid'])
+        assert _finite(io['monotonic_seconds']) and _finite(io['process_cpu_seconds'])
+        assert _integer(io['minor_faults']) and _integer(io['major_faults'])
+        assert isinstance(io['errors'], list) and isinstance(io['timing_scope'], str)
+        assert set(io['unavailable_fields']) == {key for key, value in io['io'].items() if value is None}
+        assert all(value is None or _integer(value) for value in io['io'].values())
+    assert len(pids) == 1
+
+
 def _counter(value, calls, rows):
     assert value['calls'] == calls and value['rows'] == rows
     assert value['failed_calls'] == value['unknown_rows_calls'] == 0
@@ -147,11 +197,13 @@ def validate_report(report, *, manifest, config, setting, examples,
     assert all(report[key] == value for key, value in setting.items())
     assert all(report[key] is False for key in FLAGS)
     assert report['fixture_receipt'] == fixture_entry and _finite(report['elapsed_seconds'])
+    validate_numpy_policy(report['numpy_memory_policy'])
     if report['status'] == 'skipped_after_cuda_oom':
         assert setting['batch_size'] == 4096 and setting['backend'] == 'cached_seen'
         assert report['steps'] == [] and report['memory'] == []
         assert isinstance(report['reason'], str) and report['reason']
         assert 'learning_state_sha256' not in report
+        validate_phase_progress(report)
         return
     assert report['checkpoint_binding'] == expected_binding
     assert expected_binding['probe_case'] == setting['name']
@@ -162,6 +214,7 @@ def validate_report(report, *, manifest, config, setting, examples,
     assert '4090' in report['gpu']['name'] and report['gpu']['uuid']
     assert _integer(report['gpu']['total_bytes'], 1)
     assert report['versions'] and isinstance(report['versions'], dict)
+    validate_numpy_policy(report['numpy_memory_policy'], report['versions']['numpy'])
     assert _finite(report['setup_seconds'])
     assert report['train_seen_rows'] == 11542755 and report['cold_rows'] == 23915712
     validate_cache(report, expected_binding)
@@ -169,6 +222,7 @@ def validate_report(report, *, manifest, config, setting, examples,
     count = len(report['steps'])
     failure = report['status'] == 'cuda_oom'
     validate_resource_report(report, expected_checks=1 + count + int(failure))
+    validate_phase_progress(report)
     stages = ['after_runtime', 'after_backend'] + [f'update{i + 1}' for i in range(count)]
     if failure:
         stages.append('failure')
@@ -200,7 +254,7 @@ def require_exact_cache_equivalence(lazy, cached):
     assert lazy['batch_size'] == cached['batch_size'] == 1024
     assert lazy['num_negatives'] == cached['num_negatives']
     for key in ('gpu', 'versions', 'initial_state_sha256', 'learning_state_sha256',
-                'final_progress', 'fixture_receipt'):
+                'final_progress', 'fixture_receipt', 'numpy_memory_policy'):
         assert lazy[key] == cached[key], f'Cache equivalence mismatch: {key}'
     assert [row['training'] for row in lazy['steps']] == [row['training'] for row in cached['steps']]
 
@@ -264,6 +318,7 @@ def _context(path):
     m, c = binding(path)
     fixture, examples, entry = load_fixture(path, m)
     validate_fixture(fixture, examples, asset_rows=m['asset_rows'], expected_prefixes=FIXTURE_PREFIXES, batch_size=1024)
+    validate_numpy_policy(fixture['numpy_memory_policy'])
     return m, c, fixture, examples, entry
 
 
@@ -282,6 +337,7 @@ def equivalence(path):
         job_id=os.environ['SLURM_JOB_ID'], manifest_sha256=sha(path), source_git_commit=m['source_git_commit'],
         reports=entries, fixture_receipt=fixture_entry, compared='weights, optimizer, scheduler, scaler, RNG, '
             'progress and training mode; separately validated execution binding excluded from state digest',
+        numpy_memory_policy=reports['lazy8k1024']['numpy_memory_policy'],
         **{key: False for key in FLAGS}))
     print('[liger-scaling] both K cache equivalence checks passed; larger batches allowed', flush=True)
 
@@ -292,6 +348,7 @@ def check_equivalence_receipt(path):
     assert r['status'] == 'passed_exact_cache_equivalence'
     assert r['manifest_sha256'] == sha(path) and r['job_id'] == os.environ['SLURM_JOB_ID']
     assert all(r[key] is False for key in FLAGS)
+    validate_numpy_policy(r['numpy_memory_policy'])
     for entry in r['reports']:
         assert sha(entry['path']) == entry['sha256']
     return dict(path=str(target), sha256=sha(target))
@@ -318,7 +375,7 @@ def accept(path):
     initialized = [r for r in reports.values() if r['status'] != 'skipped_after_cuda_oom']
     reference = initialized[0]
     for r in initialized[1:]:
-        for key in ('gpu', 'versions', 'initial_state_sha256', 'fixture_receipt'):
+        for key in ('gpu', 'versions', 'initial_state_sha256', 'fixture_receipt', 'numpy_memory_policy'):
             assert r[key] == reference[key]
     cached = [r for r in initialized if r['backend'] == 'cached_seen']
     assert len({r['cache']['cache_sha256'] for r in cached}) == 1
@@ -330,6 +387,7 @@ def accept(path):
         status='passed_resource_probe' if passed else 'capacity_limited_resource_probe',
         job_id=os.environ['SLURM_JOB_ID'], source_git_commit=m['source_git_commit'], manifest_sha256=sha(path),
         reports=entries, gpu=reference['gpu'], summaries=summaries,
+        numpy_memory_policy=reference['numpy_memory_policy'],
         capacity={name: r['status'] for name, r in reports.items()},
         exact_cache_equivalence_both_negative_counts=True, data_preparation=fixture['data_batches'],
         cpu_ceiling=4, library_threads=1, formal_budget_approved=False, formal_batch_selected=False,
