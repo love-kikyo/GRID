@@ -1,0 +1,42 @@
+{
+  "protocol": "liger-fixed-sid-scl-prefix-sampled-scaling-v2",
+  "phase": "sampled_reading_cache_and_batch_capacity_only",
+  "seed": 42,
+  "formal_training_ready": false,
+  "automatic_successor": false,
+  "optimizer": {"name": "AdamW", "learning_rate": 0.0003, "weight_decay": 0.035, "clip_norm": 1.0},
+  "training": {
+    "batch_size": 1024,
+    "shuffle_buffer": 8192,
+    "prefix_shuffle_buffer": 8192,
+    "history_items": 7,
+    "max_attempts": 20,
+    "max_optimizer_steps": 19260,
+    "warmup_steps": 963,
+    "chunk_size": 65536,
+    "schedule_scope": "short reading and capacity fixture only; not a formal training budget"
+  },
+  "validation": {"batch_size": 32, "access": false},
+  "cases": [
+    {"name": "lazy8k1024", "backend": "lazy", "batch_size": 1024, "num_negatives": 8192, "seed": 42},
+    {"name": "cached8k1024", "backend": "cached_seen", "batch_size": 1024, "num_negatives": 8192, "seed": 42},
+    {"name": "cached32k1024", "backend": "cached_seen", "batch_size": 1024, "num_negatives": 32768, "seed": 42},
+    {"name": "lazy32k1024", "backend": "lazy", "batch_size": 1024, "num_negatives": 32768, "seed": 42},
+    {"name": "cached8k2048", "backend": "cached_seen", "batch_size": 2048, "num_negatives": 8192, "seed": 42},
+    {"name": "cached32k2048", "backend": "cached_seen", "batch_size": 2048, "num_negatives": 32768, "seed": 42},
+    {"name": "cached8k4096", "backend": "cached_seen", "batch_size": 4096, "num_negatives": 8192, "seed": 42},
+    {"name": "cached32k4096", "backend": "cached_seen", "batch_size": 4096, "num_negatives": 32768, "seed": 42}
+  ],
+  "fixture_prefixes": 81920,
+  "warmup_attempts": 5,
+  "measured_attempts": 15,
+  "deadline_seconds": 2400,
+  "standardization_fit": false,
+  "cache_trainable_projection": false,
+  "cache_full_seen_features": true,
+  "cache_storage": "process_local_cpu_ram",
+  "verify_cached_features": true,
+  "validation_test_access": false,
+  "resume_probe": false,
+  "resources": {"gpus": 1, "gpu_model": "RTX 4090", "cpu_ceiling": 4, "library_threads": 1, "memory_gb": 24}
+}
