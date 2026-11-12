@@ -12,6 +12,17 @@
 
 **160306（单卡训练资源短测）**：America/Denver 11-12 10:32:23提交并启动（Asia/Shanghai 11-13 01:32:23），aias-compute-4，单4090 / 整项4CPU / 24G / 45分钟。执行版本 `3a12d71d4dac4bcfad56794d7365a5ef2d2edacd`，提交时干净，无自动后继；短测验收后才单独提交已授权的双卡验证。[Manifest](../logs/training_launch/liger_capacity384_2026-11-12_v1/manifest.json) SHA256 `cb3096f0678e2015fe7349114903c84fee889959bdb7c7003b78963faf226d33`；[启动记录](../logs/training_launch/liger_capacity384_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cap384Train-160306.out)、[stderr](../logs/slurm/GRID-LIGER-Cap384Train-160306.err)。
 
+**160306完成并独立验收通过：** Slurm `COMPLETED / 0:0`，08:11；Asia/Shanghai 01:40:34结束。节点278项预检通过，两档各13次成功更新、26624个前缀、152个梯度张量、无AMP跳步 / OOM。初始模型、13批样本及逐步负例池身份完全一致；各自新进程恢复后的第2/3步记录和完整学习状态摘要精确一致。实际CPU绑定 `[2,3,28,29]`，库线程1；同一物理4090。[训练验收](../logs/training_launch/liger_capacity384_2026-11-12_v1/training_acceptance.json)引用四份报告及固定诊断权重，已再次核对报告哈希和计时算术。
+
+| 物理batch × 累积（逻辑2048 / 32K负例） | 读取 / 训练计算，秒 | 总秒/逻辑步 | prefix/s | allocated / reserved，GiB | 单遍训练外推，小时 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 512 × 4 | 0.492 / 0.680 | 1.17204 | 1747.38 | 5.569 / 5.963 | 7.312 |
+| 1024 × 2 | 0.504 / 0.621 | 1.12440 | 1821.42 | 9.506 / 9.945 | 7.015 |
+
+计时仅用连续运行第4–13步，峰值取全部13步；包含同步输入读取和打包 / 前后向 / 更新，不含缓存准备、checkpoint保存、逐步审计和验证。恢复进程不作为第二套吞吐样本；其1024档reserved最高10.191GiB。连续两档初始化99.00 / 82.47秒，进程RSS高水位13.07 / 13.03GiB。1024档吞吐快约4.2%，差距小且属于短测，不能证明长期稳定加速或学习效果。
+
+**160308（双卡验证资源短测）**：单卡验收后于Asia/Shanghai 01:40:59提交并启动，aias-compute-4 / 两张4090 / 整项仍4CPU / 24G / 45分钟；无后继。仍绑定同一执行版本和manifest，只加载预先固定的512×4第13步模型权重；65条真实validation全部cold扫描，不是347416条全量validation。[启动记录](../logs/training_launch/liger_capacity384_2026-11-12_v1/validation_launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cap384Val-160308.out)、[stderr](../logs/slurm/GRID-LIGER-Cap384Val-160308.err)。节点125项预检通过，结果待验收。
+
 ## LIGER 采样版正式首轮
 
 作者确认32K共享负例、batch2048；seed42随机初始化，先完整一遍训练，再做一次全量validation。不接旧训练 / 诊断权重，不读test，不自动扩seed或接第二遍。新配置固定45996113个prefix、22460批、尾批81；保留lr3e-4 / AdamW / weight_decay0.035，warmup1123后按一遍预算cosine。以后若续训须另立调度契约，不声称原三轮调度仍在延续。
