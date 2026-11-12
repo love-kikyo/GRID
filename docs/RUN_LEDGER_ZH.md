@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-12 13:33（Asia/Shanghai），159857已取消并定位索引转换性能缺陷，正在修复；尚无更大batch结果，无正式训练。前次提交记录保留America/Denver时间（比Slurm早15小时）。
+更新：2026-11-12 13:40（Asia/Shanghai），159877修复后复测已RUNNING；159857已取消，尚无更大batch结果，无正式训练。前次提交记录保留America/Denver时间（比Slurm早15小时）。
 
 ## LIGER 读取诊断与更大 batch
 
@@ -21,6 +21,10 @@
 修复 `842f8fb`：新增整数精确行定位，仅转换短查询，保持高位cold ID与signed / unsigned边界；历史和目标两处均接入，缓存提供逐块截止回调。修复专项174项通过；旧历史来源测试改为读取固定git版本，不放松旧运行入口。修复helper同规模10次合成查询0.000358秒、临时峰值2071字节，与旧查询位置逐值相同；不是训练加速比。
 
 v3复测保留原8配置和45分钟 / 共享40分钟上限，显式绑定5份继承文件的旧 / 新哈希；新增进程级NumPy大页提示开关的实际状态核验，以及缓存构建 / 核验进度和内存 / I/O记录。提交前全部LIGER / launcher / CPU资源回归 **1065 passed、5 skipped、1 warning，37.72秒**（单核2、线程1、GPU不可见，`NUMPY_MADVISE_HUGEPAGE=0`）；skips和warning口径不变。没有正式训练预算。
+
+**159877（v3复测）**：Asia/Shanghai 13:40:21提交 / 启动，13:40:28核验RUNNING；`aias-compute-4` / 单4090 / 整项4CPU / 24G，45分钟硬上限，无依赖、无后继。执行版本 `7297f9d0c0231c71e87b28f61d8a097caa34d1c6`，提交时干净；修复 `842f8fb`，来源绑定 / 阶段诊断 `b4cc05c`。提交前核对队列为空，未并行追加其他任务。
+
+[v3配置](../configs/baselines/liger_sampled_scaling_v3.json)、[Manifest](../logs/training_launch/liger_sampled_scaling_2026-11-12_v3/manifest.json)、[启动记录](../logs/training_launch/liger_sampled_scaling_2026-11-12_v3/launch.json)、[stdout](../logs/slurm/GRID-LIGER-ScalingV3-159877.out)、[stderr](../logs/slurm/GRID-LIGER-ScalingV3-159877.err)。Manifest SHA256 `e0e8fb4737c80c8ae3ba9a15ca9aa638e6a91358970ee62454040da7521bbfa1`。完成后需独立复核两组逐步记录 / 完整学习状态，以及资源和吞吐；不根据启动成功宣称修复带来的端到端收益。
 
 ## LIGER 8K / 32K 采样资源短测
 
