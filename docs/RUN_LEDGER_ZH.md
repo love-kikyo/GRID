@@ -10,6 +10,10 @@
 
 新增[正式配置](../configs/baselines/liger_sampled_train_seed42_v1.json)、[来源绑定](../scripts/liger_sampled_training_manifest.py)、[共享训练 / 验收入口](../scripts/train_liger_sampled_cpu4.py)、[保存恢复 / cold衔接入口](../scripts/probe_liger_sampled_training.py)。CPU专项含来源与权限85项、正式编排 / 产物验收52项、衔接判定16项；全部LIGER / launcher / CPU资源回归 **1218 passed、5 skipped、1 warning，33.09秒**，单核2、线程1、GPU不可见。5个可选sklearn跳过及旧只读NumPy提示不变。独立复核发现的旧批数 / cold计数字段风险已处理，新增执行计数与真实schema验收测试；shell语法与diff检查通过。
 
+**159934（同配置衔接检查）**：客户端2026-11-12 00:36:48提交 / 启动，00:37:05核验RUNNING；aias-compute-4 / 单4090 / 整项4CPU / 24G / 45分钟。执行源 `44085a87000a2d796c1f3e1557e1ce963ccf9d7f`，提交时干净；配置绑定 `ffa976e`、正式入口 `6af04fb`、恢复门禁 `526d80d`。节点224项预检通过，三步连续 + 从第1步新进程重放两步，两路径第2步后各验证65条完整cold；采用正式22460 / warmup1123调度但仅执行三步，不接正式训练权重。
+
+[Manifest](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/manifest.json) SHA256 `1567fba935dbba19529c208c3356f0589c78e2fe10ebcde037ac4c733d07aed3`；[启动记录](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledGate-159934.out)、[stderr](../logs/slurm/GRID-LIGER-SampledGate-159934.err)。只有新收据 `training_gate_acceptance.json` 全部验收通过后才单独提交已批准的正式首轮，无队列依赖后继或自动提交。
+
 ## LIGER 读取诊断与更大 batch
 
 作者批准先核查读取波动、测试更大batch，再决定正式预算。新增代码分三次提交：`3b66d00`（数值不变的访问计时与测试）、`761eba6`（新配置 / 来源绑定 / launcher）、`1b5e441`（独立训练短测及缓存等价 / 容量验收与测试）。没有修改159735及更早任务的执行源。提交前全部LIGER / launcher / CPU资源回归 **1010 passed、5 skipped、1 warning，37.40秒**；单核、线程1、GPU不可见，独立交叉复核通过。5个skip仍是可选sklearn缺失，warning仍为旧只读NumPy提示。
