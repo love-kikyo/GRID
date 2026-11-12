@@ -20,6 +20,8 @@
 
 [正式Manifest](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/manifest.json) SHA256 `48729be8c73243f126dd72c99270fa47bb50499f9fd72c46d47272313e7ff811`；[启动记录](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledTrain42-159959.out)、[stderr](../logs/slurm/GRID-LIGER-SampledTrain42-159959.err)、[Run目录](../logs/train/runs/liger_sampled_train_seed42_2026-11-12_v1)。正式初始参数哈希必须匹配已验收seed42随机状态，训练与诊断checkpoint通过binding用途隔离。
 
+启动复核通过：初始attempt / update / prefix均为0，模型哈希 `73bbf96eddcd9a7bd952c15050fbe5a0e5d910b80991f899c1e676dee22fdfa7` 匹配已验收随机初始化；正式前3步的身份、loss、LR、梯度、采样、scaler及摘要链与159934连续路径逐值相同（不比较耗时 / 显存）。检查时已完成37次更新，CPU4 `[0,1,28,29]`，与衔接检查同一4090。独立[启动收据](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/startup_acceptance.json)绑定preflight和日志前3行；只验收启动，不宣称正式训练已完成或指标已收敛。
+
 ## LIGER 读取诊断与更大 batch
 
 作者批准先核查读取波动、测试更大batch，再决定正式预算。新增代码分三次提交：`3b66d00`（数值不变的访问计时与测试）、`761eba6`（新配置 / 来源绑定 / launcher）、`1b5e441`（独立训练短测及缓存等价 / 容量验收与测试）。没有修改159735及更早任务的执行源。提交前全部LIGER / launcher / CPU资源回归 **1010 passed、5 skipped、1 warning，37.40秒**；单核、线程1、GPU不可见，独立交叉复核通过。5个skip仍是可选sklearn缺失，warning仍为旧只读NumPy提示。
