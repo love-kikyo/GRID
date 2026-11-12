@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-11 21:59（America/Denver，UTC−7），LIGER读取 / batch短测159857已RUNNING；159735已验收，无正式训练或后继。下方历史记录保留原Asia/Shanghai时间，本轮客户端时间比Slurm原始时间早15小时。
+更新：2026-11-12 13:33（Asia/Shanghai），159857已取消并定位索引转换性能缺陷，正在修复；尚无更大batch结果，无正式训练。前次提交记录保留America/Denver时间（比Slurm早15小时）。
 
 ## LIGER 读取诊断与更大 batch
 
@@ -10,7 +10,17 @@
 
 [配置](../configs/baselines/liger_sampled_scaling_v2.json)、[入口](../run_liger_sampled_scaling_cpu4.sh)、[Manifest](../logs/training_launch/liger_sampled_scaling_2026-11-11_v2/manifest.json)、[启动记录](../logs/training_launch/liger_sampled_scaling_2026-11-11_v2/launch.json)、[stdout](../logs/slurm/GRID-LIGER-ScalingV2-159857.out)、[stderr](../logs/slurm/GRID-LIGER-ScalingV2-159857.err)。Manifest SHA256 `aebc060e3555a5a759b6109e0e402d9a2040491d7420c819d1b67fab6364c558`，执行源 `1b5e441562969114fa2b54d8222155c78c81ece5`；全部83个前序执行源保留原哈希，无漂移例外。
 
-本轮把历史侧B次读取与候选侧1次读取分开计时，并记录raw gather、标准化外层CPU差值及进程I/O / faults。缓存只存冻结标准化输入，约5.50GiB临时RAM；每进程重新构建并全量逐位核验，不新增大型磁盘资产，不缓存可训练投影。构建 / 核验 / 初始化成本单列；计时包含观测开销，不将CPU差值相减当纯GPU时间，不将零I/O计数当作无BeeGFS读取。待验收 `cache_equivalence.json` 与 `scaling_acceptance.json`；更大batch结果只证明资源可行性，不证明与原batch优化等价或已拟合。
+本轮把历史侧B次读取与候选侧1次读取分开计时，并记录raw gather、标准化外层CPU差值及进程I/O / faults。缓存只存冻结标准化输入，约5.50GiB临时RAM；每进程重新构建并全量逐位核验，不新增大型磁盘资产，不缓存可训练投影。构建 / 核验 / 初始化成本单列；计时包含观测开销，不将CPU差值相减当纯GPU时间，不将零I/O计数当作无BeeGFS读取。
+
+**结束核验：** 159857于Asia/Shanghai 13:30:13主动取消，Slurm `CANCELLED by 1018`，总时长30:57；不是OOM、正常完成或完整资源验收。节点313项测试通过；lazy8K1024完成20步，15个计时步均值3.71345秒、范围1.04302–6.67833秒。cached8K1024缓存准备约25分钟，只留下第1步日志（25.414秒，其中history读取19.900秒、CPU 19.890秒），取消时没有最终case报告。未运行32K或更大batch，没有 `cache_equivalence.json` / `scaling_acceptance.json`。
+
+确认缺陷：int32 seen索引与int64查询触发NumPy `searchsorted` 整表类型提升；缓存历史每条查询一次，训练目标每批一次。11542755行每次临时拷贝92342040字节，batch1024历史侧累计约94.56GB。独立同规模合成测试中，10次混合类型查询耗0.221–0.243秒、临时分配约92.34MB；仅把短查询转成匹配类型后0.000058–0.000065秒、临时分配约1KB，位置完全一致。这是实现性能问题，不是模型学习结论；也不能解释全部缓存构建成本。
+
+只读节点核查同时发现大量内核CPU和直接内存回收，但作业内存快照约7.44GiB / 24GiB、限额及OOM计数全零。THP为always、defrag为madvise；这些只支持进一步检查内存路径，不证明THP或NUMA因果，也不说明应增大内存申请。未修改全局设置。[中断复核](../logs/training_launch/liger_sampled_scaling_2026-11-11_v2/interruption_review.json)绑定日志与已完成报告；旧执行版本和产物保留。修复后另用新manifest复测，不把旧异常吞吐转成正式预算。
+
+修复 `842f8fb`：新增整数精确行定位，仅转换短查询，保持高位cold ID与signed / unsigned边界；历史和目标两处均接入，缓存提供逐块截止回调。修复专项174项通过；旧历史来源测试改为读取固定git版本，不放松旧运行入口。修复helper同规模10次合成查询0.000358秒、临时峰值2071字节，与旧查询位置逐值相同；不是训练加速比。
+
+v3复测保留原8配置和45分钟 / 共享40分钟上限，显式绑定5份继承文件的旧 / 新哈希；新增进程级NumPy大页提示开关的实际状态核验，以及缓存构建 / 核验进度和内存 / I/O记录。提交前全部LIGER / launcher / CPU资源回归 **1065 passed、5 skipped、1 warning，37.72秒**（单核2、线程1、GPU不可见，`NUMPY_MADVISE_HUGEPAGE=0`）；skips和warning口径不变。没有正式训练预算。
 
 ## LIGER 8K / 32K 采样资源短测
 
