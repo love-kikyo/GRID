@@ -1,8 +1,8 @@
 # Run 台账
 
-更新：2026-11-12 00:30（America/Denver，UTC−7），159877已验收；作者确认32K / batch2048，正式首轮入口准备中。Slurm原始时间（Asia/Shanghai）比客户端快15小时，历史时间保留原标注。
+更新：2026-11-12 00:45（America/Denver，UTC−7），159934衔接检查通过，正式首轮159959已RUNNING。Slurm原始时间（Asia/Shanghai）比客户端快15小时，历史时间保留原标注。
 
-## LIGER 采样版正式首轮准备
+## LIGER 采样版正式首轮
 
 作者确认32K共享负例、batch2048；seed42随机初始化，先完整一遍训练，再做一次全量validation。不接旧训练 / 诊断权重，不读test，不自动扩seed或接第二遍。新配置固定45996113个prefix、22460批、尾批81；保留lr3e-4 / AdamW / weight_decay0.035，warmup1123后按一遍预算cosine。以后若续训须另立调度契约，不声称原三轮调度仍在延续。
 
@@ -13,6 +13,12 @@
 **159934（同配置衔接检查）**：客户端2026-11-12 00:36:48提交 / 启动，00:37:05核验RUNNING；aias-compute-4 / 单4090 / 整项4CPU / 24G / 45分钟。执行源 `44085a87000a2d796c1f3e1557e1ce963ccf9d7f`，提交时干净；配置绑定 `ffa976e`、正式入口 `6af04fb`、恢复门禁 `526d80d`。节点224项预检通过，三步连续 + 从第1步新进程重放两步，两路径第2步后各验证65条完整cold；采用正式22460 / warmup1123调度但仅执行三步，不接正式训练权重。
 
 [Manifest](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/manifest.json) SHA256 `1567fba935dbba19529c208c3356f0589c78e2fe10ebcde037ac4c733d07aed3`；[启动记录](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledGate-159934.out)、[stderr](../logs/slurm/GRID-LIGER-SampledGate-159934.err)。只有新收据 `training_gate_acceptance.json` 全部验收通过后才单独提交已批准的正式首轮，无队列依赖后继或自动提交。
+
+**159934完成验收：** 00:42:49结束，Slurm `COMPLETED / 0:0`，6:01；101份执行源 / 61份输入元数据 / 9份上游源及10个收据引用产物独立核验通过。连续三步6144个前缀、850个原最终GT，无AMP跳步；新进程重放第2/3步记录和完整最终状态一致（`77af6d2dc96a247f4232e2dd913f2da1000d08a404004145063bfba5f0152f28`），65条验证全部11字段逐值一致，验证前后完整训练状态不变。训练峰值allocated/reserved约10.68/11.54GiB，验证约12.13/12.49GiB；CPU绑定 `[0,1,28,29]`，训练→验证切换通过。[验收收据](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/training_gate_acceptance.json) SHA256 `9add25e06b60949c0c1b7b8d99b06a6c295a7ceb80e4a2f7a4adac12e7de7ba2`；[完成复核](../logs/training_launch/liger_sampled_training_gate_2026-11-12_v1/completion.json)。仅为实现验收，不使用三步指标评价学习质量。
+
+**159959（正式首轮）**：00:44:18提交 / 启动，00:44:42核验RUNNING；aias-compute-4 / 单4090 / 整项4CPU / 24G / 12小时，只有此项、无依赖后继。执行版本 `f0acf0807a2dcfdab269d349c89e10dfb1c161bb`，提交时干净；与159934的执行文件完全相同，只新增正式manifest与用途隔离。节点224项预检通过。Seed42随机初始化，不加载任何旧checkpoint；32K负例、batch2048、22460批、尾批81，完整一遍后全量347416条validation及独立验收，停止等待作者审核。预计8–10小时并非完工承诺，不含test；每1000批及验证前后保存完整状态。
+
+[正式Manifest](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/manifest.json) SHA256 `48729be8c73243f126dd72c99270fa47bb50499f9fd72c46d47272313e7ff811`；[启动记录](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledTrain42-159959.out)、[stderr](../logs/slurm/GRID-LIGER-SampledTrain42-159959.err)、[Run目录](../logs/train/runs/liger_sampled_train_seed42_2026-11-12_v1)。正式初始参数哈希必须匹配已验收seed42随机状态，训练与诊断checkpoint通过binding用途隔离。
 
 ## LIGER 读取诊断与更大 batch
 
