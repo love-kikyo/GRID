@@ -253,3 +253,92 @@ def test_module_has_no_learned_projection_or_torch_tensor_cache():
     source = inspect.getsource(liger_feature_cache)
     assert 'import torch' not in source and 'import tensorflow' not in source
     assert 'model.emb_proj' not in source
+
+
+def test_int64_history_search_never_promotes_the_full_int32_seen_catalog(monkeypatch):
+    _, seen, _, _, content, _, _ = built()
+    original, calls = np.searchsorted, []
+    def checked(rows, values, side):
+        assert rows is seen and rows.dtype == values.dtype == np.int32
+        calls.append(values.copy())
+        return original(rows, values, side=side)
+    monkeypatch.setattr(np, 'searchsorted', checked)
+    actual = content[np.array([0, 2, 0, 10], dtype=np.int64)]
+    np.testing.assert_array_equal(actual, content.cache[[0, 1, 0, 4]])
+    assert len(calls) == 1 and calls[0].shape == (4,)
+
+
+class LargeVirtualContent:
+    ndim = 2
+    dtype = np.dtype('float32')
+    shape = (2**32 + 4, 3)
+    def __len__(self): return self.shape[0]
+    def __getitem__(self, selection):
+        rows = np.asarray(selection)
+        values = (rows % 251).astype(np.float32)
+        return np.stack((values, values + 1, values * 2), axis=-1)
+
+
+@pytest.mark.parametrize('selection', [
+    np.array([0, 2**31 - 1, 2**31, 2**32], dtype=np.int64),
+    np.array([[2**32, 0], [2**31 - 1, 2**31]], dtype=np.uint64),
+    np.uint64(2**32 + 3), np.int64(2**31 - 1),
+])
+def test_large_asset_cold_ids_beyond_int32_do_not_wrap_or_alias_cached_items(selection):
+    raw = LargeVirtualContent()
+    seen = np.array([0, 2, 2**31 - 1], dtype=np.int32)
+    stats = fit_standardization(raw, seen, content_sha256='a' * 64)
+    base = StandardizedContent(raw, stats, expected_content_sha256='a' * 64)
+    binding = dict(standardization_stats_sha256=stats['stats_sha256'],
+        seen_rows_sha256=stats['seen_rows_sha256'], source_sha256='a' * 64)
+    content, catalog, _ = build_cached_seen(base, seen, expected_binding=binding, chunk_size=2)
+    expected = base[selection]
+    actual = content[selection]
+    assert actual.shape == expected.shape
+    np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+    np.testing.assert_array_equal(catalog[:], base[seen])
+
+
+def test_optional_chunk_progress_reports_tail_and_preserves_exact_cache():
+    _, seen, content, binding = fixture()
+    events = []
+    cached, catalog, summary = build_cached_seen(content, seen, chunk_size=2,
+        expected_binding=binding, progress_callback=lambda **event: events.append(event))
+    assert events == [dict(stage='cache_build', completed_rows=n, total_rows=5) for n in (2, 4, 5)]
+    events.clear()
+    receipt = verify_cached_seen(cached, catalog, chunk_size=2, expected_binding=binding,
+        progress_callback=lambda **event: events.append(event))
+    assert events == [dict(stage='cache_verification', completed_rows=n, total_rows=5) for n in (2, 4, 5)]
+    assert receipt['cache_sha256'] == summary['cache_sha256']
+    np.testing.assert_array_equal(cached.cache.view(np.uint32), content[seen].view(np.uint32))
+
+
+@pytest.mark.parametrize('phase', ['build', 'verify'])
+def test_progress_callback_exception_aborts_after_current_chunk_without_source_changes(phase):
+    raw, seen, content, binding = fixture()
+    original = raw.copy()
+    events = []
+    def stop(**event):
+        events.append(event)
+        raise TimeoutError('Synthetic bounded cache deadline')
+    if phase == 'build':
+        with pytest.raises(TimeoutError):
+            build_cached_seen(content, seen, chunk_size=2, expected_binding=binding, progress_callback=stop)
+    else:
+        cached, catalog, _ = build_cached_seen(content, seen, chunk_size=2, expected_binding=binding)
+        before = cached.cache.copy()
+        with pytest.raises(TimeoutError):
+            verify_cached_seen(cached, catalog, chunk_size=2, expected_binding=binding, progress_callback=stop)
+        np.testing.assert_array_equal(cached.cache, before)
+    assert len(events) == 1 and events[0]['completed_rows'] == 2
+    np.testing.assert_array_equal(raw, original)
+
+
+@pytest.mark.parametrize('callback', [1, 'progress', {}, True])
+def test_invalid_progress_callback_is_rejected(callback):
+    _, seen, content, binding = fixture()
+    with pytest.raises(ValueError, match='progress_callback'):
+        build_cached_seen(content, seen, expected_binding=binding, progress_callback=callback)
+    cached, catalog, _ = build_cached_seen(content, seen, expected_binding=binding)
+    with pytest.raises(ValueError, match='progress_callback'):
+        verify_cached_seen(cached, catalog, expected_binding=binding, progress_callback=callback)

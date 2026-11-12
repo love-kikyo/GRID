@@ -331,3 +331,19 @@ def test_sampled_checkpoint_resume_reproduces_sampling_dropout_and_updates(tmp_p
     with pytest.raises(ValueError, match='binding'):
         restore_checkpoint(path, resumed.model, resumed.optimizer, resumed.scheduler,
                            resumed.scaler, dict(binding, dense_objective=sampling_binding(dict(config, seed=43))))
+
+
+def test_target_row_lookup_keeps_int32_catalog_and_casts_only_batch_queries(monkeypatch):
+    f = fixture()
+    f.seen = f.seen.astype(np.int32)
+    f.catalog = RowCatalog(f.content, f.seen)
+    original, calls = np.searchsorted, []
+    def checked(rows, values, *args, **kwargs):
+        if rows is f.seen:
+            assert rows.dtype == values.dtype == np.int32
+            calls.append(values.copy())
+        return original(rows, values, *args, **kwargs)
+    monkeypatch.setattr(np, 'searchsorted', checked)
+    report = step(f, dense_sampling={'num_negatives': 1, 'seed': 42})
+    assert report['updates'] == 1 and len(calls) == 1
+    np.testing.assert_array_equal(calls[0], [0, 2, 4])

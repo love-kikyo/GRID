@@ -68,10 +68,15 @@ def test_unknown_case_is_rejected():
         manifest.objective_for_case({'dense_objectives': manifest.dense_objectives(c)}, c, 'full')
 
 
-def test_frozen_predecessor_and_exact_two_file_transition():
+def test_frozen_predecessor_and_historical_exact_two_file_transition(monkeypatch):
     assert manifest.sha(manifest.PRIOR) == manifest.PRIOR_SHA
     assert manifest.sha(manifest.RECEIPT) == manifest.RECEIPT_SHA
     old = json.loads(manifest.PRIOR.read_text())
+    # This tests the accepted v1 transition, not permission to run v1 against
+    # today's source tree. The old runtime still rejects current source drift.
+    accepted_revision = '13ed6d3ad7d3bf8140215d043cf7fb09b499c438'
+    monkeypatch.setattr(manifest, 'sha', lambda path: manifest.git_blob_sha(
+        accepted_revision, str(Path(path).relative_to(ROOT))))
     sources, transitions = manifest.migrated_sources(old['execution_sources'])
     assert set(sources) == set(old['execution_sources'])
     assert set(transitions) == {str(ROOT / path) for path in manifest.REVISIONS}

@@ -15,6 +15,7 @@ import torch
 
 from src.baselines.liger_full_catalog import full_catalog_cross_entropy
 from src.baselines.liger_sampled_catalog import sampled_catalog_cross_entropy, sampling_binding
+from src.baselines.liger_row_lookup import lookup_sorted_rows
 from src.baselines.liger_state import tree_digest
 from src.baselines.liger_supervision import pack_supervised_batch
 
@@ -113,7 +114,7 @@ def train_step(model, optimizer, scheduler, scaler, method, evaluation, records,
     inputs, identity = pack_supervised_batch(records, sids, content, weighting='prefix')
     if identity['loss_weighting'] != 'prefix' or not np.all(identity['loss_weights'] == 1.):
         raise ValueError('Formal prefix loss must weight every supervised prefix equally')
-    positions = np.searchsorted(seen, identity['target_rows'])
+    positions = lookup_sorted_rows(seen, identity['target_rows'])
     if (positions >= len(seen)).any() or not np.array_equal(seen[positions], identity['target_rows']):
         raise ValueError('Training prefix GT missing from the full seen catalog')
     data_sha = prefix_identity_digest(identity)

@@ -16,6 +16,7 @@ import numpy as np
 from src.baselines.liger_standardization import (
     SCHEMA, StandardizedContent, statistics_digest,
 )
+from src.baselines.liger_row_lookup import lookup_sorted_rows
 
 
 _BINDING_KEYS = frozenset({'standardization_stats_sha256', 'seen_rows_sha256', 'source_sha256'})
@@ -153,7 +154,10 @@ class CachedSeenContent:
         shape = indices.shape + (self.shape[1],)
         if not len(flat):
             return np.empty(shape, dtype=np.float32)
-        positions = np.searchsorted(self.seen_rows, flat)
+        # Histories arrive as int64, whereas the frozen seen array is int32.
+        # Casting only the short query avoids copying the entire seen catalog
+        # on every history access; high cold IDs still fall through unchanged.
+        positions = lookup_sorted_rows(self.seen_rows, flat)
         safe = np.minimum(positions, len(self.seen_rows) - 1)
         cached = (positions < len(self.seen_rows)) & (self.seen_rows[safe] == flat)
         if cached.all():
@@ -189,14 +193,18 @@ class CachedSeenCatalog:
         return self.content._values[selection]
 
 
-def build_cached_seen(content, seen, *, chunk_size=65536, expected_binding):
+def build_cached_seen(content, seen, *, chunk_size=65536, expected_binding, progress_callback=None):
     """Return (global_wrapper, direct_seen_catalog, JSON-safe build_summary).
 
     Exactly one len(seen) x feature_dimension FP32 array is allocated. Seen is
     retained by identity and made read-only, not copied. Input source/scaler
     values are unchanged; original asset row zero is a real cached item.
+    An optional callback runs after each completed chunk; exceptions abort
+    construction without publishing a cache, enabling bounded probe deadlines.
     """
     started = time.monotonic()
+    if progress_callback is not None and not callable(progress_callback):
+        raise ValueError('progress_callback must be callable or None')
     binding = _validate_source(content, seen, expected_binding, chunk_size)
     values = np.empty((len(seen), content.shape[1]), dtype=np.float32)
     digest = hashlib.sha256()
@@ -208,6 +216,8 @@ def build_cached_seen(content, seen, *, chunk_size=65536, expected_binding):
         values[start:stop] = transformed
         _hash_chunk(digest, values[start:stop])
         del transformed
+        if progress_callback is not None:
+            progress_callback(stage='cache_build', completed_rows=stop, total_rows=len(seen))
     values.flags.writeable = False
     seen.flags.writeable = False
     summary = dict(
@@ -222,9 +232,11 @@ def build_cached_seen(content, seen, *, chunk_size=65536, expected_binding):
     return wrapper, CachedSeenCatalog(wrapper), dict(summary)
 
 
-def verify_cached_seen(content, catalog, *, expected_binding, chunk_size=65536):
+def verify_cached_seen(content, catalog, *, expected_binding, chunk_size=65536, progress_callback=None):
     """Independently recompute every seen row by chunks and compare FP32 bits."""
     started = time.monotonic()
+    if progress_callback is not None and not callable(progress_callback):
+        raise ValueError('progress_callback must be callable or None')
     if not isinstance(content, CachedSeenContent) or not isinstance(catalog, CachedSeenCatalog):
         raise ValueError('Expected the cached wrapper and direct catalog pair')
     if catalog.content is not content or catalog.rows is not content.seen_rows:
@@ -246,6 +258,8 @@ def verify_cached_seen(content, catalog, *, expected_binding, chunk_size=65536):
             raise ValueError('Cached standardized features differ from an independent source recomputation')
         _hash_chunk(digest, actual)
         del expected
+        if progress_callback is not None:
+            progress_callback(stage='cache_verification', completed_rows=stop, total_rows=len(catalog))
     cache_sha = digest.hexdigest()
     if cache_sha != content.summary['cache_sha256'] or values.nbytes != content.summary['cache_bytes']:
         raise ValueError('Cache content SHA256 or byte count changed')
