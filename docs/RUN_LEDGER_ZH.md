@@ -1,6 +1,14 @@
 # Run 台账
 
-更新：2026-11-12 00:45（America/Denver，UTC−7），159934衔接检查通过，正式首轮159959已RUNNING。Slurm原始时间（Asia/Shanghai）比客户端快15小时，历史时间保留原标注。
+更新：2026-11-12 10:32（America/Denver，UTC−7），159959已完成，384维资源短测准备中。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+
+## LIGER 384维资源短测
+
+作者仅批准实现、单卡梯度累积与双卡完整cold验证短测；正式重训未获批准。[固定配置](../configs/baselines/liger_capacity384_probe_v1.json)、[训练入口](../run_liger_capacity_train_cpu4.sh)、[验证入口](../run_liger_capacity_val_cpu4.sh)。具体门禁维护在[实验计划](EXPERIMENT_PLAN_ZH.md#当前liger-384维容量资源门禁2026-11-12americadenver)，运行结果待实际产物，不填写预计显存为实测。
+
+总参数41868160、Transformer主体34222464；原128维为10070912 / 6689152。新实现隔离于旧入口，保留原SID、标准化、多前缀监督、32K采样损失和完整cold候选机制。训练短测比较512×4与1024×2，同为逻辑batch2048；验证只使用预先固定的512第13步诊断权重，不按短测效果选权重。
+
+提交前全LIGER / 仓库launcher / CPU资源回归 **1569 passed、5 skipped、1 warning，36.24秒**；配置与入口最终专项另有211项通过。单核2、库线程1、GPU不可见；skip仍为可选sklearn缺失，旧只读NumPy提示不变。独立复核覆盖整批 / 累积梯度及AdamW状态、尾批81、AMP跳步、逐微批释放查询图、新上下文精确恢复；双卡合并toy测试和65条验证编排 / 独立落盘复算通过。CPU测试不替代真实GPU容量与全目录验收。
 
 ## LIGER 采样版正式首轮
 
@@ -21,6 +29,15 @@
 [正式Manifest](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/manifest.json) SHA256 `48729be8c73243f126dd72c99270fa47bb50499f9fd72c46d47272313e7ff811`；[启动记录](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-SampledTrain42-159959.out)、[stderr](../logs/slurm/GRID-LIGER-SampledTrain42-159959.err)、[Run目录](../logs/train/runs/liger_sampled_train_seed42_2026-11-12_v1)。正式初始参数哈希必须匹配已验收seed42随机状态，训练与诊断checkpoint通过binding用途隔离。
 
 启动复核通过：初始attempt / update / prefix均为0，模型哈希 `73bbf96eddcd9a7bd952c15050fbe5a0e5d910b80991f899c1e676dee22fdfa7` 匹配已验收随机初始化；正式前3步的身份、loss、LR、梯度、采样、scaler及摘要链与159934连续路径逐值相同（不比较耗时 / 显存）。检查时已完成37次更新，CPU4 `[0,1,28,29]`，与衔接检查同一4090。独立[启动收据](../logs/training_launch/liger_sampled_train_seed42_2026-11-12_v1/startup_acceptance.json)绑定preflight和日志前3行；只验收启动，不宣称正式训练已完成或指标已收敛。
+
+**159959完成验收：** Slurm `COMPLETED / 0:0`，08:32:21，Asia/Shanghai 2026-11-13 00:16:39结束（America/Denver 11-12 09:16:39）。完整45996113个前缀 / 6573674个原最终GT / 22460批；22454次成功更新、6次AMP跳步，未补步；全量validation347416条，训练状态在验证前后保持不变。读取3.296小时、训练计算2.951小时；此处不把作业总时长当纯GPU训练成本。
+
+| 完整validation | Recall@5 | Recall@10 | Recall@20 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| 自然beam / dense重排 | 0.001100 | 0.001284 | 0.001431 | 0.000924 |
+| beam + 完整cold / dense重排 | 0.033916 | 0.036547 | 0.039250 | 0.031087 |
+
+上表不是test或论文主表；自然beam20仅覆盖497/347416个GT，数值与运行完整性验收通过不等于效果达标。来源为[正式结果](../logs/train/runs/liger_sampled_train_seed42_2026-11-12_v1/result.json)及[验收收据](../logs/train/runs/liger_sampled_train_seed42_2026-11-12_v1/acceptance.json)，结果SHA256 `dc2cbaef195bf1d6bef4c91fb6ad5737b0b0c5ec5f3a1c0b84503f9e93e611a0`。仍不接第二遍或test，下一项仅为上述384维资源门禁。
 
 ## LIGER 读取诊断与更大 batch
 
