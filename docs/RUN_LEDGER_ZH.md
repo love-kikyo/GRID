@@ -10,6 +10,8 @@
 
 提交前全LIGER / 仓库launcher / CPU资源回归 **1569 passed、5 skipped、1 warning，36.24秒**；配置与入口最终专项另有211项通过。单核2、库线程1、GPU不可见；skip仍为可选sklearn缺失，旧只读NumPy提示不变。独立复核覆盖整批 / 累积梯度及AdamW状态、尾批81、AMP跳步、逐微批释放查询图、新上下文精确恢复；双卡合并toy测试和65条验证编排 / 独立落盘复算通过。CPU测试不替代真实GPU容量与全目录验收。
 
+**160306（单卡训练资源短测）**：America/Denver 11-12 10:32:23提交并启动（Asia/Shanghai 11-13 01:32:23），aias-compute-4，单4090 / 整项4CPU / 24G / 45分钟。执行版本 `3a12d71d4dac4bcfad56794d7365a5ef2d2edacd`，提交时干净，无自动后继；短测验收后才单独提交已授权的双卡验证。[Manifest](../logs/training_launch/liger_capacity384_2026-11-12_v1/manifest.json) SHA256 `cb3096f0678e2015fe7349114903c84fee889959bdb7c7003b78963faf226d33`；[启动记录](../logs/training_launch/liger_capacity384_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cap384Train-160306.out)、[stderr](../logs/slurm/GRID-LIGER-Cap384Train-160306.err)。
+
 ## LIGER 采样版正式首轮
 
 作者确认32K共享负例、batch2048；seed42随机初始化，先完整一遍训练，再做一次全量validation。不接旧训练 / 诊断权重，不读test，不自动扩seed或接第二遍。新配置固定45996113个prefix、22460批、尾批81；保留lr3e-4 / AdamW / weight_decay0.035，warmup1123后按一遍预算cosine。以后若续训须另立调度契约，不声称原三轮调度仍在延续。
