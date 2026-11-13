@@ -12,6 +12,10 @@
 
 本轮CPU全LIGER / launcher / 资源回归 **1781 passed、15 skipped、1 warning，48.54秒**；15个skip为无GPU的10项CUDA路线测试和缺少可选sklearn的5项，旧只读NumPy提示不变。随后补充的门禁输入证明和严格来源测试另行复测。独立交叉复核覆盖新配置 / 资产字节核验、随机初始化、整批累积、尾81 / 尾24、AMP跳步、完整状态保存、双卡模型权重加载及最终停止边界。
 
+最终新增入口专项 **211 passed，10.68秒**，包括新增的资产字节验证汇总和cache核验一致性测试。配置 / 契约 `8d15a44`、训练 / 独立验收 `245682e`、双卡验证 `25bba43`、衔接及launcher `bc7569d`；旧数学实现与执行文件保持不变。
+
+**160428（正式同入口衔接）**：America/Denver 21:30:08提交、21:30:09启动，aias-compute-4，2GPU / 整项4CPU / 24G / 45分钟；各训练step限制可见1GPU，验证step2GPU，无自动后继。执行版本 `38f031fa587b70c8a03685b948455f65bed859a0`，提交时干净。[Manifest](../logs/training_launch/liger_capacity384_training_gate_2026-11-12_v1/manifest.json) SHA256 `4e3ae9fbed9438f2129e7bde2c48cd3139b173595fc887cec4682402a57a2793`；[启动记录](../logs/training_launch/liger_capacity384_training_gate_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-384Gate-160428.out)、[stderr](../logs/slurm/GRID-LIGER-384Gate-160428.err)。门禁验收后单独提交已获批准的正式训练及唯一依赖validation。
+
 ## LIGER 384维资源短测
 
 作者仅批准实现、单卡梯度累积与双卡完整cold验证短测；正式重训未获批准。[固定配置](../configs/baselines/liger_capacity384_probe_v1.json)、[训练入口](../run_liger_capacity_train_cpu4.sh)、[验证入口](../run_liger_capacity_val_cpu4.sh)。具体门禁维护在[实验计划](EXPERIMENT_PLAN_ZH.md#当前liger-384维容量资源门禁2026-11-12americadenver)，运行结果待实际产物，不填写预计显存为实测。
