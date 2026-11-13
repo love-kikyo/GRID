@@ -2,7 +2,7 @@
 
 ## 分支与提交
 
-当前工作分支：`wsdm27-liger-capacity384-v1`，从 `wsdm27-liger-sampled-loss-v1` 的 `c3e1737` 创建，用于384维、逻辑batch累积及双卡完整cold的资源短测；尚未批准正式重训。前序采样、`wsdm27-liger-prefix-v3`、`wsdm27-liger-learning-v2`、`wsdm27-external-baselines-v1` 和 `wsdm27-history-last-user-v1` 分支保留。不重写历史、不强推、不顺手合并回main。新代码采用独立入口，不覆盖已验收模型和产物。
+当前工作分支：`wsdm27-liger-capacity384-v1`，从 `wsdm27-liger-sampled-loss-v1` 的 `c3e1737` 创建。384维、逻辑batch累积及双卡完整cold资源门禁已验收；作者随后批准seed42随机初始化完整一遍及全量validation，完成后再决定是否继续。前序采样、`wsdm27-liger-prefix-v3`、`wsdm27-liger-learning-v2`、`wsdm27-external-baselines-v1` 和 `wsdm27-history-last-user-v1` 分支保留。不重写历史、不强推、不顺手合并回main。新代码采用独立入口，不覆盖已验收模型和产物。
 
 沿用已确认的小步提交原则：一个逻辑完整、可以单独解释和回退的改动做一次 commit；不按聊天轮次或机械行数提交。
 

@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-12 21:30（America/Denver，UTC−7），作者已批准384维seed42随机初始化正式首遍，正式入口与衔接门禁准备中。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-12 21:38（America/Denver，UTC−7），160428衔接通过；384维seed42正式训练160438运行中，160439仅afterok依赖等待全量validation。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER 384维正式首遍
 
@@ -15,6 +15,17 @@
 最终新增入口专项 **211 passed，10.68秒**，包括新增的资产字节验证汇总和cache核验一致性测试。配置 / 契约 `8d15a44`、训练 / 独立验收 `245682e`、双卡验证 `25bba43`、衔接及launcher `bc7569d`；旧数学实现与执行文件保持不变。
 
 **160428（正式同入口衔接）**：America/Denver 21:30:08提交、21:30:09启动，aias-compute-4，2GPU / 整项4CPU / 24G / 45分钟；各训练step限制可见1GPU，验证step2GPU，无自动后继。执行版本 `38f031fa587b70c8a03685b948455f65bed859a0`，提交时干净。[Manifest](../logs/training_launch/liger_capacity384_training_gate_2026-11-12_v1/manifest.json) SHA256 `4e3ae9fbed9438f2129e7bde2c48cd3139b173595fc887cec4682402a57a2793`；[启动记录](../logs/training_launch/liger_capacity384_training_gate_2026-11-12_v1/launch.json)、[stdout](../logs/slurm/GRID-LIGER-384Gate-160428.out)、[stderr](../logs/slurm/GRID-LIGER-384Gate-160428.err)。门禁验收后单独提交已获批准的正式训练及唯一依赖validation。
+
+**160428完成及独立验收：** `COMPLETED / 0:0`，05:41，21:35:50结束。节点211项预检通过；3次更新、6144前缀、850个原最终GT、0跳步，全部152参数张量得到梯度。随机初始摘要 `787eaa3a60e3083312178093e43f12cacfec970786a5b908d8785ebc0c4c5724`；三步非计时字段与160306的1024档前3步逐值相同，新进程重放后的完整状态摘要 `7d5da905cb9c8f46fb5a53c292f8c34f3b58cd68feb3b869b78999b581370846` 精确一致。双卡65唯一用户 / 32+32+1完整cold与12指标独立复算、模型权重不变均通过；130份执行源、9份上游源和8份报告 / 预测 / checkpoint引用再次核验。三步诊断零指标不用于评价学习效果。
+
+[衔接收据](../logs/train/runs/liger_capacity384_training_gate_2026-11-12_v1/gate_acceptance.json) SHA256 `f3e9ea7b6c601874d370cc50194b02140e1fef9fd80ae5e144a0f651234ce35f`。正式manifest重新创建并绑定该收据，只把已确认随机初始摘要用于核验，**不加载gate或资源短测checkpoint训练**。
+
+| 正式阶段 | Job | 提交 / 启动（America/Denver） | 状态与资源 |
+| --- | --- | --- | --- |
+| 一遍随机初始化训练及完整训练验收 | 160438 | 21:38:05提交、21:38:06启动 | RUNNING，aias-compute-4，1×4090 / 整项4CPU / 24G / 12小时上限 |
+| 完整347416条validation及独立审计 | 160439 | 21:38:05提交，尚未启动 | PENDING Dependency=`afterok:160438`，2×4090 / 整项4CPU / 24G / 6小时上限；前者失败则取消 |
+
+正式执行版本 `9c06ee71f84bc47e9e22bcba2fff53aa17c39c24`，与gate的130份执行源完全一致，提交时干净。[正式Manifest](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/manifest.json) SHA256 `e148c1ef542bf9e2ca797766a712c108eb0b269b0ec68fcc39d60ca6f3b560b6`；[启动记录](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/launch.json)、[训练stdout](../logs/slurm/GRID-LIGER-384Train42-160438.out)、[训练stderr](../logs/slurm/GRID-LIGER-384Train42-160438.err)、[正式run](../logs/train/runs/liger_capacity384_train_seed42_2026-11-12_v1)。只保留这一训练和唯一等待验证，无第三项；结束后等待作者验收决定，不自动继续。
 
 ## LIGER 384维资源短测
 
