@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-12 10:32（America/Denver，UTC−7），159959已完成，384维资源短测准备中。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-12 21:12（America/Denver，UTC−7），384维训练 / 双卡完整cold资源短测及有效候选GPU补测全部通过；正式重训未提交。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER 384维资源短测
 
@@ -22,6 +22,18 @@
 计时仅用连续运行第4–13步，峰值取全部13步；包含同步输入读取和打包 / 前后向 / 更新，不含缓存准备、checkpoint保存、逐步审计和验证。恢复进程不作为第二套吞吐样本；其1024档reserved最高10.191GiB。连续两档初始化99.00 / 82.47秒，进程RSS高水位13.07 / 13.03GiB。1024档吞吐快约4.2%，差距小且属于短测，不能证明长期稳定加速或学习效果。
 
 **160308（双卡验证资源短测）**：单卡验收后于Asia/Shanghai 01:40:59提交并启动，aias-compute-4 / 两张4090 / 整项仍4CPU / 24G / 45分钟；无后继。仍绑定同一执行版本和manifest，只加载预先固定的512×4第13步模型权重；65条真实validation全部cold扫描，不是347416条全量validation。[启动记录](../logs/training_launch/liger_capacity384_2026-11-12_v1/validation_launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cap384Val-160308.out)、[stderr](../logs/slurm/GRID-LIGER-Cap384Val-160308.err)。节点125项预检通过，结果待验收。
+
+**160308完成并独立验收通过：** `COMPLETED / 0:0`，01:33；Asia/Shanghai 01:42:32结束。65唯一用户与原159959首65条用户 / GT / 样本身份一致；32+32+1每批完整扫描23915712个cold，二片各11957856，缓存各17.195GiB，构建44.10秒。双卡allocated峰值17.873 / 17.721GiB、reserved峰值18.063 / 17.869GiB，进程RSS高水位7.23GiB，整项仍4CPU。小目录同权重单卡 / 双卡候选身份一致、分数容差通过；GT独立性、验证前后模型权重不变、落盘NPZ / SID反查及12项指标独立复算通过。本次是独立模型权重验证，不宣称单卡完整optimizer / RNG状态恢复到了双卡。
+
+固定首32条、2次预热+10次计时：生成与完整cold排序均值0.558891秒/批，约57.26用户/秒。按10857批加缓存构建外推 **1.698小时，仅计算路径**；不含读取、packing、最终审计。第二个新32条batch的packing为0.478879秒，不能忽略或把重复首批的缓存命中当全量端到端时间。13步诊断模型的1300个自然beam槽均未映射为有效物品，因此本轮没有自然触发有效seen / 两片cold beam的GPU取向量路径；该缺口由下面独立合成补测覆盖，不用这65条的推荐指标判断容量效果。
+
+原始[验证报告](../logs/training_launch/liger_capacity384_2026-11-12_v1/validation_report.json) SHA256 `cd314f1c25331fca16a598f1e3e01281b2cdd2692e81ce60e15bc9fc650acc29`；[验证收据](../logs/training_launch/liger_capacity384_2026-11-12_v1/validation_acceptance.json) SHA256 `fa01d4b51b323e0f2b0daf01a6929455df481cdc551085c382bfcb2b6f1832be`。116份执行源 / 9份上游源以及相关报告、checkpoint和预测文件绑定再次复核通过。
+
+**160392（有效候选CUDA分支补测）**：America/Denver 21:10:45提交、21:10:46启动、21:11:23结束；Slurm `COMPLETED / 0:0`，00:37。aias-compute-4 / 双4090 / 整项4CPU / 8G / 10分钟上限；GPU1不同于160308，不用于新增性能比较。执行版本 `50ed904a46834b32ad7992c70a3e9bf5268e4a46`，没有改动已完成两项的绑定源码。384工厂的新随机projection、96个合成物品 / 48个cold，不读数据集或标签、不加载正式权重、不优化。[10项真实GPU测试](../tests/test_liger_sharded_cuda_routes.py)全部通过：两片cold gather、seen投影、重复 / 空 / 越界候选、全局cold排除、跨卡精确topk及同分顺序、活跃线程CPU绑定、两副本权重不变。只补路径正确性，不补效果或全目录吞吐。
+
+[补测Manifest](../logs/training_launch/liger_capacity384_2026-11-12_v1/routes_manifest.json) SHA256 `a665491aa1c50964e614b512f2f90d0eb6d034423536a812700b7af3a955b2cb`；[启动记录](../logs/training_launch/liger_capacity384_2026-11-12_v1/routes_launch.json)、[stdout](../logs/slurm/GRID-LIGER-Cap384Routes-160392.out)、[验收](../logs/training_launch/liger_capacity384_2026-11-12_v1/cuda_route_acceptance.json)，验收SHA256 `c0b922365f639deee0c7cde29e7b1f3638ae885f1f4d3a986476385e4fce2427`。专用入口拒绝skip；登录节点10项CUDA skip不算GPU通过证据。
+
+**预算建议（尚未授权）：** 资源上优先1024×累积2、32K负例，单卡训练一遍约7.0小时；一次双卡全量validation计算部分约1.7小时，另需数据读取、有效beam投影和产物审计。两者算术和约8.7小时不是端到端承诺；规划完整一遍训练+一次全量validation可先预留 **10–12小时（不含排队）**。该区间是短测外推与余量安排，不是置信区间或已实测全量耗时，也不代表收敛只需一遍。正式重训、正式入口和预算需作者确认；当前无排队任务，不读test、不自动扩seed / 遍数。
 
 ## LIGER 采样版正式首轮
 
