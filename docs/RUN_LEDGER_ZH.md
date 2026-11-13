@@ -1,6 +1,16 @@
 # Run 台账
 
-更新：2026-11-12 21:12（America/Denver，UTC−7），384维训练 / 双卡完整cold资源短测及有效候选GPU补测全部通过；正式重训未提交。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-12 21:30（America/Denver，UTC−7），作者已批准384维seed42随机初始化正式首遍，正式入口与衔接门禁准备中。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+
+## LIGER 384维正式首遍
+
+作者批准1024×累积2、32K共享负例、seed42随机初始化，先完整一遍训练和全量validation，验收后再决定是否继续。新[正式配置](../configs/baselines/liger_capacity384_train_seed42_v1.json) SHA256 `6b08807bcbd3d5a869a778e89d510b65adcb05bd9e67528361eb81b0cc8818e6`：hidden384 / FF2560 / encoder与decoder各6层，总参数41868160、主体34222464。逻辑batch2048、45996113个前缀 / 6573674个父样本、22460批、末批81；lr3e-4 / wd0.035，warmup1123后按本次一遍预算cosine。AMP跳步仍消费数据但不补步、不推进scheduler。每1000批和validation前保存完整状态，不使用短测或旧128维checkpoint初始化。
+
+正式[训练](../scripts/train_liger_capacity_cpu4.py)与[验证](../scripts/validate_liger_capacity_cpu4.py)分成两个作业：训练单4090 / 整项4CPU / 24G / 12小时硬上限，验证双4090 / 整项仍4CPU / 24G / 6小时硬上限。按“一项运行、一项afterok等待”提交；训练需全量日志和全部checkpoint独立验收通过才成功退出，验证仍核对训练收据和checkpoint绑定。结束只报告一次endpoint验证，不接第二遍、test或其他seed；作业硬上限不是预计用时，沿用资源短测10–12小时总体规划，不含排队。
+
+正式前的[衔接门禁](../scripts/probe_liger_capacity_training.py)使用同一新入口和独立diagnostic用途：单GPU三次更新，第1步保存后新进程精确重放第2/3步；再在双GPU进程只加载第3步模型权重，对65条真实validation完整cold扫描。旧训练与资源源文件不改，gate权重不能用于正式初始化。门禁整项双GPU / 4CPU / 24G / 45分钟；各训练步骤显式只暴露一张卡，验证步骤暴露两张卡，禁止单卡CUDA RNG直接恢复至双卡。
+
+本轮CPU全LIGER / launcher / 资源回归 **1781 passed、15 skipped、1 warning，48.54秒**；15个skip为无GPU的10项CUDA路线测试和缺少可选sklearn的5项，旧只读NumPy提示不变。随后补充的门禁输入证明和严格来源测试另行复测。独立交叉复核覆盖新配置 / 资产字节核验、随机初始化、整批累积、尾81 / 尾24、AMP跳步、完整状态保存、双卡模型权重加载及最终停止边界。
 
 ## LIGER 384维资源短测
 
