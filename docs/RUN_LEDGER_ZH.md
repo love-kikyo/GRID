@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-12 21:38（America/Denver，UTC−7），160428衔接通过；384维seed42正式训练160438运行中，160439仅afterok依赖等待全量validation。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-12 22:03（America/Denver，UTC−7），384维seed42正式训练160438启动核验通过、运行中，160439仅afterok依赖等待全量validation。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER 384维正式首遍
 
@@ -26,6 +26,10 @@
 | 完整347416条validation及独立审计 | 160439 | 21:38:05提交，尚未启动 | PENDING Dependency=`afterok:160438`，2×4090 / 整项4CPU / 24G / 6小时上限；前者失败则取消 |
 
 正式执行版本 `9c06ee71f84bc47e9e22bcba2fff53aa17c39c24`，与gate的130份执行源完全一致，提交时干净。[正式Manifest](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/manifest.json) SHA256 `e148c1ef542bf9e2ca797766a712c108eb0b269b0ec68fcc39d60ca6f3b560b6`；[启动记录](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/launch.json)、[训练stdout](../logs/slurm/GRID-LIGER-384Train42-160438.out)、[训练stderr](../logs/slurm/GRID-LIGER-384Train42-160438.err)、[正式run](../logs/train/runs/liger_capacity384_train_seed42_2026-11-12_v1)。只保留这一训练和唯一等待验证，无第三项；结束后等待作者验收决定，不自动继续。
+
+**22:03启动核验通过（北京时间11-13 13:03）**：[启动收据](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/startup_acceptance.json)固定前1244条日志快照。初始attempt / update / prefix均为0，初始权重摘要与已确认seed42随机工厂及gate一致，未加载旧或短测checkpoint；前3步共同的19个非计时字段与gate逐值一致，130份执行源仍与manifest匹配。已完成1244 / 22460更新（5.54%）、2547712个前缀，无AMP跳步，loss / 梯度范数均有限，每步152个参数张量有梯度。首100步与最近100步平均SID loss为9.704→7.242、dense loss为16.113→12.990；这是训练损失下降，不是推荐效果验收。
+
+实际CPU affinity `[0,1,28,29]`、库线程1、单4090；最近500步平均1.069秒/逻辑批。第1000步checkpoint已落盘（502674158 bytes），其完整张量与所有后续checkpoint仍由训练结束的强制验收检查。当前无需改代码或追加任务；总用时仍保留10–12小时规划（含完整validation与审计、不含排队），实际结束时间随持续吞吐及验证排队变化。
 
 ## LIGER 384维资源短测
 
