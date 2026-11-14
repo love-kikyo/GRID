@@ -1,6 +1,12 @@
 # Run 台账
 
-更新：2026-11-12 22:03（America/Denver，UTC−7），384维seed42正式训练160438启动核验通过、运行中，160439仅afterok依赖等待全量validation。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-14（America/Denver，UTC−7），384维单遍160438 / 160439已完成验收；新随机初始化12遍上限、min6 / patience5方案准备中。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+
+## LIGER384多遍与早停
+
+作者批准新随机初始化seed42，保持384维 / 1024×累积2 / 32K；最多12遍，至少6遍、连续5次全量validation Recall@5无提升才允许早停。固定269520尝试 / 更新上限、warmup1123后全局cosine，停止与选优状态须随checkpoint恢复。新入口、测试及GPU门禁准备中，尚未提交正式任务。实施范围和资源见[实验计划](EXPERIMENT_PLAN_ZH.md)。旧一遍权重、日志、源码哈希全部保留，不加载为本次初始权重。
+
+新[配置](../configs/baselines/liger_capacity384_multiepoch_seed42_v1.json) SHA256 `c0088c1907b78fad0a809910927bc38921ebcfa86a89829d9197b05ba53d9293`。配置 / 来源 / policy `2da9a7b`，双卡验证完整单卡状态交接 `5c61616`，多遍与中断segment恢复 `9087873`，GPU门禁与launcher `fd193c5`。旧130执行源哈希未变；恢复不得改全局预算、清空patience或加载旧试验权重。双卡验证后的完整checkpoint仅更新progress及选模历史，模型 / AdamW / scheduler / scaler / 单卡RNG保持不变。分组专项通过，全量CPU回归与真实GPU结果待实际记录。
 
 ## LIGER 384维正式首遍
 
@@ -30,6 +36,17 @@
 **22:03启动核验通过（北京时间11-13 13:03）**：[启动收据](../logs/training_launch/liger_capacity384_train_seed42_2026-11-12_v1/startup_acceptance.json)固定前1244条日志快照。初始attempt / update / prefix均为0，初始权重摘要与已确认seed42随机工厂及gate一致，未加载旧或短测checkpoint；前3步共同的19个非计时字段与gate逐值一致，130份执行源仍与manifest匹配。已完成1244 / 22460更新（5.54%）、2547712个前缀，无AMP跳步，loss / 梯度范数均有限，每步152个参数张量有梯度。首100步与最近100步平均SID loss为9.704→7.242、dense loss为16.113→12.990；这是训练损失下降，不是推荐效果验收。
 
 实际CPU affinity `[0,1,28,29]`、库线程1、单4090；最近500步平均1.069秒/逻辑批。第1000步checkpoint已落盘（502674158 bytes），其完整张量与所有后续checkpoint仍由训练结束的强制验收检查。当前无需改代码或追加任务；总用时仍保留10–12小时规划（含完整validation与审计、不含排队），实际结束时间随持续吞吐及验证排队变化。
+
+**160438 / 160439最终验收（11-14复核）**：两项均 `COMPLETED / 0:0`。训练07:08:22，11-13 04:46:28结束；验证01:50:02，06:36:30结束（America/Denver）。墙钟合计08:58:24；单卡训练7.139 GPU小时、双卡验证3.668 GPU小时，整项10.807 GPU小时。完整22460批、45996113前缀 / 6573674原最终GT；22455次成功更新、5次AMP跳步（含尾81），按预设消费数据但不补步。不能把启动时零跳步快照当最终结果。
+
+23个checkpoint完成节点完整张量验收；本次独立复核130执行源 / 9上游源、日志 / 报告绑定、进度 / LR / 数据摘要链。Validation共347416唯一用户、10857批（尾24），每批完整23915712 cold；109份NPZ哈希、12指标及原始生成覆盖率独立复算通过。新旧128/384版本的用户、GT、样本摘要逐条相同，验证前后模型权重未变，无test或后继任务。
+
+| 同一全量validation，完整cold hybrid | Recall@5 | Recall@10 | Recall@20 | NDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| 原128维159959 | 0.033916 | 0.036547 | 0.039250 | 0.031087 |
+| 本次384维160438 / 160439 | 0.042848 | 0.045648 | 0.048423 | 0.039723 |
+
+自然生成beam20 GT覆盖从497提升到3556 / 347416（0.010236）；这是容量扩大后的单seed验证改善，不证明达到主模型或统计显著。[结果](../logs/train/runs/liger_capacity384_train_seed42_2026-11-12_v1/result.json) SHA256 `1752b30633045cafb1cea2ea51476ff53c8858dbae87c566fa82f377a4c5df6e`；[训练验收](../logs/train/runs/liger_capacity384_train_seed42_2026-11-12_v1/training_acceptance.json) SHA256 `d428824d4e32e3fd0fe55a6f045d38d1f34e9222cf02e911ef55ed1c10c71b8d`；[验证验收](../logs/train/runs/liger_capacity384_train_seed42_2026-11-12_v1/acceptance.json)。12遍新方案另起run，不覆盖该单遍试验。
 
 ## LIGER 384维资源短测
 
