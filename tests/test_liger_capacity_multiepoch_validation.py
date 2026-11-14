@@ -230,7 +230,8 @@ def formal(tmp_path, monkeypatch):
         checkpoint=cp, checkpoint_binding=s['binding'], final_progress=s['progress'],
         counts={key:s['progress'][key] for key in ('attempts', 'updates', 'skipped_updates', 'prefix_count', 'final_count', 'data_chain')})
     write_json(directory/'training_acceptance.json', receipt)
-    contract = SimpleNamespace(FORMAL_PHASE=m['phase'], binding=lambda _: (m,c))
+    contract = SimpleNamespace(FORMAL_PHASE=m['phase'], binding=lambda _: (m,c),
+                               checkpoint_binding=lambda _: copy.deepcopy(s['binding']))
     trainmodule = SimpleNamespace(build_context=lambda *args, **kwargs: ctx)
     monkeypatch.setitem(sys.modules, 'scripts.liger_capacity_multiepoch_manifest', contract)
     monkeypatch.setattr(scripts, 'liger_capacity_multiepoch_manifest', contract, raising=False)
