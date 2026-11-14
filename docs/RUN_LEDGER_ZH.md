@@ -23,6 +23,10 @@
 
 新正式执行版本 `da8486eaba3a880321b6b848df770643d9c951cf`，提交时工作树干净；与161051的143执行源一致。[正式manifest](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/manifest.json) SHA256 `40c3c21b4fe7f61125dbccd736bab4b85bb930b21484818cc26415757f717e9d`，[启动登记](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/launch.json)，[正式run](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1)。预算已覆盖最多12遍，但只提交上述两项；后续逐遍核验后单独提交，不接test / 其他seed，不把Slurm运行状态当作模型效果验收。
 
+**07:04:48启动核验通过**（北京时间22:04:48）：[启动收据](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/startup_acceptance.json)固定前123条完整日志，不对仍增长的整文件宣称固定哈希。初始epoch / attempt / update / prefix均0、`loaded_checkpoint=null`；随机初始权重摘要与工厂及gate一致，前3步19个非计时字段与gate逐值相同。269520全局上限 / min6 / max12 / patience5生效；143执行源、9上游源哈希再次复核。已完成123次更新、251904前缀、35997原最终GT，0跳步，每步152参数张量有梯度，loss / 梯度范数均有限。实际CPU `[12,13,40,41]`、库线程1、单4090。
+
+第24–123批平均1.21945秒（输入0.55553、训练0.66392），按22460批外推纯步骤7.608小时；不含准备、checkpoint、审计、validation或排队，不是完成承诺。当前12小时单遍硬限有余量；训练加全量验证暂按约10小时量级规划。仅为启动正常，不代表整遍或推荐效果验收。
+
 ## LIGER 384维正式首遍
 
 作者批准1024×累积2、32K共享负例、seed42随机初始化，先完整一遍训练和全量validation，验收后再决定是否继续。新[正式配置](../configs/baselines/liger_capacity384_train_seed42_v1.json) SHA256 `6b08807bcbd3d5a869a778e89d510b65adcb05bd9e67528361eb81b0cc8818e6`：hidden384 / FF2560 / encoder与decoder各6层，总参数41868160、主体34222464。逻辑batch2048、45996113个前缀 / 6573674个父样本、22460批、末批81；lr3e-4 / wd0.035，warmup1123后按本次一遍预算cosine。AMP跳步仍消费数据但不补步、不推进scheduler。每1000批和validation前保存完整状态，不使用短测或旧128维checkpoint初始化。
