@@ -8,6 +8,10 @@
 
 新[配置](../configs/baselines/liger_capacity384_multiepoch_seed42_v1.json) SHA256 `c0088c1907b78fad0a809910927bc38921ebcfa86a89829d9197b05ba53d9293`。配置 / 来源 / policy `2da9a7b`，双卡验证完整单卡状态交接 `5c61616`，多遍与中断segment恢复 `9087873`，GPU门禁与launcher `fd193c5`。旧130执行源哈希未变；恢复不得改全局预算、清空patience或加载旧试验权重。双卡验证后的完整checkpoint仅更新progress及选模历史，模型 / AdamW / scheduler / scaler / 单卡RNG保持不变。分组专项通过，全量CPU回归与真实GPU结果待实际记录。
 
+全量CPU回归 **2064 passed、15 skipped、1 warning，51.95秒**，单核2 / 库线程1 / GPU不可见；skip仍为10项需真实CUDA及5项可选sklearn，旧只读NumPy提示不变。最终新增专项236项在节点通过（16.64秒）。
+
+**161051多遍恢复门禁**：11-14 06:36:16启动（America/Denver），aias-compute-2 / 双4090 / 整项4CPU / 24G / 45分钟；训练和恢复step只可见一张GPU，验证step两张。执行版本 `d7c12923fd8dfb9ee41a1dde85a869909f6378c9`，提交时干净。[Manifest](../logs/training_launch/liger_capacity384_multiepoch_gate_2026-11-14_v1/manifest.json) SHA256 `7cd040721d330cf50e96de7ffe4ac7c3e750cf574dffd750d922c44d1c5e96a7`；[启动记录](../logs/training_launch/liger_capacity384_multiepoch_gate_2026-11-14_v1/launch.json)。三批6144前缀仅为明确标注的小诊断遍，不是假称完成全训练集；全局调度仍固定269520。正在运行，尚无正式多遍任务或自动后继。
+
 ## LIGER 384维正式首遍
 
 作者批准1024×累积2、32K共享负例、seed42随机初始化，先完整一遍训练和全量validation，验收后再决定是否继续。新[正式配置](../configs/baselines/liger_capacity384_train_seed42_v1.json) SHA256 `6b08807bcbd3d5a869a778e89d510b65adcb05bd9e67528361eb81b0cc8818e6`：hidden384 / FF2560 / encoder与decoder各6层，总参数41868160、主体34222464。逻辑batch2048、45996113个前缀 / 6573674个父样本、22460批、末批81；lr3e-4 / wd0.035，warmup1123后按本次一遍预算cosine。AMP跳步仍消费数据但不补步、不推进scheduler。每1000批和validation前保存完整状态，不使用短测或旧128维checkpoint初始化。
