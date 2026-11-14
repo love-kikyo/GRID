@@ -1,10 +1,10 @@
 # Run 台账
 
-更新：2026-11-14（America/Denver，UTC−7），384维单遍160438 / 160439已完成验收；新随机初始化12遍上限、min6 / patience5方案通过161051 GPU门禁。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-14（America/Denver，UTC−7），384维单遍160438 / 160439已完成验收；新随机初始化12遍上限、min6 / patience5方案通过161051 GPU门禁，161071首遍运行、161072依赖验证等待。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER384多遍与早停
 
-作者批准新随机初始化seed42，保持384维 / 1024×累积2 / 32K；最多12遍，至少6遍、连续5次全量validation Recall@5无提升才允许早停。固定269520尝试 / 更新上限、warmup1123后全局cosine，停止与选优状态须随checkpoint恢复。新入口、CPU测试及真实GPU门禁已通过，准备提交正式第1遍。实施范围和资源见[实验计划](EXPERIMENT_PLAN_ZH.md)。旧一遍权重、日志、源码哈希全部保留，不加载为本次初始权重。
+作者批准新随机初始化seed42，保持384维 / 1024×累积2 / 32K；最多12遍，至少6遍、连续5次全量validation Recall@5无提升才允许早停。固定269520尝试 / 更新上限、warmup1123后全局cosine，停止与选优状态须随checkpoint恢复。新入口、CPU测试及真实GPU门禁已通过，正式第1遍及其依赖验证已提交。实施范围和资源见[实验计划](EXPERIMENT_PLAN_ZH.md)。旧一遍权重、日志、源码哈希全部保留，不加载为本次初始权重。
 
 新[配置](../configs/baselines/liger_capacity384_multiepoch_seed42_v1.json) SHA256 `c0088c1907b78fad0a809910927bc38921ebcfa86a89829d9197b05ba53d9293`。配置 / 来源 / policy `2da9a7b`，双卡验证完整单卡状态交接 `5c61616`，多遍与中断segment恢复 `9087873`，GPU门禁与launcher `fd193c5`。旧130执行源哈希未变；恢复不得改全局预算、清空patience或加载旧试验权重。双卡验证后的完整checkpoint仅更新progress及选模历史，模型 / AdamW / scheduler / scaler / 单卡RNG保持不变。
 
@@ -15,6 +15,13 @@
 **161051验收通过**：第一步保存后新进程重放第2/3步，以及验证后下一诊断遍的两步跨进程重放，非计时逐步记录和完整学习状态均精确一致；跨遍最终状态摘要 `67b7dc741b63f78e967292026f14722bd428a5129a2cc25ba6a75284d503ff7f`。双卡65条完整cold、32+32+1尾批、独立指标复算通过；验证后单卡optimizer / scheduler / scaler / RNG等保持不变，仅更新已验收的进度与选模历史。policy测试确认第6遍才允许连续5次无提升触发停止、改善至第12遍封顶、NDCG同分选优不清空patience、序列化保留计数。143执行源 / 9上游源及报告、实际checkpoint、预测引用字节哈希独立复核通过。
 
 [门禁总收据](../logs/train/runs/liger_capacity384_multiepoch_gate_2026-11-14_v1/gate_acceptance.json) SHA256 `0f7979d9d8f4a4b0e0142d56c1c94bda70ea32d2d475dc897f510d76129bfbeb`。正式run只复用已验证代码和初始权重摘要，不加载任何gate checkpoint。资源预估仍沿用完整160438 / 160439，而非少量热身步；正式启动后另查稳定吞吐。
+
+| 多遍正式run的第1遍阶段 | Job | 提交 / 启动（America/Denver） | 提交后状态与资源 |
+| --- | --- | --- | --- |
+| 随机初始化训练一整遍及完整状态审计 | 161071 | 11-14 06:57:46提交并启动 | RUNNING，aias-compute-2，1×4090 / 整项4CPU / 24GiB / 12小时硬上限 |
+| 完整347416条validation及状态交接 | 161072 | 06:57:56提交，尚未启动 | PENDING，afterok:161071，2×4090 / 整项4CPU / 24GiB / 6小时硬上限；依赖失败则取消 |
+
+新正式执行版本 `da8486eaba3a880321b6b848df770643d9c951cf`，提交时工作树干净；与161051的143执行源一致。[正式manifest](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/manifest.json) SHA256 `40c3c21b4fe7f61125dbccd736bab4b85bb930b21484818cc26415757f717e9d`，[启动登记](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/launch.json)，[正式run](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1)。预算已覆盖最多12遍，但只提交上述两项；后续逐遍核验后单独提交，不接test / 其他seed，不把Slurm运行状态当作模型效果验收。
 
 ## LIGER 384维正式首遍
 
