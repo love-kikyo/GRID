@@ -1,10 +1,10 @@
 # Run 台账
 
-更新：2026-11-14（America/Denver，UTC−7），384维单遍160438 / 160439已完成验收；新随机初始化12遍上限、min6 / patience5方案通过161051 GPU门禁，161071首遍运行、161072依赖验证等待。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-16（America/Denver，UTC−7），新随机初始化12遍上限、min6 / patience5方案首遍161071 / 161072已验收；第二遍162259续训运行、162260依赖全量验证等待。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER384多遍与早停
 
-作者批准新随机初始化seed42，保持384维 / 1024×累积2 / 32K；最多12遍，至少6遍、连续5次全量validation Recall@5无提升才允许早停。固定269520尝试 / 更新上限、warmup1123后全局cosine，停止与选优状态须随checkpoint恢复。新入口、CPU测试及真实GPU门禁已通过，正式第1遍及其依赖验证已提交。实施范围和资源见[实验计划](EXPERIMENT_PLAN_ZH.md)。旧一遍权重、日志、源码哈希全部保留，不加载为本次初始权重。
+作者批准新随机初始化seed42，保持384维 / 1024×累积2 / 32K；最多12遍，至少6遍、连续5次全量validation Recall@5无提升才允许早停。固定269520尝试 / 更新上限、warmup1123后全局cosine，停止与选优状态须随checkpoint恢复。正式第1遍及其全量验证已验收，11-16作者批准从其完整checkpoint继续第2遍及依赖验证，原配置不变。实施范围和资源见[实验计划](EXPERIMENT_PLAN_ZH.md)。旧一遍权重、日志、源码哈希全部保留，不加载为本次初始权重；第二遍仅恢复本次新run的第一遍状态。
 
 新[配置](../configs/baselines/liger_capacity384_multiepoch_seed42_v1.json) SHA256 `c0088c1907b78fad0a809910927bc38921ebcfa86a89829d9197b05ba53d9293`。配置 / 来源 / policy `2da9a7b`，双卡验证完整单卡状态交接 `5c61616`，多遍与中断segment恢复 `9087873`，GPU门禁与launcher `fd193c5`。旧130执行源哈希未变；恢复不得改全局预算、清空patience或加载旧试验权重。双卡验证后的完整checkpoint仅更新progress及选模历史，模型 / AdamW / scheduler / scaler / 单卡RNG保持不变。
 
@@ -18,14 +18,31 @@
 
 | 多遍正式run的第1遍阶段 | Job | 提交 / 启动（America/Denver） | 提交后状态与资源 |
 | --- | --- | --- | --- |
-| 随机初始化训练一整遍及完整状态审计 | 161071 | 11-14 06:57:46提交并启动 | RUNNING，aias-compute-2，1×4090 / 整项4CPU / 24GiB / 12小时硬上限 |
-| 完整347416条validation及状态交接 | 161072 | 06:57:56提交，尚未启动 | PENDING，afterok:161071，2×4090 / 整项4CPU / 24GiB / 6小时硬上限；依赖失败则取消 |
+| 随机初始化训练一整遍及完整状态审计 | 161071 | 11-14 06:57:46提交并启动，14:34:26结束 | COMPLETED / 0:0，07:36:40；aias-compute-2，1×4090 / 整项4CPU / 24GiB |
+| 完整347416条validation及状态交接 | 161072 | 06:57:56提交，14:34:26启动，16:17:12结束 | COMPLETED / 0:0，01:42:46；aias-compute-4，2×4090 / 整项4CPU / 24GiB |
 
 新正式执行版本 `da8486eaba3a880321b6b848df770643d9c951cf`，提交时工作树干净；与161051的143执行源一致。[正式manifest](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/manifest.json) SHA256 `40c3c21b4fe7f61125dbccd736bab4b85bb930b21484818cc26415757f717e9d`，[启动登记](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/launch.json)，[正式run](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1)。预算已覆盖最多12遍，但只提交上述两项；后续逐遍核验后单独提交，不接test / 其他seed，不把Slurm运行状态当作模型效果验收。
 
 **07:04:48启动核验通过**（北京时间22:04:48）：[启动收据](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/startup_acceptance.json)固定前123条完整日志，不对仍增长的整文件宣称固定哈希。初始epoch / attempt / update / prefix均0、`loaded_checkpoint=null`；随机初始权重摘要与工厂及gate一致，前3步19个非计时字段与gate逐值相同。269520全局上限 / min6 / max12 / patience5生效；143执行源、9上游源哈希再次复核。已完成123次更新、251904前缀、35997原最终GT，0跳步，每步152参数张量有梯度，loss / 梯度范数均有限。实际CPU `[12,13,40,41]`、库线程1、单4090。
 
 第24–123批平均1.21945秒（输入0.55553、训练0.66392），按22460批外推纯步骤7.608小时；不含准备、checkpoint、审计、validation或排队，不是完成承诺。当前12小时单遍硬限有余量；训练加全量验证暂按约10小时量级规划。仅为启动正常，不代表整遍或推荐效果验收。
+
+**首遍最终验收（11-16只读复核）**：完整22460批、45996113前缀 / 6573674原最终GT，22454次成功更新、6次AMP跳步（14014 / 16031 / 18262 / 20279 / 22305 / 22460，尾81也跳步）；按冻结规则消费输入但不补步。逐步学习率、采样计数、数据身份链和最终progress独立复算一致，loss全有限，成功更新梯度有限；首100→末100均值SID loss 9.7043→3.9749、dense loss 16.1133→12.2809。23份训练checkpoint在161071.2完成张量审计；本轮复核日志、sidecar及报告引用，不重复加载全部张量。全程平均1.18157秒/批，allocated / reserved峰值9.507 / 9.945GiB。
+
+Validation全部347416唯一用户、10857批（尾24）、每批23915712 cold；109份导出哈希及12指标独立复算通过，与旧384单遍的用户 / GT / 输入逐条完全相同。自然beam20覆盖7832 / 347416 = 0.022544（旧3556 / 347416 = 0.010236）。完整cold hybrid Recall@5 / @10 / @20为0.052283 / 0.055331 / 0.058486，NDCG@5 / @10 / @20为0.047541 / 0.048531 / 0.049330；相较旧单遍，Recall@10 +21.21%、NDCG@10 +22.17%。这是新全局调度的首遍，不是12遍完成或test结果。
+
+[首遍验收](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch01/acceptance.json) SHA256 `baafd0ba0aa1146f82ce7c2f9764f576462d11cd850b629f93f0e9f5975444fa`。验证后完整checkpoint `epoch01/after-validation.pt` SHA256 `210702031eeabfca7143a7b4121694dcc5c92627cd1854e59e67dfef93530e77`、完整状态摘要 `38a7382a7ad8e588a3360eec8073e05f07b97a197af341e82a264a692012a2e2`；仅progress改变，模型 / optimizer / scheduler / scaler / 单卡RNG保留。已完成1遍，bad_epochs=0，stopped=false，具备第二遍恢复条件。
+
+| 第2遍阶段 | Job | 提交 / 启动（America/Denver） | 提交后状态与资源 |
+| --- | --- | --- | --- |
+| 从首遍验证后完整checkpoint继续 | 162259 | 11-16 08:50:17提交，08:50:18启动 | RUNNING，aias-compute-4，1×4090 / 整项4CPU / 24GiB / 12小时硬上限 |
+| 完整validation及状态交接 | 162260 | 08:50:30提交，尚未启动 | PENDING，afterok:162259，2×4090 / 整项4CPU / 24GiB / 6小时硬上限；依赖失败则取消 |
+
+[第二遍启动登记](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02_launch.json)。仍使用原manifest / 执行源 / 配置；提交前工作树干净，`binding`与`prior_epoch_state(...,2)`只读放行通过，独立复核恢复引用。续接22454成功更新 / 22460尝试，全局cosine与patience不重置，不再随机初始化。本轮只提交此训练与唯一验证，没有第三遍或test。
+
+按首遍实测07:36:40 + 01:42:46外推，第二遍训练中心预计11-16 **16:26:58**，验证中心预计 **18:09:44**（America/Denver）；约18:00–19:30完成全阶段供规划，不含验证资源排队、节点负载与恢复开销变化，不能将Slurm硬超时当作预计完成时间。训练由compute-2转至compute-4，仍为4090，不据此声称跨卡逐位等价或效率改善。
+
+逐遍分作业是现有执行策略，不是多遍训练或早停的技术限制：训练1GPU、全量验证2GPU分别申请，避免训练阶段占着额外验证卡；沿用“1运行+1依赖等待”与验证后完整验收。当前没有自动后继，因而存在人工衔接空档；未来可用验收 / 早停驱动的自动串行调度消除，不需把12遍全预排，也不需改变优化轨迹。本次未修改该运行逻辑。
 
 ## LIGER 384维正式首遍
 
