@@ -1,6 +1,6 @@
 # Run 台账
 
-更新：2026-11-16（America/Denver，UTC−7），新随机初始化12遍上限、min6 / patience5方案首遍161071 / 161072已验收；第二遍162259续训运行、162260依赖全量验证等待。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-16（America/Denver，UTC−7），新随机初始化12遍上限、min6 / patience5方案首遍已验收；第二遍162259续训、162260依赖验证等待。外层自动串行控制器已启用，09:20首次真实cron触发通过，当前任务不变。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
 
 ## LIGER384多遍与早停
 
@@ -45,6 +45,30 @@ Validation全部347416唯一用户、10857批（尾24）、每批23915712 cold�
 按首遍实测07:36:40 + 01:42:46外推，第二遍训练中心预计11-16 **16:26:58**，验证中心预计 **18:09:44**（America/Denver）；约18:00–19:30完成全阶段供规划，不含验证资源排队、节点负载与恢复开销变化，不能将Slurm硬超时当作预计完成时间。训练由compute-2转至compute-4，仍为4090，不据此声称跨卡逐位等价或效率改善。
 
 逐遍分作业是现有执行策略，不是多遍训练或早停的技术限制：训练1GPU、全量验证2GPU分别申请，避免训练阶段占着额外验证卡；沿用“1运行+1依赖等待”与验证后完整验收。当前没有自动后继，因而存在人工衔接空档；未来可用验收 / 早停驱动的自动串行调度消除，不需把12遍全预排，也不需改变优化轨迹。本次未修改该运行逻辑。
+
+### 11-16新增授权：外层自动串行调度
+
+作者随后明确批准自动推进，替代上一段的人工后继方式：第二遍162259 / 162260不取消、不重提、不修改；从第二遍完整validation验收起，自动逐遍训练→全量验证→独立验收→早停判断，未停止才提交下一对。仍最多一项运行、一项afterok依赖等待，不批量预排，不扩12 / min6 / patience5，不接test / 其他seed。
+
+新增只读[验收适配器](../scripts/liger_autorun_evidence.py) `c3fee29`、[Slurm后端](../scripts/liger_autorun_slurm.py) `7672401`、[外层控制器](../scripts/liger_multiepoch_autorun.py)及[单核入口](../run_liger_multiepoch_autorun_cpu1.sh) `25083ca`。143份原执行源和原manifest SHA `40c3c21b4fe7f61125dbccd736bab4b85bb930b21484818cc26415757f717e9d`未变；原runner仍不自提交，所以其`automatic_successor=false` / `requires_manual_next_job=true`历史字段不改。外层授权单独绑定原143源与4份新运行源，训练仍导出原执行commit `da8486e`，不伪装成重新训练或新checkpoint。
+
+验证：新增212项测试通过；全LIGER **2223 passed、15 skipped、1 warning，47.87秒**，另CPU / 历史launcher / 仓库launcher **53 passed，2.30秒**，单CPU核2、库线程1、GPU隐藏。15个skip仍为10项真实CUDA与5项可选sklearn，旧只读NumPy提示不变。真实首遍347416条 / 109导出完整只读验收通过；实际Slurm只读核验当前两作业身份和依赖通过，第三遍唯一token不存在。未来提交路径只做合成Slurm测试，没有提前提交第三遍作为测试。
+
+控制器仅在train和val均`COMPLETED / 0:0`、队列释放、报告 / checkpoint哈希匹配、全量指标和身份复算、早停历史重算都通过时推进。它保存提交意图后才调用sbatch；网络超时或响应丢失只按唯一name / comment token查找认领，绝不盲目重复提交。accounting延迟及合法的训练→验证状态切换等待下次检查；失败、预算越界、产物异常、来源改变不追加任务。无取消 / 修改现任务的代码路径。每遍均恢复完整状态而非仅模型权重。
+
+持久机制是`aias-login-1`的当前用户cron：每5分钟一次，单CPU2、无GPU，15分钟单次硬上限、审计子进程600秒上限；非阻塞文件锁防重叠，状态原子落盘，关闭当前聊天也继续运行。原用户crontab为空，仅安装本项目一项；安装后读回字节一致，SHA256 `0986f64d025da959754f4286779d5827436ef198ce94ef4db6ca421162e63090`。首次长绝对文件参数被系统crontab截断而未安装，随后用同一配置的短文件名在09:15:46成功安装，未覆盖其他任务。
+
+[外层授权](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/authorization.json) SHA256 `8f9b59df561798058e45ce042670c2be96938a925737dc9fd3f78b2221600289`，控制器执行版本 `25083ca`；[当前状态](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/state.json)、[事件流水](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/events.jsonl)、[cron日志](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/cron.log)。09:15:18手动首个tick为`watching / epoch2 / waiting_jobs`；**09:20:02首次实际cron触发同样通过**，cron.log由定时任务产生且状态时间同步更新，没有新增第三遍，没有中断162259 / 162260。[激活验收](../logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/activation_acceptance.json)。
+
+若需暂停，只运行外层`pause`，不会取消已提交训练或验证：
+
+```bash
+taskset -c 2 /usr/bin/python3 -m scripts.liger_multiepoch_autorun pause \
+  logs/training_launch/liger_capacity384_multiepoch_seed42_2026-11-14_v1/autorun/authorization.json \
+  --authorization-sha256 8f9b59df561798058e45ce042670c2be96938a925737dc9fd3f78b2221600289
+```
+
+执行目录为仓库根目录。控制器到达早停 / 第12遍后记录`completed`并不再调用Slurm提交；cron之后只作有界无操作检查。异常见state / cron.log，不声称存在聊天外即时通知或自动恢复失败训练的功能。
 
 ## LIGER 384维正式首遍
 
