@@ -1,6 +1,32 @@
 # Run 台账
 
-更新：2026-11-16（America/Denver，UTC−7），新随机初始化12遍上限、min6 / patience5方案首遍已验收；第二遍162259续训、162260依赖验证等待。外层自动串行控制器已启用，09:20首次真实cron触发通过，当前任务不变。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注。
+更新：2026-11-16 21:06（America/Denver，UTC−7），作者要求停止全部实验，现队列为空、自动续训关闭。LIGER新多遍run第1、2遍全量validation已验收，第三遍中途取消，无test。Slurm原始时间（Asia/Shanghai）比本页时间快15小时，历史时间保留原标注；下方旧运行登记仅为当时状态。
+
+## 2026-11-16 停止全部实验
+
+21:06:57按作者“检查目前运行结果，停止所有实验”执行：先调用外层控制器`pause`，确认`enabled=false`，再精确移除`GRID-L384AUTO-40c3c21b4fe7`对应cron触发项并取消第三遍两项任务。保留其他cron内容（当前仅余说明注释），没有删除数据、checkpoint、预测或日志。再次查询当前账号队列为空，无本项目控制器残留进程。停止是作者主动决定，不是数值异常或自动早停；不得自动恢复或补test。[已纳入Git的停止记录](archive/2026-11-16/user_stop_all.json)。
+
+服务器停用前另外保存[第一遍validation验收摘要](archive/2026-11-16/liger_epoch01_validation_acceptance.json)和[第二遍validation验收摘要](archive/2026-11-16/liger_epoch02_validation_acceptance.json)，均逐字节复制原验收JSON。下方原始`logs/`与checkpoint链接仍指服务器本地产物，并未上传Git。
+
+| 阶段 | Job | 最终状态 | 耗时 / 结论 |
+| --- | --- | --- | --- |
+| 第2遍完整训练 | 162259 | COMPLETED / 0:0 | 07:08:03；完成后累计44903次有效更新 |
+| 第2遍全量validation | 162260 | COMPLETED / 0:0 | 01:50:00；347416样本、10857批、尾24，全部23915712个cold候选补充；验收passed |
+| 第3遍训练 | 162352 | CANCELLED by 1018 | 03:16:07；最后日志第10400 / 22460批，约46.3%，不是整遍完成 |
+| 第3遍依赖validation | 162353 | CANCELLED by 1018 | 从未启动，00:00:00；无第三遍验证结果 |
+
+最新完整结果（同一347416条validation，数值为0–1比例）：
+
+| 候选与排序 | 完成遍数 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Recall@20 | NDCG@20 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 自然beam候选，经dense重排 | 1 | 0.020563 | 0.018806 | 0.021715 | 0.019181 | 0.022544 | 0.019394 |
+| 自然beam候选，经dense重排 | 2 | 0.045752 | 0.042039 | 0.047905 | 0.042741 | 0.049603 | 0.043177 |
+| 自然beam + 全部cold，联合dense排序 | 1 | 0.052283 | 0.047541 | 0.055331 | 0.048531 | 0.058486 | 0.049330 |
+| 自然beam + 全部cold，联合dense排序 | 2 | 0.073339 | 0.066618 | 0.077253 | 0.067884 | 0.081056 | 0.068847 |
+
+第二遍完整cold hybrid Recall@5相对第一遍+40.27%，NDCG@10 +39.88%；自然beam coverage@20从0.022544增至0.049603。报告中的`beam_only`已做dense排序，不能当原始生成顺序；原始beam Recall@5 / @10第二遍为0.026740 / 0.036864。无单独cold-only指标，不作推算。
+
+[第二遍验证验收](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02/validation/acceptance.json)绑定报告SHA256 `d5fe3b2ffc74aae88c7f457850c8fa203370897f2dd4eb33fd739df240ae94b1`，确认权重未改变、未读test。当前最佳是[第二遍验证时checkpoint](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02/segments/segment000/checkpoints/before-validation.pt)，[验证后完整状态](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02/after-validation.pt)也保留。第三遍最近已保存的是[第10000批checkpoint](../logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch03/segments/segment000/checkpoints/batch010000.pt)，sidecar记录累计54899更新 / 54920尝试；最后日志累计55299更新，不能把日志末尾未落盘进度声称为已保存。
 
 ## LIGER384多遍与早停
 

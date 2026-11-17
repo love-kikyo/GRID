@@ -1,0 +1,39 @@
+{
+  "request": "检查目前运行结果，停止所有实验。",
+  "action": "stop_all_project_experiments_and_disable_automatic_continuation",
+  "stopped_at_utc": "2026-11-17T04:06:57+00:00",
+  "stopped_at_client": "2026-11-16T21:06:57-07:00",
+  "controller_enabled": false,
+  "controller_pause_event": "paused_no_jobs_cancelled",
+  "cron_marker_removed": "GRID-L384AUTO-40c3c21b4fe7",
+  "cron_other_entries_preserved": true,
+  "queue_empty_after_cancellation": true,
+  "cancelled_jobs": [
+    {"job_id": "162352", "epoch": 3, "role": "training", "state": "CANCELLED", "elapsed": "03:16:07"},
+    {"job_id": "162353", "epoch": 3, "role": "validation", "state": "CANCELLED", "elapsed": "00:00:00", "ever_started": false}
+  ],
+  "completed_epochs": 2,
+  "best_validation_epoch": 2,
+  "full_validation_examples": 347416,
+  "full_cold_items": 23915712,
+  "latest_full_hybrid_metrics": {
+    "Recall@5": 0.07333859119902365,
+    "NDCG@5": 0.06661781146974495,
+    "Recall@10": 0.07725320653049945,
+    "NDCG@10": 0.06788412477087419,
+    "Recall@20": 0.08105556451055795,
+    "NDCG@20": 0.06884677986629065
+  },
+  "partial_epoch_last_logged_batch": 10400,
+  "batches_per_epoch": 22460,
+  "partial_epoch_last_logged_updates": 55299,
+  "latest_partial_checkpoint": "logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch03/segments/segment000/checkpoints/batch010000.pt",
+  "latest_partial_checkpoint_updates": 54899,
+  "latest_partial_checkpoint_file_sha256": "bb5bc5357a348742f87870285176d23ad91161339f319e78d2a95cf7cdb438a8",
+  "partial_checkpoint_tensors_reloaded": false,
+  "test_performed": false,
+  "artifacts_deleted": false,
+  "frozen_execution_sources_modified": false,
+  "public_reproduction_repository_modified": false,
+  "future_experiments_require_new_user_authorization": true
+}

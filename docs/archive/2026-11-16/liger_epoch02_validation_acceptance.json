@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "records": 347416,
+  "report": {
+    "path": "/mnt/beegfs/home/MMReco2021/liuyu/GRID/logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02/validation/report.json",
+    "sha256": "d5fe3b2ffc74aae88c7f457850c8fa203370897f2dd4eb33fd739df240ae94b1"
+  },
+  "checkpoint": {
+    "path": "/mnt/beegfs/home/MMReco2021/liuyu/GRID/logs/train/runs/liger_capacity384_multiepoch_seed42_2026-11-14_v1/epoch02/segments/segment000/checkpoints/before-validation.pt",
+    "sha256": "b628ee547d0b3f03740018bfcbcfbf0ef1da8875e4e1e86d9e61f5203e639c20",
+    "full_state_sha256": "d1a5051bcee40c09437d91776baed643af85d7b28e9fff33b4b5b8d6366514cd",
+    "epoch": 1,
+    "next_batch": 22460,
+    "updates": 44903,
+    "attempts": 44920
+  },
+  "metrics": {
+    "hybrid": {
+      "Recall@5": 0.07333859119902365,
+      "NDCG@5": 0.06661781146974495,
+      "Recall@10": 0.07725320653049945,
+      "NDCG@10": 0.06788412477087419,
+      "Recall@20": 0.08105556451055795,
+      "NDCG@20": 0.06884677986629065
+    },
+    "beam_only": {
+      "Recall@5": 0.04575206668662353,
+      "NDCG@5": 0.04203915154730262,
+      "Recall@10": 0.047905105118935226,
+      "NDCG@10": 0.04274089185340105,
+      "Recall@20": 0.04960335735832547,
+      "NDCG@20": 0.04317666016217519
+    }
+  },
+  "test_records_read": false,
+  "raw_generation_coverage": {
+    "hits": {
+      "5": 9290,
+      "10": 12807,
+      "20": 17233
+    },
+    "recall": {
+      "5": 0.026740276786331084,
+      "10": 0.03686358716927257,
+      "20": 0.04960335735832547
+    },
+    "meaning": "GT present in the first k raw generation slots, before dense reordering"
+  },
+  "model_weights_unchanged": true,
+  "full_cold_rows": 23915712
+}
